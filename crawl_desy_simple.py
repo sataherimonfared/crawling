@@ -546,6 +546,40 @@ def is_pdf_url(url):
     return False
 
 
+def is_pubdb_url(url):
+    """
+    Check if a URL is a PUBDB (bib-pubdb1.desy.de) page.
+    These pages require special filtering to remove navigation/search UI elements.
+    """
+    if not url:
+        return False
+    url_lower = url.lower()
+    return 'bib-pubdb1.desy.de' in url_lower or 'bib-pubdb' in url_lower
+
+
+def is_pubdb_content(html_content):
+    """
+    Check if HTML content is from a PUBDB page by detecting PUBDB-specific markers.
+    This handles cases where pages redirect to or embed PUBDB content.
+    """
+    if not html_content:
+        return False
+    html_lower = str(html_content).lower()
+    # Check for PUBDB domain in links/content
+    pubdb_indicators = [
+        'bib-pubdb1.desy.de',
+        'bib-pubdb',
+        'guest :: login',
+        'search: | [search tips]',
+        'sort by: | display results:',
+        'results overview',
+        'interested in being notified about new results'
+    ]
+    # Need at least 2 indicators to be confident it's PUBDB content
+    matches = sum(1 for indicator in pubdb_indicators if indicator in html_lower)
+    return matches >= 2
+
+
 def _normalize_text_spacing(line):
     """
     Normalize text spacing to fix concatenation issues.
@@ -1975,7 +2009,7 @@ def convert_single_column_to_multi_column_table(table_data, html_table_element):
     return table_data
 
 
-def extract_headings_and_tables_in_dom_order(html_content):
+def extract_headings_and_tables_in_dom_order(html_content, url=None):
     """
     Extract headings and tables in DOM order from rendered HTML.
     
@@ -1987,6 +2021,7 @@ def extract_headings_and_tables_in_dom_order(html_content):
     
     Args:
         html_content: Rendered HTML string from Crawl4AI (result.html)
+        url: Optional URL to enable PUBDB-specific filtering
         
     Returns:
         List of content items: [
@@ -2132,6 +2167,54 @@ def extract_headings_and_tables_in_dom_order(html_content):
                     })
             
             elif item['type'] == 'table':
+                # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
+                # Check both URL and content to handle redirects/embedded content
+                is_pubdb_page = (url and is_pubdb_url(url)) or is_pubdb_content(html_content)
+                if is_pubdb_page:
+                    table_text = elem.get_text(strip=True).lower()
+                    
+                    # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
+                    has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_text, re.I))
+                    
+                    # UI keywords that indicate navigation/search interface
+                    pubdb_ui_keywords = [
+                        'guest', 'login', 'search:', 'sort by:', 'display results:',
+                        'output format:', 'search tips', 'collections:', 'name | info',
+                        'results overview', 'try your search', 'rss feed', 'interested in being notified',
+                        'haven\'t found what you were looking for'
+                    ]
+                    
+                    # Only filter if it has UI keywords AND doesn't contain publication IDs
+                    # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
+                    has_ui_keywords = any(keyword in table_text for keyword in pubdb_ui_keywords)
+                    has_pubdb_ui_context = ('pubdb' in table_text and 
+                                          ('login' in table_text or 'guest' in table_text or 
+                                           'search:' in table_text or 'submit' in table_text))
+                    
+                    is_pubdb_ui_table = (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
+                    
+                    if is_pubdb_ui_table:
+                        # #region agent log
+                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                'sessionId': 'debug-session',
+                                'runId': 'run1',
+                                'hypothesisId': 'PUBDB',
+                                'location': 'crawl_desy_simple.py:2134',
+                                'message': 'Skipping PUBDB UI table in DOM extraction',
+                                'data': {
+                                    'table_text_preview': table_text[:150],
+                                    'matched_keywords': [kw for kw in pubdb_ui_keywords if kw in table_text],
+                                    'url': url,
+                                    'is_pubdb_url': url and is_pubdb_url(url) if url else False,
+                                    'is_pubdb_content': is_pubdb_content(html_content) if html_content else False
+                                },
+                                'timestamp': int(__import__('time').time() * 1000)
+                            }) + '\n')
+                        # #endregion
+                        continue  # Skip this UI table
+                
                 # #region agent log
                 with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
                     import json
@@ -5611,7 +5694,7 @@ async def crawl_site():
                         try:
                             
                             # Solution 4: Extract headings and tables in DOM order
-                            dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html)
+                            dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
                             print(f"[DEBUG] DOM-order extraction: Found {len(dom_ordered_content)} content items")
                             
                             # #region agent log
@@ -6084,6 +6167,98 @@ async def crawl_site():
                                     
                                     # Remove table sections from markdown_content
                                     if re.match(r'^\|', stripped):
+                                        # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
+                                        # Check both URL and content to handle redirects/embedded content
+                                        is_pubdb_ui_table = False
+                                        is_pubdb_page = False
+                                        if result.url:
+                                            is_pubdb_page = is_pubdb_url(result.url)
+                                        # Also check HTML content for PUBDB indicators (handles redirects/embedded content)
+                                        if not is_pubdb_page and hasattr(result, 'html') and result.html:
+                                            is_pubdb_page = is_pubdb_content(result.html)
+                                        
+                                        if is_pubdb_page:
+                                            table_lines_to_check = []
+                                            table_end = i
+                                            while table_end < len(lines) and table_end < i + 20:  # Check up to 20 lines
+                                                next_line = lines[table_end].strip()
+                                                if re.match(r'^\|', next_line):
+                                                    table_lines_to_check.append(next_line)
+                                                    table_end += 1
+                                                elif not next_line:
+                                                    if table_end + 1 < len(lines) and re.match(r'^\|', lines[table_end + 1].strip()):
+                                                        table_end += 1
+                                                    else:
+                                                        break
+                                                else:
+                                                    break
+                                            
+                                            # Check for PUBDB UI keywords in table content
+                                            table_content = ' '.join(table_lines_to_check[:5]).lower()  # Check first 5 rows
+                                            
+                                            # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
+                                            has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_content, re.I))
+                                            
+                                            # UI keywords that indicate navigation/search interface
+                                            pubdb_ui_keywords = [
+                                                'guest', 'login', 'search:', 'sort by:', 'display results:',
+                                                'output format:', 'search tips', 'collections:', 'name | info',
+                                                'results overview', 'try your search', 'rss feed', 'interested in being notified'
+                                            ]
+                                            
+                                            # Only filter if it has UI keywords AND doesn't contain publication IDs
+                                            # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
+                                            has_ui_keywords = any(keyword in table_content for keyword in pubdb_ui_keywords)
+                                            has_pubdb_ui_context = ('pubdb' in table_content and 
+                                                                  ('login' in table_content or 'guest' in table_content or 
+                                                                   'search:' in table_content or 'submit' in table_content))
+                                            
+                                            is_pubdb_ui_table = (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
+                                            
+                                            if is_pubdb_ui_table:
+                                                # #region agent log
+                                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                    import json
+                                                    f.write(json.dumps({
+                                                        'sessionId': 'debug-session',
+                                                        'runId': 'run1',
+                                                        'hypothesisId': 'PUBDB',
+                                                        'location': 'crawl_desy_simple.py:6195',
+                                                        'message': 'Removed PUBDB UI table from markdown_content',
+                                                        'data': {
+                                                            'table_preview': ' '.join(table_lines_to_check[:2])[:100],
+                                                            'url': result.url if hasattr(result, 'url') else None,
+                                                            'is_pubdb_url': is_pubdb_url(result.url) if hasattr(result, 'url') and result.url else False,
+                                                            'is_pubdb_content': is_pubdb_content(result.html) if hasattr(result, 'html') and result.html else False
+                                                        },
+                                                        'timestamp': int(__import__('time').time() * 1000)
+                                                    }) + '\n')
+                                                # #endregion
+                                                # Skip this PUBDB UI table
+                                                i = table_end
+                                                continue
+                                        
+                                        # For non-PUBDB pages or non-UI tables on PUBDB pages:
+                                        # Remove table sections from markdown_content (they're already in tables_markdown)
+                                        # #region agent log
+                                        if hasattr(result, 'url') and result.url and ('pubdb' in result.url.lower() or 'publications' in result.url.lower()):
+                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                import json
+                                                f.write(json.dumps({
+                                                    'sessionId': 'debug-session',
+                                                    'runId': 'run1',
+                                                    'hypothesisId': 'PUBDB',
+                                                    'location': 'crawl_desy_simple.py:6241',
+                                                    'message': 'Removing table from markdown_content (not UI table, will be in tables_markdown)',
+                                                    'data': {
+                                                        'table_preview': stripped[:100],
+                                                        'is_pubdb_page': is_pubdb_page,
+                                                        'is_pubdb_ui_table': is_pubdb_ui_table
+                                                    },
+                                                    'timestamp': int(__import__('time').time() * 1000)
+                                                }) + '\n')
+                                        # #endregion
+                                        
                                         # Find the end of this table section
                                         table_end = i
                                         while table_end < len(lines):
