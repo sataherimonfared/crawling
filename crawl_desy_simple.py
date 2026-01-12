@@ -2057,6 +2057,28 @@ def extract_headings_and_tables_in_dom_order(html_content):
                 elif prev_elem.name.startswith('h'):
                     position += 1
             
+            # #region agent log
+            elem_text = elem.get_text(strip=True)[:50] if elem.name.startswith('h') else 'TABLE'
+            if 'heuser' in str(html_content).lower():
+                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        'sessionId': 'debug-session',
+                        'runId': 'run1',
+                        'hypothesisId': 'H1',
+                        'location': 'crawl_desy_simple.py:2036',
+                        'message': 'Element found in DOM',
+                        'data': {
+                            'type': 'heading' if elem.name.startswith('h') else 'table',
+                            'tag': elem.name,
+                            'position': position,
+                            'text_preview': elem_text,
+                            'has_parent_table': elem.find_parent('table') is not None if elem.name == 'table' else False
+                        },
+                        'timestamp': int(__import__('time').time() * 1000)
+                    }) + '\n')
+            # #endregion
+            
             all_elements.append({
                 'element': elem,
                 'type': 'heading' if elem.name.startswith('h') else 'table',
@@ -2065,6 +2087,30 @@ def extract_headings_and_tables_in_dom_order(html_content):
         
         # Sort by position
         all_elements.sort(key=lambda x: x['position'])
+        
+        # #region agent log
+        if 'heuser' in str(html_content).lower():
+            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'H1',
+                    'location': 'crawl_desy_simple.py:2067',
+                    'message': 'Elements sorted by position',
+                    'data': {
+                        'sorted_order': [
+                            {
+                                'type': item['type'],
+                                'position': item['position'],
+                                'text_preview': item['element'].get_text(strip=True)[:50] if item['element'].name.startswith('h') else 'TABLE'
+                            }
+                            for item in all_elements[:10]
+                        ]
+                    },
+                    'timestamp': int(__import__('time').time() * 1000)
+                }) + '\n')
+        # #endregion
         
         # Process elements and extract content
         dom_ordered_content = []
@@ -5890,6 +5936,26 @@ async def crawl_site():
                         # to preserve DOM order. Remove headings and tables from markdown_content to avoid duplicates.
                         content_to_save = url_header
                         
+                        # #region agent log
+                        if 'heuser' in result.url.lower():
+                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                import json
+                                f.write(json.dumps({
+                                    'sessionId': 'debug-session',
+                                    'runId': 'run1',
+                                    'hypothesisId': 'H2',
+                                    'location': 'crawl_desy_simple.py:5893',
+                                    'message': 'Content assembly start',
+                                    'data': {
+                                        'has_tables_markdown': bool(tables_markdown),
+                                        'tables_markdown_preview': (tables_markdown or '')[:200],
+                                        'has_markdown_content': bool(markdown_content),
+                                        'markdown_content_preview': (markdown_content or '')[:200]
+                                    },
+                                    'timestamp': int(__import__('time').time() * 1000)
+                                }) + '\n')
+                        # #endregion
+                        
                         if tables_markdown:
                             # tables_markdown contains headings and tables in correct DOM order
                             # Remove headings and tables from markdown_content to avoid duplicates
@@ -6088,11 +6154,47 @@ async def crawl_site():
                                 
                                 # Only add non-empty text content from markdown_content (intro text, etc.)
                                 text_only_content = '\n'.join(cleaned_lines).strip()
-                                if text_only_content:
-                                    content_to_save += text_only_content + "\n\n"
                             
-                            # Add tables_markdown (contains headings and tables in DOM order)
+                            # Add tables_markdown FIRST (contains headings and tables in DOM order)
+                            # This preserves the correct DOM order where tables come before other content
+                            # #region agent log
+                            if 'heuser' in result.url.lower():
+                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                    import json
+                                    f.write(json.dumps({
+                                        'sessionId': 'debug-session',
+                                        'runId': 'run1',
+                                        'hypothesisId': 'H2',
+                                        'location': 'crawl_desy_simple.py:6095',
+                                        'message': 'Adding tables_markdown FIRST to preserve DOM order',
+                                        'data': {
+                                            'tables_markdown_preview': tables_markdown[:200] if tables_markdown else ''
+                                        },
+                                        'timestamp': int(__import__('time').time() * 1000)
+                                    }) + '\n')
+                            # #endregion
                             content_to_save += tables_markdown
+                            
+                            # Add text_only_content AFTER tables_markdown (for any remaining content not in tables_markdown)
+                            if text_only_content:
+                                # #region agent log
+                                if 'heuser' in result.url.lower():
+                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                        import json
+                                        f.write(json.dumps({
+                                            'sessionId': 'debug-session',
+                                            'runId': 'run1',
+                                            'hypothesisId': 'H2',
+                                            'location': 'crawl_desy_simple.py:6092',
+                                            'message': 'Adding text_only_content AFTER tables_markdown',
+                                            'data': {
+                                                'text_only_content_preview': text_only_content[:200],
+                                                'tables_markdown_preview': tables_markdown[:200] if tables_markdown else ''
+                                            },
+                                            'timestamp': int(__import__('time').time() * 1000)
+                                        }) + '\n')
+                                # #endregion
+                                content_to_save += "\n\n" + text_only_content
                         else:
                             # No DOM-order extraction, use markdown_content as-is
                             if markdown_content:
