@@ -580,6 +580,59 @@ def is_pubdb_content(html_content):
     return matches >= 2
 
 
+# PUBDB UI keywords that indicate navigation/search interface (not publication records)
+_PUBDB_UI_KEYWORDS = [
+    'guest', 'login', 'search:', 'sort by:', 'display results:',
+    'output format:', 'search tips', 'collections:', 'name | info',
+    'results overview', 'try your search', 'rss feed', 'interested in being notified',
+    'haven\'t found what you were looking for'
+]
+
+
+def is_pubdb_ui_table(table_text):
+    """
+    Check if a table is a PUBDB UI table (navigation/search interface) rather than publication records.
+    
+    Args:
+        table_text: The text content of the table (lowercase recommended)
+    
+    Returns:
+        bool: True if the table is a UI table, False if it contains publication records
+    """
+    if not table_text:
+        return False
+    
+    # Ensure lowercase for consistent matching
+    table_text_lower = table_text.lower() if not isinstance(table_text, str) or table_text != table_text.lower() else table_text
+    
+    # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
+    has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_text_lower, re.I))
+    
+    # Only filter if it has UI keywords AND doesn't contain publication IDs
+    # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
+    has_ui_keywords = any(keyword in table_text_lower for keyword in _PUBDB_UI_KEYWORDS)
+    has_pubdb_ui_context = ('pubdb' in table_text_lower and 
+                          ('login' in table_text_lower or 'guest' in table_text_lower or 
+                           'search:' in table_text_lower or 'submit' in table_text_lower))
+    
+    return (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
+
+
+def _is_pubdb_page(url, html_content):
+    """
+    Check if a page is a PUBDB page by checking both URL and content.
+    This handles cases where pages redirect to or embed PUBDB content.
+    
+    Args:
+        url: The page URL (can be None)
+        html_content: The HTML content (can be None)
+    
+    Returns:
+        bool: True if the page is a PUBDB page
+    """
+    return (url and is_pubdb_url(url)) or is_pubdb_content(html_content)
+
+
 def _normalize_text_spacing(line):
     """
     Normalize text spacing to fix concatenation issues.
@@ -2169,31 +2222,10 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
             elif item['type'] == 'table':
                 # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
                 # Check both URL and content to handle redirects/embedded content
-                is_pubdb_page = (url and is_pubdb_url(url)) or is_pubdb_content(html_content)
-                if is_pubdb_page:
+                if _is_pubdb_page(url, html_content):
                     table_text = elem.get_text(strip=True).lower()
                     
-                    # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
-                    has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_text, re.I))
-                    
-                    # UI keywords that indicate navigation/search interface
-                    pubdb_ui_keywords = [
-                        'guest', 'login', 'search:', 'sort by:', 'display results:',
-                        'output format:', 'search tips', 'collections:', 'name | info',
-                        'results overview', 'try your search', 'rss feed', 'interested in being notified',
-                        'haven\'t found what you were looking for'
-                    ]
-                    
-                    # Only filter if it has UI keywords AND doesn't contain publication IDs
-                    # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
-                    has_ui_keywords = any(keyword in table_text for keyword in pubdb_ui_keywords)
-                    has_pubdb_ui_context = ('pubdb' in table_text and 
-                                          ('login' in table_text or 'guest' in table_text or 
-                                           'search:' in table_text or 'submit' in table_text))
-                    
-                    is_pubdb_ui_table = (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
-                    
-                    if is_pubdb_ui_table:
+                    if is_pubdb_ui_table(table_text):
                         # #region agent log
                         with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
                             import json
@@ -2205,7 +2237,7 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                                 'message': 'Skipping PUBDB UI table in DOM extraction',
                                 'data': {
                                     'table_text_preview': table_text[:150],
-                                    'matched_keywords': [kw for kw in pubdb_ui_keywords if kw in table_text],
+                                    'matched_keywords': [kw for kw in _PUBDB_UI_KEYWORDS if kw in table_text],
                                     'url': url,
                                     'is_pubdb_url': url and is_pubdb_url(url) if url else False,
                                     'is_pubdb_content': is_pubdb_content(html_content) if html_content else False
@@ -6169,15 +6201,9 @@ async def crawl_site():
                                     if re.match(r'^\|', stripped):
                                         # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
                                         # Check both URL and content to handle redirects/embedded content
-                                        is_pubdb_ui_table = False
-                                        is_pubdb_page = False
-                                        if result.url:
-                                            is_pubdb_page = is_pubdb_url(result.url)
-                                        # Also check HTML content for PUBDB indicators (handles redirects/embedded content)
-                                        if not is_pubdb_page and hasattr(result, 'html') and result.html:
-                                            is_pubdb_page = is_pubdb_content(result.html)
-                                        
-                                        if is_pubdb_page:
+                                        html_content = result.html if hasattr(result, 'html') else None
+                                        if _is_pubdb_page(result.url if hasattr(result, 'url') else None, html_content):
+                                            # Collect table lines to check (up to 20 lines, first 5 rows for analysis)
                                             table_lines_to_check = []
                                             table_end = i
                                             while table_end < len(lines) and table_end < i + 20:  # Check up to 20 lines
@@ -6193,29 +6219,10 @@ async def crawl_site():
                                                 else:
                                                     break
                                             
-                                            # Check for PUBDB UI keywords in table content
-                                            table_content = ' '.join(table_lines_to_check[:5]).lower()  # Check first 5 rows
+                                            # Check for PUBDB UI keywords in table content (first 5 rows)
+                                            table_content = ' '.join(table_lines_to_check[:5]).lower()
                                             
-                                            # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
-                                            has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_content, re.I))
-                                            
-                                            # UI keywords that indicate navigation/search interface
-                                            pubdb_ui_keywords = [
-                                                'guest', 'login', 'search:', 'sort by:', 'display results:',
-                                                'output format:', 'search tips', 'collections:', 'name | info',
-                                                'results overview', 'try your search', 'rss feed', 'interested in being notified'
-                                            ]
-                                            
-                                            # Only filter if it has UI keywords AND doesn't contain publication IDs
-                                            # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
-                                            has_ui_keywords = any(keyword in table_content for keyword in pubdb_ui_keywords)
-                                            has_pubdb_ui_context = ('pubdb' in table_content and 
-                                                                  ('login' in table_content or 'guest' in table_content or 
-                                                                   'search:' in table_content or 'submit' in table_content))
-                                            
-                                            is_pubdb_ui_table = (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
-                                            
-                                            if is_pubdb_ui_table:
+                                            if is_pubdb_ui_table(table_content):
                                                 # #region agent log
                                                 with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
                                                     import json
@@ -6229,7 +6236,7 @@ async def crawl_site():
                                                             'table_preview': ' '.join(table_lines_to_check[:2])[:100],
                                                             'url': result.url if hasattr(result, 'url') else None,
                                                             'is_pubdb_url': is_pubdb_url(result.url) if hasattr(result, 'url') and result.url else False,
-                                                            'is_pubdb_content': is_pubdb_content(result.html) if hasattr(result, 'html') and result.html else False
+                                                            'is_pubdb_content': is_pubdb_content(html_content) if html_content else False
                                                         },
                                                         'timestamp': int(__import__('time').time() * 1000)
                                                     }) + '\n')
@@ -6252,8 +6259,8 @@ async def crawl_site():
                                                     'message': 'Removing table from markdown_content (not UI table, will be in tables_markdown)',
                                                     'data': {
                                                         'table_preview': stripped[:100],
-                                                        'is_pubdb_page': is_pubdb_page,
-                                                        'is_pubdb_ui_table': is_pubdb_ui_table
+                                                        'is_pubdb_page': _is_pubdb_page(result.url if hasattr(result, 'url') else None, html_content),
+                                                        'is_pubdb_ui_table': False  # This path is for non-UI tables
                                                     },
                                                     'timestamp': int(__import__('time').time() * 1000)
                                                 }) + '\n')
