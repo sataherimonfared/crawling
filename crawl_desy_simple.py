@@ -56,6 +56,7 @@ from pathlib import Path
 from datetime import datetime
 from html import unescape
 from urllib.parse import urlparse, urljoin
+import builtins
 
 # Crawl4AI is a required runtime dependency for this script.
 # Keep the failure mode explicit and actionable (no URL-specific behavior).
@@ -73,6 +74,20 @@ except ModuleNotFoundError as e:
         )
         raise SystemExit(1)
     raise
+
+# ---------------------------------------------------------------------------
+# Debug instrumentation - ENABLED for debugging
+# ---------------------------------------------------------------------------
+# _real_open = builtins.open
+# class _NullLogFile:
+#     def __enter__(self): return self
+#     def __exit__(self, exc_type, exc_val, exc_tb): return False
+#     def write(self, *args, **kwargs): pass
+# def _open(path, mode='r', *args, **kwargs):
+#     if path == '/home/taheri/crawl4ai/.cursor/debug.log':
+#         return _NullLogFile()
+#     return _real_open(path, mode, *args, **kwargs)
+# builtins.open = _open
 
 # BeautifulSoup for HTML parsing (needed to extract links/emails from table cells)
 try:
@@ -119,6 +134,9 @@ except ImportError:
 
 # List of URLs to crawl
 ROOT_URLS = [
+    #"https://www.desy.de"
+    "https://desy.de/index_ger.html",
+    #"https://desy.de/index_eng.html"  # Commented out
     "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
     # Events page (should extract events)
     "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
@@ -137,6 +155,9 @@ ROOT_URLS = [
     "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
     "https://ai.desy.de/people/heuser.html",
     "https://www.desy.de/career/contact/index_eng.html",
+    "https://cms.desy.de/activities/physics/exotics/https__desy_cmsdesyde_activities_physics_exotics_team/",
+    "https://desy.de/career_at_desy/index_eng.html",
+    "https://www.desy.de/ueber_desy/jahresberichte/index_ger.html"
 ]
 
 # Directory where crawled pages will be saved as markdown files
@@ -144,7 +165,10 @@ OUTPUT_DIR = Path("desy_crawled")
 OUTPUT_DIR.mkdir(exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
-LOG_DIR = Path("/data/dust/group/it/ReferenceData/log")
+#LOG_DIR = Path("/data/dust/group/it/ReferenceData/log")
+LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/log")
+
+
 try:
     # Try to create the directory if it doesn't exist
     if not LOG_DIR.exists():
@@ -175,7 +199,8 @@ USE_CHECKPOINT = False  # Change to True to resume from checkpoint
 # How many pages to crawl simultaneously (parallelism)
 # Higher = faster but uses more resources
 # Recommended: 3-5 for stable crawling, 10+ for faster (may trigger rate limits)
-CONCURRENT_TASKS = 15
+# PERFORMANCE: Increased from 15 to 30 to accelerate crawling
+CONCURRENT_TASKS = 30
 
 # Maximum depth to crawl (how many link levels to follow)
 # 0 = only the root page
@@ -188,7 +213,7 @@ MAX_DEPTH = 0
 # Or set a smaller number like 1000 to limit the crawl
 # Note: BFSDeepCrawlStrategy doesn't accept None, so use a large number instead
 # 10000 is effectively "no limit" for most sites
-MAX_PAGES = 10000  # Large number = effectively no limit, or set to 1000, 2000, etc.
+MAX_PAGES = 200000  # Increased to match reference file (100,012 URLs) with room for growth
 
 # Anti-bot settings
 ENABLE_STEALTH_MODE = True  # Enable stealth mode to evade bot detection
@@ -199,9 +224,11 @@ HEADLESS = True  # Run browser in headless mode (no visible window)
 # This is already enabled - no additional config needed
 
 # Timeout settings (in milliseconds)
-# Some DESY pages are slow to load - increase timeout for them
-# Default is 60000ms (60 seconds), increase to 120000ms (120 seconds) for slow pages
-PAGE_TIMEOUT = 120000  # 120 seconds (120000ms) - handles slow-loading pages
+# PERFORMANCE: Reduced default timeout to 60s for faster crawling
+# URLs that timeout will be logged in crawl_errors.json with timeout category
+# Future runs can apply extended timeouts only to those specific URLs
+PAGE_TIMEOUT = 60000  # 60 seconds (60000ms) - default timeout for most pages
+PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previously timed out
 
 
 # ============================================================================
@@ -2117,23 +2144,76 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     for heading in elem.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], recursive=True):
                         nav_elements.add(heading)
         
-        # Collect all headings and tables with their DOM positions
+        # Collect all headings, tables, and text content elements with their DOM positions
         all_elements = []
         
-        # Find all headings and tables
-        for elem in main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table'], recursive=True):
+        # Find all headings, tables, and text content (p, div, section, article, li)
+        # #region agent log
+        is_cms_team_page = 'cms' in str(url or '').lower() and 'team' in str(url or '').lower()
+        # Always log for debugging
+        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                'sessionId': 'debug-session',
+                'runId': 'run1',
+                'hypothesisId': 'A',
+                'location': 'crawl_desy_all_urls.py:2158',
+                'message': 'DOM extraction starting',
+                'data': {
+                    'url': str(url),
+                    'is_cms_team_page': is_cms_team_page,
+                    'main_content_area_name': main_content_area.name if main_content_area else None,
+                    'total_p_tags': len(main_content_area.find_all('p', recursive=True)) if main_content_area else 0,
+                    'total_h2_tags': len(main_content_area.find_all('h2', recursive=True)) if main_content_area else 0,
+                    'sample_p_texts': [p.get_text(strip=True)[:50] for p in main_content_area.find_all('p', recursive=True)[:10]] if main_content_area else []
+                },
+                'timestamp': int(__import__('time').time() * 1000)
+            }) + '\n')
+        # #endregion
+        for elem in main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p', 'div', 'section', 'article', 'li'], recursive=True):
             # Skip navigation headings
             if elem.name.startswith('h') and elem in nav_elements:
                 continue
             # Only process top-level tables (not nested)
             if elem.name == 'table' and elem.find_parent('table') is not None:
                 continue
+            # Skip text elements that are inside tables or navigation
+            if elem.name in ['p', 'div', 'section', 'article', 'li']:
+                if elem.find_parent('table') or elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                    continue
+                # For leaf elements (p, li), always process them (they're the actual text content)
+                if elem.name in ['p', 'li']:
+                    text = elem.get_text(strip=True)
+                    # #region agent log
+                    if is_cms_team_page and text:
+                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                'sessionId': 'debug-session',
+                                'runId': 'run1',
+                                'hypothesisId': 'B',
+                                'location': 'crawl_desy_all_urls.py:2178',
+                                'message': 'Checking p/li element',
+                                'data': {
+                                    'elem_name': elem.name,
+                                    'text_len': len(text),
+                                    'text_preview': text[:80],
+                                    'passes_threshold': len(text.strip()) >= 10
+                                },
+                                'timestamp': int(__import__('time').time() * 1000)
+                            }) + '\n')
+                    # #endregion
+                    if not text or len(text.strip()) < 10:
+                        continue
+                # For containers (div, section, article), skip them - we extract their children directly
+                elif elem.name in ['div', 'section', 'article']:
+                    continue
             
             # FIX 2: Calculate position: count only previous elements within main_content_area
             # This prevents counting navigation/header elements that appear before main content
             position = 0
             # Get all elements in main_content_area in document order
-            all_content_elems = main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table'], recursive=True)
+            all_content_elems = main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p', 'div', 'section', 'article', 'li'], recursive=True)
             for prev_elem in all_content_elems:
                 # Stop when we reach current element
                 if prev_elem == elem:
@@ -2144,6 +2224,12 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                         position += 1
                 elif prev_elem.name.startswith('h'):
                     position += 1
+                elif prev_elem.name in ['p', 'div', 'section', 'article', 'li']:
+                    # Only count text elements that aren't inside tables/nav
+                    if not prev_elem.find_parent('table') and not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                        text = prev_elem.get_text(strip=True)
+                        if text and len(text.strip()) >= 10:
+                            position += 1
             
             # #region agent log
             elem_text = elem.get_text(strip=True)[:50] if elem.name.startswith('h') else 'TABLE'
@@ -2167,11 +2253,38 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     }) + '\n')
             # #endregion
             
+            # Determine element type
+            if elem.name.startswith('h'):
+                elem_type = 'heading'
+            elif elem.name == 'table':
+                elem_type = 'table'
+            else:
+                elem_type = 'text'
+            
             all_elements.append({
                 'element': elem,
-                'type': 'heading' if elem.name.startswith('h') else 'table',
+                'type': elem_type,
                 'position': position
             })
+            # #region agent log
+            if is_cms_team_page:
+                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        'sessionId': 'debug-session',
+                        'runId': 'run1',
+                        'hypothesisId': 'C',
+                        'location': 'crawl_desy_all_urls.py:2250',
+                        'message': 'Element added to all_elements',
+                        'data': {
+                            'elem_type': elem_type,
+                            'elem_name': elem.name,
+                            'position': position,
+                            'text_preview': elem.get_text(strip=True)[:60] if elem_type in ['heading', 'text'] else 'TABLE'
+                        },
+                        'timestamp': int(__import__('time').time() * 1000)
+                    }) + '\n')
+            # #endregion
         
         # Sort by position
         all_elements.sort(key=lambda x: x['position'])
@@ -2207,7 +2320,26 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
         for item in all_elements:
             elem = item['element']
             
-            if item['type'] == 'heading':
+            if item['type'] == 'text':
+                # Extract text content from paragraph/div/section/etc.
+                # For elements that might contain headings/tables, extract only the text that's NOT in headings/tables
+                # Create a copy to avoid modifying the original
+                elem_copy = BeautifulSoup(str(elem), 'html.parser')
+                # Remove headings and tables from the copy
+                for heading in elem_copy.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    heading.decompose()
+                for table in elem_copy.find_all('table'):
+                    table.decompose()
+                # Now extract text from what remains
+                text = elem_copy.get_text(separator=' ', strip=True)
+                if text and len(text.strip()) > 10:  # Only meaningful text
+                    dom_ordered_content.append({
+                        'type': 'text',
+                        'text': text.strip(),
+                        'position': item['position']
+                    })
+            
+            elif item['type'] == 'heading':
                 heading_text = elem.get_text(strip=True)
                 if heading_text and heading_text not in seen_headings:
                     seen_headings.add(heading_text)
@@ -2329,6 +2461,9 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                         'position': item['position']
                     })
         
+        # Sort by position to ensure correct DOM order
+        dom_ordered_content.sort(key=lambda x: x['position'])
+        
         return dom_ordered_content
     except Exception as e:
         print(f"[DEBUG] extract_headings_and_tables_in_dom_order failed: {e}")
@@ -2362,6 +2497,10 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
         item = dom_ordered_content[i]
         
         if item['type'] == 'heading':
+            merged_content.append(item)
+            i += 1
+        elif item['type'] == 'text':
+            # Text content - add it directly to preserve DOM order
             merged_content.append(item)
             i += 1
         elif item['type'] == 'table':
@@ -2766,6 +2905,12 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
             level = item['level']
             text = item['text']
             markdown_output += '#' * level + ' ' + text + "\n\n"
+        
+        elif item['type'] == 'text':
+            # Text content - add it directly to preserve DOM order
+            text_content = item.get('text', '').strip()
+            if text_content:
+                markdown_output += text_content + "\n\n"
         
         elif item['type'] == 'table':
             table_data = item.get('data', {}) or {}
@@ -4514,6 +4659,8 @@ async def crawl_site():
     filter_chain = None
     URL_FILTER_CLASS = None
     URL_FILTER_TYPE = None  # 'RegexURLFilter' or 'URLPatternFilter'
+    FilterChain = None  # Will be set if available
+    FILTER_CHAIN_AVAILABLE = False
     
     try:
         # Try standard import path (older Crawl4AI versions)
@@ -4524,63 +4671,100 @@ async def crawl_site():
     except ImportError:
         try:
             # Try alternative import path (newer Crawl4AI versions)
-            from crawl4ai.deep_crawling.filters import URLPatternFilter
+            from crawl4ai.deep_crawling.filters import URLPatternFilter, FilterChain
             URL_FILTER_CLASS = URLPatternFilter
             URL_FILTER_TYPE = 'URLPatternFilter'
+            FILTER_CHAIN_AVAILABLE = True
             URL_FILTER_AVAILABLE = True
         except ImportError:
-            # URL filtering not available - this is OK, crawler will handle problematic URLs gracefully
-            URL_FILTER_AVAILABLE = False
+            try:
+                # Try to import FilterChain separately (might be in different location)
+                from crawl4ai.deep_crawling import FilterChain
+                FILTER_CHAIN_AVAILABLE = True
+                URL_FILTER_AVAILABLE = False
+            except ImportError:
+                # URL filtering not available - this is OK, crawler will handle problematic URLs gracefully
+                FILTER_CHAIN_AVAILABLE = False
+                URL_FILTER_AVAILABLE = False
     
     if URL_FILTER_AVAILABLE:
-        # Exclude .ics files (Indico calendar downloads) - these trigger downloads and fail
-        # Note: We want to scrape PDFs and images, so they are NOT excluded here
-        # Only exclude file types that aren't web pages and cause download errors
+        # URL FILTERING: Exclude non-content file extensions (no scraper defined for these)
+        # These file types are not web pages and should not be queued or scraped
+        # Previously PDFs/images were included, but user requested exclusion since no scraper is defined
         exclusion_patterns = [
             r'.*\.ics(\?.*)?$',  # Indico calendar files (.ics with optional query params)
-            # PDFs and images (.pdf, .png, .jpg) are NOT excluded - we want to scrape them
-            r'.*\.zip$',         # ZIP files
-            r'.*\.docx?$',      # Word documents
-            r'.*\.xlsx?$',      # Excel files
+            r'.*\.pdf(\?.*)?$',  # PDF files (no scraper defined)
+            r'.*\.jpg(\?.*)?$',  # JPEG images
+            r'.*\.jpeg(\?.*)?$', # JPEG images
+            r'.*\.png(\?.*)?$',  # PNG images
+            r'.*\.zip(\?.*)?$',  # ZIP files
+            r'.*\.docx?(\?.*)?$', # Word documents
+            r'.*\.mp4(\?.*)?$',  # MP4 videos
+            r'.*\.avi(\?.*)?$',  # AVI videos
+            r'.*\.xlsx?(\?.*)?$', # Excel files
         ]
         
-        # Create filter chain - use correct API based on filter type
+        # Create filter list first
+        filter_list = []
         if URL_FILTER_TYPE == 'RegexURLFilter':
             # RegexURLFilter API: (pattern, include=False) to exclude
-            filter_chain = [URL_FILTER_CLASS(pattern, include=False) for pattern in exclusion_patterns]
+            filter_list = [URL_FILTER_CLASS(pattern, include=False) for pattern in exclusion_patterns]
         elif URL_FILTER_TYPE == 'URLPatternFilter':
             # URLPatternFilter API: (patterns=[...], reverse=True) to exclude
             # reverse=True means exclude URLs matching the patterns
-            filter_chain = [URL_FILTER_CLASS(patterns=exclusion_patterns, reverse=True)]
+            filter_list = [URL_FILTER_CLASS(patterns=exclusion_patterns, reverse=True)]
+        
+        # Wrap filter list in FilterChain if available, otherwise use list directly
+        # Some crawl4ai versions expect FilterChain, others accept list
+        if FILTER_CHAIN_AVAILABLE and FilterChain is not None:
+            # Use FilterChain if available (newer crawl4ai versions require this)
+            try:
+                filter_chain = FilterChain(filter_list)
+            except (TypeError, AttributeError) as e:
+                # FilterChain might not accept list directly, or API changed
+                # Fallback: use list directly
+                print(f"[WARNING] FilterChain failed, using list directly: {e}")
+                filter_chain = filter_list if filter_list else None
+        else:
+            # Fallback: use list directly (for older versions that accept lists)
+            filter_chain = filter_list if filter_list else None
+    
+    # DOMAIN RESTRICTION: BFSDeepCrawlStrategy's include_external=False only allows exact domain match
+    # We need to manually filter links to allow *.desy.de subdomains in link extraction
+    # The filter_chain above handles file extensions, but domain restriction is handled separately
+    # Note: include_external=False will restrict to www.desy.de, but we manually allow *.desy.de in link extraction
     
     # BFSDeepCrawlStrategy uses Breadth-First Search algorithm:
     # - Crawls all pages at depth 1 before moving to depth 2
     # - Ensures systematic coverage without getting stuck in deep branches
     # - More predictable than Depth-First Search
-    deep_crawl_strategy = BFSDeepCrawlStrategy(
-        # max_depth: Maximum number of link levels to follow from starting URL
-        # Example: If you start at www.example.com and it links to www.example.com/about,
-        #          that's depth 1. If /about links to /about/team, that's depth 2.
-        # Depth 0 = only the starting page (no link following)
-        # Higher depths = more pages crawled (exponential growth)
-        max_depth=MAX_DEPTH,
-        
-        # include_external: Whether to follow links to OTHER domains
-        # False = only crawl pages within the same domain as the starting URL
-        # True = follow links to external websites (can lead to crawling entire internet!)
-        include_external=False,
-        
-        # max_pages: Maximum total number of pages to crawl
-        # Large number (like 10000) = effectively no limit
-        # Smaller number = stop after crawling this many pages
-        # Note: Cannot be None - must be a number
-        max_pages=MAX_PAGES,
-        
-        # filter_chain: Exclude URLs matching specific patterns (if available)
-        # This prevents crawling .ics files and other non-web-page files
-        # If None, no filtering is applied (crawler will handle problematic URLs gracefully)
-        filter_chain=filter_chain
-    )
+    # Only create when MAX_DEPTH > 0 (when MAX_DEPTH=0, we only crawl seed URLs)
+    deep_crawl_strategy = None
+    if MAX_DEPTH > 0:
+        deep_crawl_strategy = BFSDeepCrawlStrategy(
+            # max_depth: Maximum number of link levels to follow from starting URL
+            # Example: If you start at www.example.com and it links to www.example.com/about,
+            #          that's depth 1. If /about links to /about/team, that's depth 2.
+            # Depth 0 = only the starting page (no link following)
+            # Higher depths = more pages crawled (exponential growth)
+            max_depth=MAX_DEPTH,
+            
+            # include_external: Whether to follow links to OTHER domains
+            # False = only crawl pages within the same domain as the starting URL
+            # True = follow links to external websites (can lead to crawling entire internet!)
+            include_external=False,
+            
+            # max_pages: Maximum total number of pages to crawl
+            # Large number (like 10000) = effectively no limit
+            # Smaller number = stop after crawling this many pages
+            # Note: Cannot be None - must be a number
+            max_pages=MAX_PAGES,
+            
+            # filter_chain: Exclude URLs matching specific patterns (if available)
+            # This prevents crawling .ics files and other non-web-page files
+            # If None, no filtering is applied (crawler will handle problematic URLs gracefully)
+            filter_chain=filter_chain
+        )
     
     # BFSDeepCrawlStrategy uses Breadth-First Search algorithm:
     # - First crawls all pages at depth 1
@@ -4759,9 +4943,18 @@ async def crawl_site():
                     print(f"[INFO] HTML URL - using standard HTML crawling")
                 
                 # Create config for this URL
+                # CRITICAL FIX: excluded_tags removes nav/footer/header BEFORE link extraction
+                # This causes BFSDeepCrawlStrategy to miss links in those sections
+                # Solution: Use minimal excluded_tags for link extraction (only script/style/noscript)
+                # Keep full excluded_tags for markdown generation (applied later)
+                # Note: crawl4ai may apply excluded_tags during link extraction, so we minimize it here
+                link_extraction_excluded_tags = ['script', 'style', 'noscript'] if not is_pdf else None  # Minimal filtering for link extraction
+                markdown_excluded_tags = ['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'] if not is_pdf else None  # Full filtering for markdown
+                
                 config = CrawlerRunConfig(
-                    # deep_crawl_strategy: Tells crawler to follow links using our strategy
-                    deep_crawl_strategy=deep_crawl_strategy,
+                    # deep_crawl_strategy: Only use when MAX_DEPTH > 0
+                    # When MAX_DEPTH=0, we only crawl the seed URLs (no link following)
+                    deep_crawl_strategy=deep_crawl_strategy if MAX_DEPTH > 0 else None,
                     
                     # page_timeout: Maximum time to wait for page to load (in milliseconds)
                     # Increased timeout for JavaScript-heavy pages
@@ -4783,10 +4976,9 @@ async def crawl_site():
                     markdown_generator=markdown_generator if not is_pdf else None,
                     
                     # excluded_tags: Remove entire HTML tags (navigation, footers, etc.)
-                    # This removes elements BEFORE markdown generation, most effective
-                    # GENERAL: Remove navigation, header, footer, and UI elements
-                    # This prevents navigation menus, headers, and footers from appearing in markdown
-                    excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'] if not is_pdf else None,
+                    # When MAX_DEPTH=0, we can use full filtering since we're not extracting links
+                    # When MAX_DEPTH>0, use minimal filtering to ensure BFSDeepCrawlStrategy sees all links
+                    excluded_tags=markdown_excluded_tags if MAX_DEPTH == 0 else link_extraction_excluded_tags,
                     
                     # excluded_selector: CSS selectors for elements to exclude from extraction
                     # Complements excluded_tags with more granular control
@@ -4815,16 +5007,484 @@ async def crawl_site():
                 # - Extracts all links from the page
                 # - Follows those links (up to max_depth)
                 # - Returns a list of all crawled pages
-                results = await crawler.arun(root_url, config=config)
+                # CRITICAL: Normalize URL to remove www. prefix for proper domain matching
+                # crawl4ai treats www.desy.de and desy.de as different domains with include_external=False
+                # Removing www. ensures links to desy.de are followed when starting from www.desy.de
+                normalized_url = root_url.replace('://www.', '://') if root_url else root_url
+                if normalized_url != root_url:
+                    print(f"[INFO] Normalized URL for domain matching: {root_url} -> {normalized_url}")
+
+
+
+                # #region agent log
+                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        'sessionId': 'debug-session',
+                        'runId': 'run1',
+                        'hypothesisId': 'DOMAIN',
+                        'location': 'crawl_desy_all_urls.py:4856',
+                        'message': 'Starting crawl with normalized URL',
+                        'data': {
+                            'original_url': root_url,
+                            'normalized_url': normalized_url,
+                            'max_depth': MAX_DEPTH,
+                            'include_external': False,
+                            'max_pages': MAX_PAGES
+                        },
+                        'timestamp': int(__import__('time').time() * 1000)
+                    }) + '\n')
+                # #endregion
                 
-                # Accumulate results
+                # First, crawl the page to get initial results
+                # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
+                try:
+                    results = await crawler.arun(normalized_url, config=config)
+                except Exception as e:
+                    # Log timeout and other errors for future retries
+                    error_msg = str(e)
+                    is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
+                    
+                    error_entry = {
+                        'url': normalized_url,
+                        'error': error_msg,
+                        'error_type': type(e).__name__,
+                        'is_timeout': is_timeout,
+                        'timestamp': datetime.now().isoformat(),
+                        'note': 'Timeout errors can be retried with PAGE_TIMEOUT_EXTENDED in future runs'
+                    }
+                    all_errors.append(error_entry)
+                    
+                    if is_timeout:
+                        print(f"[TIMEOUT] {normalized_url}: {error_msg[:100]}")
+                    else:
+                        print(f"[ERROR] {normalized_url}: {error_msg[:100]}")
+                    
+                    # Continue with next URL - don't let one failure stop the entire crawl
+                    continue
+                
+                # #region agent log
+                result_count = len(results) if isinstance(results, list) else 1
+                result_list = results if isinstance(results, list) else [results]
+                result_urls = [r.url for r in result_list if r and hasattr(r, 'url') and r.url]
+                
+                # Check first result for links extracted
+                first_result = result_list[0] if result_list and result_list[0] else None
+                internal_links = []
+                external_links = []
+                html_links = []
+                links_structure = "unknown"
+                
+                if first_result and hasattr(first_result, 'links') and first_result.links:
+                    # crawl4ai returns links as dict: {"internal": [...], "external": [...]}
+                    if isinstance(first_result.links, dict):
+                        links_structure = "dict"
+                        internal_links = first_result.links.get('internal', [])[:20]
+                        external_links = first_result.links.get('external', [])[:10]
+                    elif isinstance(first_result.links, list):
+                        links_structure = "list"
+                        internal_links = first_result.links[:20]
+                
+                # Also extract links directly from HTML for comparison
+                if first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
+                    try:
+                        soup = BeautifulSoup(first_result.html, 'html.parser')
+                        html_links = [a.get('href', '') for a in soup.find_all('a', href=True) if a.get('href', '').startswith('https://desy.de/')][:30]
+                    except:
+                        pass
+                
+                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                    import json
+                    from urllib.parse import urlparse
+                    f.write(json.dumps({
+                        'sessionId': 'debug-session',
+                        'runId': 'run1',
+                        'hypothesisId': 'LINKS',
+                        'location': 'crawl_desy_all_urls.py:4881',
+                        'message': 'Crawl completed - link analysis',
+                        'data': {
+                            'normalized_url': normalized_url,
+                            'result_count': result_count,
+                            'urls_crawled': result_urls[:20],
+                            'links_structure': links_structure,
+                            'internal_links_count': len(internal_links) if internal_links else 0,
+                            'internal_links_sample': internal_links[:10] if internal_links else [],
+                            'external_links_count': len(external_links) if external_links else 0,
+                            'html_links_desy_de': html_links[:15],
+                            'unique_domains': list(set([urlparse(url).netloc for url in result_urls if url]))[:10]
+                        },
+                        'timestamp': int(__import__('time').time() * 1000)
+                    }) + '\n')
+                # #endregion
+                
+                # FIX: Extract links from full HTML (including nav/footer/header) and crawl them
+                # BUT: Only do this if MAX_DEPTH > 0 (when MAX_DEPTH=0, we only crawl seed URLs)
+                # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
+                # This ensures links like "desy.de/desy_in_leichter_sprache/index_ger.html" are crawled
+                additional_urls_to_crawl = []
+                if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
+                    try:
+                        from urllib.parse import urljoin, urlparse
+                        soup = BeautifulSoup(first_result.html, 'html.parser')
+                        base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else normalized_url
+                        base_domain = urlparse(base_url).netloc.replace('www.', '')
+                        
+                        # Get URLs already crawled (normalized)
+                        seen_urls = set()
+                        for url in result_urls:
+                            if url:
+                                normalized_seen = url.replace('://www.', '://')
+                                seen_urls.add(normalized_seen)
+                        
+                        # Extract ALL links from HTML (including nav/footer/header)
+                        all_links = soup.find_all('a', href=True)
+                        
+                        for link in all_links:
+                            href = link.get('href', '').strip()
+                            if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
+                                continue
+                            
+                            # Resolve relative URLs
+                            absolute_url = urljoin(base_url, href)
+                            parsed = urlparse(absolute_url)
+                            
+                            # Only include internal links (same domain, no www mismatch)
+                            link_domain = parsed.netloc.replace('www.', '')
+                            if link_domain == base_domain:
+                                # Normalize URL (remove www)
+                                normalized_link = absolute_url.replace('://www.', '://')
+                                # Only add if not already crawled
+                                if normalized_link not in seen_urls:
+                                    additional_urls_to_crawl.append(normalized_link)
+                                    seen_urls.add(normalized_link)
+                        
+                        # Crawl additional URLs found in HTML but missed by crawl4ai's link extraction
+                        if additional_urls_to_crawl:
+                            # #region agent log
+                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                import json
+                                f.write(json.dumps({
+                                    'sessionId': 'debug-session',
+                                    'runId': 'run1',
+                                    'hypothesisId': 'FIX',
+                                    'location': 'crawl_desy_all_urls.py:4930',
+                                    'message': 'Found additional URLs in HTML (nav/footer/header)',
+                                    'data': {
+                                        'additional_urls_count': len(additional_urls_to_crawl),
+                                        'additional_urls_sample': additional_urls_to_crawl[:10]
+                                    },
+                                    'timestamp': int(__import__('time').time() * 1000)
+                                }) + '\n')
+                            # #endregion
+                            
+                            # Crawl each additional URL individually (they'll be at depth 1)
+                            # Limit to reasonable number to avoid excessive crawling
+                            # Create a config without deep_crawl_strategy to crawl single pages only
+                            # These URLs should be crawled at depth 1 (single page, no link following)
+                            single_page_config = CrawlerRunConfig(
+                                page_timeout=PAGE_TIMEOUT,
+                                wait_until='networkidle' if not is_pdf else None,
+                                scraping_strategy=scraping_strategy,
+                                table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
+                                markdown_generator=markdown_generator if not is_pdf else None,
+                                excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'] if not is_pdf else None,
+                                excluded_selector=excluded_selector_str if not is_pdf else None,
+                                word_count_threshold=5 if not is_pdf else None,
+                                remove_forms=True if not is_pdf else None,
+                                verbose=True
+                                # NOTE: No deep_crawl_strategy - this ensures single page crawl only
+                            )
+                            
+                            for additional_url in additional_urls_to_crawl[:100]:
+                                try:
+                                    # Crawl single page (no deep crawl strategy = single page only)
+                                    # These will get depth 1 when processed (see depth assignment logic below)
+                                    additional_result = await crawler.arun(additional_url, config=single_page_config)
+                                    if isinstance(additional_result, list):
+                                        all_results.extend(additional_result)
+                                    else:
+                                        all_results.append(additional_result)
+                                except Exception as e:
+                                    # ERROR LOGGING: Log timeout and other errors for future retries
+                                    error_msg = str(e)
+                                    is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
+                                    
+                                    error_entry = {
+                                        'url': additional_url,
+                                        'error': error_msg,
+                                        'error_type': type(e).__name__,
+                                        'is_timeout': is_timeout,
+                                        'timestamp': datetime.now().isoformat(),
+                                        'note': 'Timeout errors can be retried with PAGE_TIMEOUT_EXTENDED in future runs'
+                                    }
+                                    all_errors.append(error_entry)
+                                    
+                                    if is_timeout:
+                                        print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
+                                    # Continue - some URLs might fail
+                    except Exception as e:
+                        # Log error but continue
+                        pass
+                
+                # Accumulate initial results
                 if isinstance(results, list):
                     all_results.extend(results)
                 else:
                     all_results.append(results)
             
             # ====================================================================
-            # STEP 7: Process All Results
+            # STEP 7: Extract links from ALL results (not just seed URL)
+            # ====================================================================
+            # CRITICAL FIX: Manual link extraction should run for ALL pages, not just seed URL
+            # BUT: Only do this if MAX_DEPTH > 0 (when MAX_DEPTH=0, we only crawl seed URLs)
+            # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
+            # from ALL crawled pages to ensure no links are missed
+            
+            # Collect all additional URLs to crawl from all results
+            # Track URL -> source_depth mapping to assign correct depths
+            all_additional_urls = {}  # {normalized_url: source_depth}
+            seen_crawled_urls = set()
+            # Track depth mapping for additional URLs (will be populated when crawling them)
+            additional_urls_with_depth = {}  # {normalized_url: depth} - populated during crawling
+            
+            # First, collect all URLs that were already crawled AND their depths
+            # This prevents us from reassigning depth to URLs that were already crawled by BFSDeepCrawlStrategy
+            crawled_urls_with_depth = {}  # {normalized_url: depth} - URLs already crawled with their depths
+            
+            # Only extract and crawl additional URLs if MAX_DEPTH > 0
+            if MAX_DEPTH > 0:
+                for result in all_results:
+                    if result:
+                        # Get depth from result metadata
+                        result_depth = 0
+                        if hasattr(result, 'metadata') and result.metadata:
+                            result_depth = result.metadata.get('depth', 0)
+                        elif hasattr(result, 'depth'):
+                            result_depth = result.depth
+                        
+                        # Check if it's a seed URL
+                        source_url = result.url if hasattr(result, 'url') and result.url else None
+                        if source_url:
+                            normalized_source = source_url.replace('://www.', '://')
+                            for root_url in ROOT_URLS:
+                                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                if normalized_source == normalized_seed:
+                                    result_depth = 0
+                                    break
+                        
+                        # If depth is 0 and not seed, default to 1
+                        if result_depth == 0 and source_url:
+                            is_seed = False
+                            normalized_source = source_url.replace('://www.', '://')
+                            for root_url in ROOT_URLS:
+                                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                if normalized_source == normalized_seed:
+                                    is_seed = True
+                                    break
+                            if not is_seed:
+                                result_depth = 1
+                        
+                        # Store URL and depth
+                        if hasattr(result, 'url') and result.url:
+                            normalized = result.url.replace('://www.', '://')
+                            seen_crawled_urls.add(normalized)
+                            crawled_urls_with_depth[normalized] = result_depth
+                        if hasattr(result, 'redirected_url') and result.redirected_url:
+                            normalized = result.redirected_url.replace('://www.', '://')
+                            seen_crawled_urls.add(normalized)
+                            crawled_urls_with_depth[normalized] = result_depth
+                
+                # Extract links from ALL results' HTML
+                # Track source page depth to assign correct depth to additional URLs
+                # IMPORTANT: Only assign depth to URLs that are NOT already in seen_crawled_urls
+                # If a URL was already crawled by BFSDeepCrawlStrategy, it already has correct depth
+                for result in all_results:
+                    if not result or not hasattr(result, 'html') or not result.html or not BEAUTIFULSOUP_AVAILABLE:
+                        continue
+                    
+                    try:
+                        # Determine source page depth
+                        source_depth = 0
+                        source_url = result.url if hasattr(result, 'url') and result.url else None
+                        if hasattr(result, 'metadata') and result.metadata:
+                            source_depth = result.metadata.get('depth', 0)
+                        elif hasattr(result, 'depth'):
+                            source_depth = result.depth
+                        
+                        # Check if this is a seed URL
+                        if source_url:
+                            normalized_source = source_url.replace('://www.', '://')
+                            for root_url in ROOT_URLS:
+                                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                if normalized_source == normalized_seed:
+                                    source_depth = 0
+                                    break
+                        
+                        # If source_depth is still 0 and it's not a seed URL, it's likely from a single-page crawl
+                        # In that case, we need to determine depth from the result's final URL
+                        if source_depth == 0 and source_url:
+                            normalized_source = source_url.replace('://www.', '://')
+                            # Check if redirected URL is different
+                            if hasattr(result, 'redirected_url') and result.redirected_url:
+                                normalized_final = result.redirected_url.replace('://www.', '://')
+                                for root_url in ROOT_URLS:
+                                    normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                    if normalized_final == normalized_seed:
+                                        source_depth = 0
+                                        break
+                            # If still 0 and not seed, default to 1
+                            if source_depth == 0:
+                                is_seed = False
+                                for root_url in ROOT_URLS:
+                                    normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                    if normalized_source == normalized_seed:
+                                        is_seed = True
+                                        break
+                                if not is_seed:
+                                    source_depth = 1
+                        
+                        from urllib.parse import urljoin, urlparse
+                        soup = BeautifulSoup(result.html, 'html.parser')
+                        base_url = result.url if hasattr(result, 'url') and result.url else None
+                        if not base_url:
+                            continue
+                        
+                        base_domain = urlparse(base_url).netloc.replace('www.', '')
+                        
+                        # Extract ALL links from HTML (including nav/footer/header)
+                        all_links = soup.find_all('a', href=True)
+                        
+                        for link in all_links:
+                            href = link.get('href', '').strip()
+                            if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
+                                continue
+                            
+                            # Resolve relative URLs
+                            absolute_url = urljoin(base_url, href)
+                            parsed = urlparse(absolute_url)
+                            
+                            # DOMAIN RESTRICTION: Only include *.desy.de subdomains
+                            # Allow all DESY subdomains (www.desy.de, photon-science.desy.de, etc.)
+                            # Exclude external domains (facebook.com, instagram.com, etc.)
+                            link_domain = parsed.netloc.replace('www.', '')
+                            is_desy_domain = link_domain.endswith('.desy.de') or link_domain == 'desy.de'
+                            if is_desy_domain:
+                                # Normalize URL (remove www)
+                                normalized_link = absolute_url.replace('://www.', '://')
+                                # Only add if not already crawled by BFSDeepCrawlStrategy
+                                # URLs already crawled have correct depth from BFS, don't reassign
+                                if normalized_link not in seen_crawled_urls:
+                                    # Track source depth: additional URL should be at source_depth + 1
+                                    # But keep minimum depth if URL was found from multiple pages
+                                    # Also ensure we don't exceed MAX_DEPTH
+                                    assigned_depth = source_depth + 1
+                                    if assigned_depth > MAX_DEPTH:
+                                        continue  # Skip URLs that would exceed max depth
+                                    
+                                    if normalized_link not in all_additional_urls:
+                                        all_additional_urls[normalized_link] = assigned_depth
+                                    else:
+                                        # Keep minimum depth (closest to seed) - but don't go below source_depth + 1
+                                        all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
+                                else:
+                                    # URL was already crawled - use its original depth from BFSDeepCrawlStrategy
+                                    # Don't add to all_additional_urls, it will use its original depth
+                                    pass
+                    except Exception as e:
+                        # Log but continue
+                        pass
+                
+                # Crawl all additional URLs found in HTML but missed by crawl4ai's link extraction
+                if all_additional_urls:
+                    # Debug: Count URLs by assigned depth
+                    depth_counts = {}
+                    for url, depth in all_additional_urls.items():
+                        depth_counts[depth] = depth_counts.get(depth, 0) + 1
+                    print(f"[INFO] Found {len(all_additional_urls)} additional URLs in HTML (nav/footer/header) from all pages")
+                    print(f"[INFO] Additional URLs by assigned depth: {depth_counts}")
+                    
+                    # Create a config for additional URLs
+                    # CRITICAL FIX: Use deep_crawl_strategy for additional URLs to enable recursive crawling
+                    # This ensures links found in nav/footer/header are also followed recursively
+                    # Limit depth to avoid excessive crawling (use remaining depth from MAX_DEPTH)
+                    additional_deep_crawl_strategy = BFSDeepCrawlStrategy(
+                        max_depth=MAX_DEPTH,  # Use full depth to ensure comprehensive crawling
+                        include_external=False,
+                        max_pages=MAX_PAGES,
+                        filter_chain=filter_chain if 'filter_chain' in locals() else None
+                    )
+                    
+                    # Config for additional URLs with deep crawl enabled
+                    # Use variables defined outside the loop (excluded_selector_str, table_extraction_strategy, markdown_generator)
+                    # CRITICAL: Use minimal excluded_tags here too to ensure links are found
+                    # Full filtering is applied during markdown generation via markdown_generator
+                    additional_urls_config = CrawlerRunConfig(
+                        deep_crawl_strategy=additional_deep_crawl_strategy,  # Enable deep crawl for additional URLs
+                        page_timeout=PAGE_TIMEOUT,
+                        wait_until='networkidle',
+                        scraping_strategy=None,  # Additional URLs are HTML, not PDF
+                        table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
+                        markdown_generator=markdown_generator if PRUNING_FILTER_AVAILABLE else None,
+                        excluded_tags=['script', 'style', 'noscript'],  # Minimal filtering for link extraction
+                        excluded_selector=excluded_selector_str,
+                        word_count_threshold=5,
+                        remove_forms=True,
+                        verbose=True
+                    )
+                    
+                    # Crawl additional URLs (limit to avoid excessive crawling)
+                    # Store depth mapping for additional URLs so we can assign correct depth later
+                    # Increased limit to 10,000 to capture more links from nav/footer/header
+                    additional_count = 0
+                    for additional_url, assigned_depth in list(all_additional_urls.items())[:10000]:  # Limit to 10,000
+                        try:
+                            # Use config with deep_crawl_strategy to enable recursive crawling
+                            additional_result = await crawler.arun(additional_url, config=additional_urls_config)
+                            if isinstance(additional_result, list):
+                                for res in additional_result:
+                                    if res:
+                                        # Store depth mapping for this result
+                                        if res.url:
+                                            normalized = res.url.replace('://www.', '://')
+                                            additional_urls_with_depth[normalized] = assigned_depth
+                                        if hasattr(res, 'redirected_url') and res.redirected_url:
+                                            normalized = res.redirected_url.replace('://www.', '://')
+                                            additional_urls_with_depth[normalized] = assigned_depth
+                                all_results.extend(additional_result)
+                            else:
+                                if additional_result:
+                                    # Store depth mapping for this result
+                                    if additional_result.url:
+                                        normalized = additional_result.url.replace('://www.', '://')
+                                        additional_urls_with_depth[normalized] = assigned_depth
+                                    if hasattr(additional_result, 'redirected_url') and additional_result.redirected_url:
+                                        normalized = additional_result.redirected_url.replace('://www.', '://')
+                                        additional_urls_with_depth[normalized] = assigned_depth
+                                all_results.append(additional_result)
+                            additional_count += 1
+                        except Exception as e:
+                            # ERROR LOGGING: Log timeout and other errors for future retries
+                            error_msg = str(e)
+                            is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
+                            
+                            error_entry = {
+                                'url': additional_url,
+                                'error': error_msg,
+                                'error_type': type(e).__name__,
+                                'is_timeout': is_timeout,
+                                'timestamp': datetime.now().isoformat(),
+                                'note': 'Timeout errors can be retried with PAGE_TIMEOUT_EXTENDED in future runs'
+                            }
+                            all_errors.append(error_entry)
+                            
+                            if is_timeout:
+                                print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
+                            # Continue - some URLs might fail
+                    
+                    print(f"[INFO] Crawled {additional_count} additional URLs from HTML links")
+            
+            # ====================================================================
+            # STEP 8: Process All Results
             # ====================================================================
             # Process accumulated results from all URLs
             results = all_results
@@ -4839,43 +5499,211 @@ async def crawl_site():
             # Loop through each crawled page and save its content
             # Track successes and failures
             
+            # #region agent log
+            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'START',
+                    'location': 'crawl_desy_all_urls.py:5505',
+                    'message': 'STEP 8: Starting to process results',
+                    'data': {
+                        'total_results': len(results),
+                        'sample_urls': [r.url if hasattr(r, 'url') else 'no_url' for r in results[:5]] if results else []
+                    },
+                    'timestamp': int(__import__('time').time() * 1000)
+                }) + '\n')
+            # #endregion
+
+            # Track seed URLs (normalized) to ensure they get depth 0
+            seed_urls_normalized = set()
+            for root_url in ROOT_URLS:
+                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                seed_urls_normalized.add(normalized_seed)
+            
+            # Track seen final URLs to prevent duplicates
+            seen_final_urls = set()
+            
+            # additional_urls_with_depth is defined in the link extraction section above
+            # It maps normalized URLs to their assigned depths
+            
+            # Track links found vs URLs crawled for analysis
+            links_found_vs_crawled = {
+                'total_links_found_in_html': 0,
+                'total_urls_crawled': 0,
+                'links_found_by_page': []
+            }
+            
             for result in results:
                 # Skip if result is invalid
                 if not result or not result.url:
                     continue
                 
                 try:
-                    # Track URL by depth
-                    # Get depth from result metadata (defaults to 0 if not available)
-                    depth = 0
-                    if hasattr(result, 'metadata') and result.metadata:
-                        depth = result.metadata.get('depth', 0)
-                    elif hasattr(result, 'depth'):
-                        depth = result.depth
+                    # Track both original and final URLs to handle redirects
+                    # crawl4ai provides: result.url (original) and result.redirected_url (final after redirects)
+                    original_url = result.url if hasattr(result, 'url') and result.url else None
+                    final_url = None
+                    is_redirect = False
+                    
+                    # Check if redirect occurred
+                    if hasattr(result, 'redirected_url') and result.redirected_url:
+                        final_url = result.redirected_url
+                        is_redirect = (original_url != final_url)
+                    else:
+                        final_url = original_url
+                    
+                    # Normalize URLs for comparison (remove www)
+                    normalized_original = original_url.replace('://www.', '://') if original_url else None
+                    normalized_final = final_url.replace('://www.', '://') if final_url else None
+                    
+                    # Skip 404 pages: Check URL pattern and HTTP status code.
+                    # Seed URLs should still be processed even if they redirect to a 404 placeholder.
+                    is_404_page = False
+                    status_code = getattr(result, 'status_code', None)
+                    if normalized_final and '/404/' in normalized_final:
+                        is_404_page = True
+                    elif status_code == 404:
+                        is_404_page = True
+                    # Identify seeds (normalized)
+                    is_seed_url = (normalized_original in seed_urls_normalized) or (normalized_final in seed_urls_normalized)
+                    # Do not skip seeds on 404 to ensure all seeds are saved
+                    if is_seed_url:
+                        is_404_page = False
+                    
+                    # #region agent log
+                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            'sessionId': 'debug-session',
+                            'runId': 'run1',
+                            'hypothesisId': 'Z',
+                            'location': 'crawl_desy_all_urls.py:5410',
+                            'message': '404 check',
+                            'data': {
+                                'original_url': original_url,
+                                'final_url': final_url,
+                                'normalized_final': normalized_final,
+                                'status_code': status_code,
+                                'is_seed_url': is_seed_url,
+                                'is_404_page': is_404_page
+                            },
+                            'timestamp': int(__import__('time').time() * 1000)
+                        }) + '\n')
+                    # #endregion
+                    
+                    if is_404_page:
+                        continue  # Skip 404 pages - don't track or save them
+                    
+                    # Skip if we've already seen this URL (deduplication)
+                    # For seeds, dedupe by original (so multiple seeds redirecting to the same 404 are still saved separately)
+                    dedup_key = normalized_final
+                    if (normalized_original in seed_urls_normalized) or (normalized_final in seed_urls_normalized):
+                        dedup_key = normalized_original or normalized_final
+                    if dedup_key and dedup_key in seen_final_urls:
+                        continue
+                    if dedup_key:
+                        seen_final_urls.add(dedup_key)
+                    
+                    # Determine depth: seed URLs always get depth 0
+                    # Otherwise use depth from result metadata or from additional_urls_with_depth mapping
+                    # IMPORTANT: When MAX_DEPTH=0, only seed URLs should be processed
+                    if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
+                        depth = 0  # Seed URL - always depth 0
+                    else:
+                        # For non-seed URLs, get depth from metadata or additional_urls_with_depth
+                        depth = 0  # Default
+                        
+                        # First check if this is an additional URL with assigned depth (from manual link extraction)
+                        if normalized_final in additional_urls_with_depth:
+                            depth = additional_urls_with_depth[normalized_final]
+                        elif normalized_original in additional_urls_with_depth:
+                            depth = additional_urls_with_depth[normalized_original]
+                        # Otherwise use depth from result metadata (from BFSDeepCrawlStrategy)
+                        elif hasattr(result, 'metadata') and result.metadata:
+                            depth = result.metadata.get('depth', 0)
+                        elif hasattr(result, 'depth'):
+                            depth = result.depth
+                        
+                        # If depth is still 0 and it's not a seed, it means it wasn't assigned properly
+                        # This shouldn't happen, but if it does, skip it when MAX_DEPTH=0
+                        if depth == 0 and MAX_DEPTH == 0:
+                            continue  # Skip non-seed URLs when MAX_DEPTH=0
+                        
+                        # Cap depth at MAX_DEPTH (don't exceed configured max depth)
+                        if depth > MAX_DEPTH:
+                            continue  # Skip URLs that exceed MAX_DEPTH
                     
                     # Initialize depth list if needed
                     depth_str = str(depth)
                     if depth_str not in all_urls_by_depth:
                         all_urls_by_depth[depth_str] = []
                     
-                    # Add URL to depth tracking
-                    all_urls_by_depth[depth_str].append(result.url)
+                    # Store URL entry with redirect information
+                    url_entry = {
+                        'original_url': original_url,
+                        'final_url': final_url,
+                        'is_redirect': is_redirect
+                    }
+                    all_urls_by_depth[depth_str].append(url_entry)
+                    
+                    # Track links found in HTML vs URLs crawled (for analysis)
+                    links_in_html = 0
+                    if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
+                        try:
+                            from urllib.parse import urlparse
+                            soup = BeautifulSoup(result.html, 'html.parser')
+                            base_url = final_url if final_url else original_url
+                            base_domain = urlparse(base_url).netloc.replace('www.', '') if base_url else ''
+                            
+                            # Count all internal links in HTML
+                            all_links = soup.find_all('a', href=True)
+                            for link in all_links:
+                                href = link.get('href', '').strip()
+                                if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
+                                    continue
+                                
+                                from urllib.parse import urljoin
+                                absolute_url = urljoin(base_url, href) if base_url else href
+                                parsed = urlparse(absolute_url)
+                                link_domain = parsed.netloc.replace('www.', '')
+                                
+                                # Count internal links only
+                                if link_domain == base_domain:
+                                    links_in_html += 1
+                        except:
+                            pass
+                    
+                    links_found_vs_crawled['total_links_found_in_html'] += links_in_html
+                    links_found_vs_crawled['total_urls_crawled'] += 1
+                    links_found_vs_crawled['links_found_by_page'].append({
+                        'url': final_url or original_url,
+                        'depth': depth_str,
+                        'links_found': links_in_html
+                    })
                     
                     # ============================================================
                     # Create a safe filename from the URL
                     # ============================================================
                     # URLs contain characters that aren't valid in filenames (/, :, etc.)
                     # So we convert: https://www.desy.de/about → www_desy_de_about
+                    # Use final_url for filename (what was actually crawled)
                     
-                    url_safe = result.url.replace("https://", "").replace("http://", "")
+                    url_for_filename = final_url if final_url else original_url
+                    url_safe = url_for_filename.replace("https://", "").replace("http://", "")
                     url_safe = url_safe.replace("/", "_").replace(":", "_")
                     
                     # Limit filename length (some URLs are very long)
                     if len(url_safe) > 200:
                         url_safe = url_safe[:200]
                     
-                    # Create full file path
-                    filename = OUTPUT_DIR / f"{url_safe}.md"
+                    # Organize files by depth: create depth-specific subdirectory
+                    depth_dir = OUTPUT_DIR / f"depth_{depth_str}"
+                    depth_dir.mkdir(exist_ok=True)  # Create depth directory if it doesn't exist
+                    
+                    # Create full file path in depth-specific directory
+                    filename = depth_dir / f"{url_safe}.md"
                     
                     # ============================================================
                     # Extract Markdown Content
@@ -4901,6 +5729,26 @@ async def crawl_site():
                                 fit_content = result.markdown.fit_markdown or ""
                                 raw_content = result.markdown.raw_markdown or ""
                                 
+                                # #region agent log
+                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                    import json
+                                    f.write(json.dumps({
+                                        'sessionId': 'debug-session',
+                                        'runId': 'run1',
+                                        'hypothesisId': 'A',
+                                        'location': 'crawl_desy_all_urls.py:5547',
+                                        'message': 'Markdown content lengths',
+                                        'data': {
+                                            'url': final_url or original_url,
+                                            'fit_len': len(fit_content.strip()),
+                                            'raw_len': len(raw_content.strip()),
+                                            'fit_preview': fit_content[:200] if fit_content else '',
+                                            'raw_preview': raw_content[:200] if raw_content else ''
+                                        },
+                                        'timestamp': int(__import__('time').time() * 1000)
+                                    }) + '\n')
+                                # #endregion
+                                
                                 # CRITICAL: For pages with tables, prefer raw_markdown to preserve table structure
                                 # Also use raw if fit is empty or much shorter
                                 if fit_content and raw_content:
@@ -4916,6 +5764,8 @@ async def crawl_site():
                                     
                                     if fit_len < 100 or (raw_len > 0 and (fit_len / raw_len) < 0.5) or (has_tables_in_raw and not has_tables_in_fit):
                                         markdown_content = raw_content
+                                        chosen = 'raw'
+                                        reason = 'fit_too_short' if fit_len < 100 else ('tables_missing' if has_tables_in_raw and not has_tables_in_fit else 'fit_too_aggressive')
                                         if fit_len < 100:
                                             print(f"[INFO] Using raw_markdown (fit_markdown was empty/too short: {fit_len} chars)")
                                         elif has_tables_in_raw and not has_tables_in_fit:
@@ -4924,6 +5774,31 @@ async def crawl_site():
                                             print(f"[INFO] Using raw_markdown (fit_markdown was {fit_len}/{raw_len} chars, may have lost content)")
                                     else:
                                         markdown_content = fit_content
+                                        chosen = 'fit'
+                                        reason = 'fit_acceptable'
+                                    
+                                    # #region agent log
+                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                        import json
+                                        f.write(json.dumps({
+                                            'sessionId': 'debug-session',
+                                            'runId': 'run1',
+                                            'hypothesisId': 'B',
+                                            'location': 'crawl_desy_all_urls.py:5563',
+                                            'message': 'Markdown selection decision',
+                                            'data': {
+                                                'url': final_url or original_url,
+                                                'chosen': chosen,
+                                                'reason': reason,
+                                                'fit_len': fit_len,
+                                                'raw_len': raw_len,
+                                                'ratio': fit_len / raw_len if raw_len > 0 else 0,
+                                                'has_tables_in_raw': has_tables_in_raw,
+                                                'has_tables_in_fit': has_tables_in_fit
+                                            },
+                                            'timestamp': int(__import__('time').time() * 1000)
+                                        }) + '\n')
+                                    # #endregion
                                 elif raw_content:
                                     # If only raw is available, use it
                                     markdown_content = raw_content
@@ -4984,6 +5859,27 @@ async def crawl_site():
                                                     tables_missing_vs_html or
                                                     (html_has_content and len(markdown_meaningful) < 50))
                                 
+                                # #region agent log
+                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                    import json
+                                    f.write(json.dumps({
+                                        'sessionId': 'debug-session',
+                                        'runId': 'run1',
+                                        'hypothesisId': 'C',
+                                        'location': 'crawl_desy_all_urls.py:5627',
+                                        'message': 'HTML fallback decision',
+                                        'data': {
+                                            'url': final_url or original_url,
+                                            'markdown_meaningful_len': len(markdown_meaningful),
+                                            'html_length': html_length,
+                                            'html_has_content': html_has_content,
+                                            'has_tables_in_markdown': has_tables_in_markdown,
+                                            'tables_missing_vs_html': tables_missing_vs_html,
+                                            'should_check_html': should_check_html
+                                        },
+                                        'timestamp': int(__import__('time').time() * 1000)
+                                    }) + '\n')
+                                # #endregion
                                 
                                 if should_check_html:
                                     print(f"[DEBUG] Will check HTML - markdown: {len(markdown_meaningful)} chars, html: {html_length} chars, has_tables: {has_tables_in_markdown}")
@@ -4991,17 +5887,77 @@ async def crawl_site():
                                         try:
                                             soup = BeautifulSoup(result.html, 'html.parser')
                                             
-                                            
                                             # SIMPLIFIED: Always extract from HTML if markdown is empty or too short
-                                            # No complex contact block extraction - just extract all content properly
+                                            # CRITICAL FIX: Use raw HTML length as a proxy for content richness
+                                            # If HTML is much larger than markdown, it likely has more content that was filtered out
+                                            # This is more reliable than soup.get_text() which may be affected by filtering or dynamic content
+                                            
+                                            # Calculate a rough estimate: HTML typically has 3-5x more chars than text content
+                                            # So if HTML is 10x+ larger than markdown, there's likely missing content
+                                            # Also check if markdown is missing tables when HTML might have them
+                                            html_to_markdown_ratio = html_length / len(markdown_meaningful) if len(markdown_meaningful) > 0 else float('inf')
+                                            
+                                            # #region agent log
+                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                import json
+                                                f.write(json.dumps({
+                                                    'sessionId': 'debug-session',
+                                                    'runId': 'run1',
+                                                    'hypothesisId': 'F2',
+                                                    'location': 'crawl_desy_all_urls.py:5713',
+                                                    'message': 'Ratio calculated',
+                                                    'data': {
+                                                        'url': final_url or original_url,
+                                                        'html_length': html_length,
+                                                        'markdown_meaningful_len': len(markdown_meaningful),
+                                                        'html_to_markdown_ratio': html_to_markdown_ratio,
+                                                        'has_tables_in_markdown': has_tables_in_markdown,
+                                                        'check1': not markdown_meaningful,
+                                                        'check2': len(markdown_meaningful) < 100,
+                                                        'check3': tables_missing_vs_html,
+                                                        'check4': (html_length > 30000 and html_to_markdown_ratio > 10 and not has_tables_in_markdown)
+                                                    },
+                                                    'timestamp': int(__import__('time').time() * 1000)
+                                                }) + '\n')
+                                            # #endregion
+                                            
+                                            # Extract if:
+                                            # 1. Markdown is empty/too short
+                                            # 2. Tables are missing
+                                            # 3. HTML is much larger than markdown (10x+) AND markdown has no tables
+                                            #    This catches cases where PruningContentFilter removed detailed content sections
+                                            #    The 10x ratio accounts for HTML tags/attributes, so if HTML is 10x+ larger,
+                                            #    there's likely substantial content missing from markdown
                                             should_extract = (not markdown_meaningful or 
                                                             len(markdown_meaningful) < 100 or
-                                                            tables_missing_vs_html)
+                                                            tables_missing_vs_html or
+                                                            (html_length > 30000 and html_to_markdown_ratio > 10 and not has_tables_in_markdown))
                                             
                                             if should_extract:
                                                 # Count HTML tables for debug output
                                                 html_table_count = len(soup.find_all('table', recursive=True)) if soup else 0
-                                                print(f"[DEBUG] Will use Crawl4AI tables - markdown_meaningful: {len(markdown_meaningful)} chars, html_tables: {html_table_count}, markdown_tables: {has_tables_in_markdown}, html_length: {html_length}")
+                                                print(f"[DEBUG] Will use Crawl4AI tables - markdown_meaningful: {len(markdown_meaningful)} chars, html_tables: {html_table_count}, markdown_tables: {has_tables_in_markdown}, html_length: {html_length}, html_to_markdown_ratio: {html_to_markdown_ratio:.2f}")
+                                                
+                                                # #region agent log
+                                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                    import json
+                                                    f.write(json.dumps({
+                                                        'sessionId': 'debug-session',
+                                                        'runId': 'run1',
+                                                        'hypothesisId': 'F',
+                                                        'location': 'crawl_desy_all_urls.py:5647',
+                                                        'message': 'HTML extraction decision',
+                                                        'data': {
+                                                            'url': final_url or original_url,
+                                                            'should_extract': should_extract,
+                                                            'markdown_meaningful_len': len(markdown_meaningful),
+                                                            'html_length': html_length,
+                                                            'html_to_markdown_ratio': html_to_markdown_ratio,
+                                                            'reason': 'empty' if not markdown_meaningful else ('too_short' if len(markdown_meaningful) < 100 else ('tables_missing' if tables_missing_vs_html else 'ratio_high'))
+                                                        },
+                                                        'timestamp': int(__import__('time').time() * 1000)
+                                                    }) + '\n')
+                                                # #endregion
                                                 
                                                 # Use only Crawl4AI's table extraction - skip all custom HTML parsing
                                                 # Tables will be extracted from result.tables later in the code
@@ -5064,16 +6020,83 @@ async def crawl_site():
                                                               soup.find('div', class_=re.compile(r'content|main|body', re.I)) or
                                                               soup.find('div', id=re.compile(r'content|main|body', re.I)))
                                                 
+                                                # #region agent log
+                                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                    import json
+                                                    main_found = main_content is not None
+                                                    main_text_len = len(main_content.get_text(strip=True)) if main_content else 0
+                                                    f.write(json.dumps({
+                                                        'sessionId': 'debug-session',
+                                                        'runId': 'run1',
+                                                        'hypothesisId': 'D',
+                                                        'location': 'crawl_desy_all_urls.py:5708',
+                                                        'message': 'Main content container search',
+                                                        'data': {
+                                                            'url': final_url or original_url,
+                                                            'main_found': main_found,
+                                                            'main_text_len': main_text_len,
+                                                            'html_table_count': html_table_count
+                                                        },
+                                                        'timestamp': int(__import__('time').time() * 1000)
+                                                    }) + '\n')
+                                                # #endregion
+                                                
                                                 # If main_content is too small or not found, try body
-                                                # RELAXED: Lower threshold from 50 to 20 chars to catch contact pages
-                                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
-                                                    main_content = soup.find('body')
-                                                    if main_content:
-                                                        print(f"[DEBUG] Using body as main content ({len(main_content.get_text(strip=True))} chars)")
+                                                # CRITICAL FIX: If main_content is smaller than markdown, it's likely wrong
+                                                # Use body instead to get all content, then filter more carefully
+                                                main_content_text_len = len(main_content.get_text(strip=True)) if main_content else 0
+                                                
+                                                # #region agent log
+                                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                    import json
+                                                    f.write(json.dumps({
+                                                        'sessionId': 'debug-session',
+                                                        'runId': 'run1',
+                                                        'hypothesisId': 'G',
+                                                        'location': 'crawl_desy_all_urls.py:5862',
+                                                        'message': 'Main content vs markdown comparison',
+                                                        'data': {
+                                                            'url': final_url or original_url,
+                                                            'main_content_text_len': main_content_text_len,
+                                                            'markdown_meaningful_len': len(markdown_meaningful),
+                                                            'ratio': main_content_text_len / len(markdown_meaningful) if len(markdown_meaningful) > 0 else 0,
+                                                            'should_use_body': main_content_text_len < len(markdown_meaningful) * 0.8
+                                                        },
+                                                        'timestamp': int(__import__('time').time() * 1000)
+                                                    }) + '\n')
+                                                # #endregion
+                                                
+                                                if not main_content or main_content_text_len < 20 or main_content_text_len < len(markdown_meaningful) * 0.8:
+                                                    # Main content is too small or smaller than markdown - use body
+                                                    body = soup.find('body')
+                                                    if body:
+                                                        body_text_len = len(body.get_text(strip=True))
+                                                        if body_text_len > main_content_text_len:
+                                                            main_content = body
+                                                            print(f"[DEBUG] Using body as main content (body: {body_text_len} chars, main: {main_content_text_len} chars, markdown: {len(markdown_meaningful)} chars)")
+                                                            
+                                                            # #region agent log
+                                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                                import json
+                                                                f.write(json.dumps({
+                                                                    'sessionId': 'debug-session',
+                                                                    'runId': 'run1',
+                                                                    'hypothesisId': 'G',
+                                                                    'location': 'crawl_desy_all_urls.py:5890',
+                                                                    'message': 'Switched to body',
+                                                                    'data': {
+                                                                        'url': final_url or original_url,
+                                                                        'body_text_len': body_text_len,
+                                                                        'main_content_text_len': main_content_text_len
+                                                                    },
+                                                                    'timestamp': int(__import__('time').time() * 1000)
+                                                                }) + '\n')
+                                                            # #endregion
                                                 
                                                 # If still no good content, check for common content divs with substantial text
                                                 # RELAXED: Lower threshold and check for contact info patterns
-                                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
+                                                main_content_text_len = len(main_content.get_text(strip=True)) if main_content else 0
+                                                if not main_content or main_content_text_len < 20:
                                                     # Look for any div with text content (lowered threshold)
                                                     all_divs = soup.find_all('div')
                                                     best_div = None
@@ -5255,91 +6278,162 @@ async def crawl_site():
                                                     # inside layout tables, so extract headings first, then drop tables.
                                                     main_content_for_text = BeautifulSoup(str(main_content), 'html.parser')
                                                     
-                                                    # SIMPLIFIED: Extract all paragraphs and text, preserving structure
-                                                    # No complex contact block extraction - just extract everything properly
-                                                    lines = []
-                                                    
-                                                    # FIX 1: Disable old heading extraction - headings are now extracted in DOM order
-                                                    # via extract_headings_and_tables_in_dom_order() and added to tables_markdown
-                                                    # This prevents duplicate headings and wrong ordering from navigation elements
-                                                    # Headings will be extracted separately with proper DOM order and table associations
+                                                    # CRITICAL FIX: For pages where HTML >> markdown, use simpler extraction
+                                                    # Extract text directly with proper structure preservation, then apply minimal filtering
+                                                    # This avoids losing content through aggressive paragraph-based filtering
                                                     
                                                     # Remove all table elements since we've already extracted them
                                                     for table_elem in main_content_for_text.find_all('table'):
                                                         table_elem.decompose()
                                                     
-                                                    # Extract all paragraphs and divs (preserves structure, INCLUDES FIRST PARAGRAPH)
-                                                    all_paras = main_content_for_text.find_all(['p', 'div'], recursive=True)
-                                                    i = 0
-                                                    while i < len(all_paras):
-                                                        para = all_paras[i]
-                                                        # Skip if inside a table (already extracted)
-                                                        if para.find_parent('table'):
-                                                            i += 1
-                                                            continue
-                                                        
-                                                        # Skip if it's a heading (already extracted)
-                                                        if para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                                            i += 1
-                                                            continue
-                                                        
-                                                        # Get text from this paragraph (links already converted to markdown, INCLUDING EMAILS)
-                                                        para_text = para.get_text(separator=' ', strip=True)
-                                                        if para_text and len(para_text.strip()) > 2:
-                                                            # Normalize whitespace but keep structure
-                                                            para_text = re.sub(r'\s+', ' ', para_text, flags=re.UNICODE).strip()
+                                                    # Remove navigation/footer/header elements that might still be present
+                                                    for nav_elem in main_content_for_text.find_all(['nav', 'header', 'footer', 'aside']):
+                                                        nav_elem.decompose()
+                                                    
+                                                    # CRITICAL FIX: Extract text directly with structure preserved
+                                                    # Use get_text with separator='\n' to preserve line breaks between block elements
+                                                    # This captures all content including sections, lists, and paragraphs
+                                                    # without the nested element duplication problem
+                                                    text_with_structure = main_content_for_text.get_text(separator='\n', strip=True)
+                                                    
+                                                    # Split into lines - each block element becomes a line
+                                                    # This preserves structure while avoiding nested duplication
+                                                    lines = [l.strip() for l in text_with_structure.split('\n') if l.strip()]
+                                                    
+                                                    # #region agent log
+                                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                        import json
+                                                        f.write(json.dumps({
+                                                            'sessionId': 'debug-session',
+                                                            'runId': 'run1',
+                                                            'hypothesisId': 'I',
+                                                            'location': 'crawl_desy_all_urls.py:6119',
+                                                            'message': 'Direct text extraction result',
+                                                            'data': {
+                                                                'url': final_url or original_url,
+                                                                'text_with_structure_length': len(text_with_structure),
+                                                                'num_lines': len(lines),
+                                                                'sample_lines': lines[:5] if lines else []
+                                                            },
+                                                            'timestamp': int(__import__('time').time() * 1000)
+                                                        }) + '\n')
+                                                    # #endregion
+                                                    
+                                                    # CRITICAL FIX: Always use direct extraction for pages where HTML >> markdown
+                                                    # Direct extraction preserves all content without nested duplication issues
+                                                    # Only use paragraph-based extraction if direct extraction failed completely
+                                                    if len(text_with_structure) >= 100:
+                                                        # Direct extraction worked - use it (preserves all content)
+                                                        text = text_with_structure
+                                                        # #region agent log
+                                                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                            import json
+                                                            f.write(json.dumps({
+                                                                'sessionId': 'debug-session',
+                                                                'runId': 'run1',
+                                                                'hypothesisId': 'I',
+                                                                'location': 'crawl_desy_all_urls.py:6123',
+                                                                'message': 'Using direct text extraction',
+                                                                'data': {
+                                                                    'url': final_url or original_url,
+                                                                    'text_length': len(text),
+                                                                    'num_lines': len(lines)
+                                                                },
+                                                                'timestamp': int(__import__('time').time() * 1000)
+                                                            }) + '\n')
+                                                        # #endregion
+                                                    else:
+                                                        # Fallback: try paragraph-based extraction
+                                                        all_paras = main_content_for_text.find_all(['p', 'div', 'section', 'article', 'li'], recursive=True)
+                                                        para_lines = []
+                                                        i = 0
+                                                        while i < len(all_paras):
+                                                            para = all_paras[i]
+                                                            # Skip if inside a table (already extracted)
+                                                            if para.find_parent('table'):
+                                                                i += 1
+                                                                continue
                                                             
-                                                            # GENERAL: Merge contact info split across multiple short paragraphs
-                                                            # Contact info is often split like: "Name (pronouns)" -> "Title" -> "T. phone" -> "E. email"
-                                                            # If paragraph has name pattern but no contact info, merge with next short paragraphs until contact info is found
-                                                            if para_text and re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', para_text) and not re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', para_text, re.I):
-                                                                merged = para_text
-                                                                j = i + 1
-                                                                # Merge up to 5 consecutive short paragraphs
-                                                                while j < len(all_paras) and j - i <= 5:
-                                                                    next_para = all_paras[j]
-                                                                    if next_para.find_parent('table') or next_para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                                                        break
-                                                                    next_text = next_para.get_text(separator=' ', strip=True)
-                                                                    if next_text and len(next_text.strip()) > 2:
-                                                                        next_text = re.sub(r'\s+', ' ', next_text, flags=re.UNICODE).strip()
-                                                                        # Stop if next paragraph is another name
-                                                                        if re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', next_text):
+                                                            # Skip if it's a heading (already extracted)
+                                                            if para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                                                                i += 1
+                                                                continue
+                                                            
+                                                            # Get text from this paragraph (links already converted to markdown, INCLUDING EMAILS)
+                                                            para_text = para.get_text(separator=' ', strip=True)
+                                                            if para_text and len(para_text.strip()) > 2:
+                                                                # Normalize whitespace but keep structure
+                                                                para_text = re.sub(r'\s+', ' ', para_text, flags=re.UNICODE).strip()
+                                                                
+                                                                # GENERAL: Merge contact info split across multiple short paragraphs
+                                                                # Contact info is often split like: "Name (pronouns)" -> "Title" -> "T. phone" -> "E. email"
+                                                                # If paragraph has name pattern but no contact info, merge with next short paragraphs until contact info is found
+                                                                if para_text and re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', para_text) and not re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', para_text, re.I):
+                                                                    merged = para_text
+                                                                    j = i + 1
+                                                                    # Merge up to 5 consecutive short paragraphs
+                                                                    while j < len(all_paras) and j - i <= 5:
+                                                                        next_para = all_paras[j]
+                                                                        if next_para.find_parent('table') or next_para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                                                                             break
-                                                                        # Merge short paragraphs (< 80 chars) or paragraphs with contact info
-                                                                        if len(next_text) < 80 or re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', next_text, re.I):
-                                                                            merged = f"{merged} {next_text}"
-                                                                            j += 1
-                                                                            # Stop if we found contact info
-                                                                            if re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', merged, re.I):
+                                                                        next_text = next_para.get_text(separator=' ', strip=True)
+                                                                        if next_text and len(next_text.strip()) > 2:
+                                                                            next_text = re.sub(r'\s+', ' ', next_text, flags=re.UNICODE).strip()
+                                                                            # Stop if next paragraph is another name
+                                                                            if re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', next_text):
+                                                                                break
+                                                                            # Merge short paragraphs (< 80 chars) or paragraphs with contact info
+                                                                            if len(next_text) < 80 or re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', next_text, re.I):
+                                                                                merged = f"{merged} {next_text}"
+                                                                                j += 1
+                                                                                # Stop if we found contact info
+                                                                                if re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', merged, re.I):
+                                                                                    break
+                                                                            else:
                                                                                 break
                                                                         else:
-                                                                            break
-                                                                    else:
-                                                                        j += 1
-                                                                para_text = merged
-                                                                i = j  # Skip merged paragraphs
+                                                                            j += 1
+                                                                    para_text = merged
+                                                                    i = j  # Skip merged paragraphs
+                                                                else:
+                                                                    i += 1
+                                                                
+                                                                # Skip if it's just a URL or navigation
+                                                                if not re.match(r'^URL:\s*https?://', para_text, re.IGNORECASE):
+                                                                    if not re.match(r'^Breadcrumb\s+Navigation', para_text, re.IGNORECASE):
+                                                                        # Skip navigation/footer patterns
+                                                                        nav_keywords = ['data privacy', 'declaration of accessibility', 'impressum', 
+                                                                                       'datenschutz', 'cookie policy', 'accessibility statement']
+                                                                        if not any(keyword in para_text.lower() for keyword in nav_keywords):
+                                                                            para_lines.append(para_text)
                                                             else:
                                                                 i += 1
-                                                            
-                                                            # Skip if it's just a URL or navigation
-                                                            if not re.match(r'^URL:\s*https?://', para_text, re.IGNORECASE):
-                                                                if not re.match(r'^Breadcrumb\s+Navigation', para_text, re.IGNORECASE):
-                                                                    # Skip navigation/footer patterns
-                                                                    nav_keywords = ['data privacy', 'declaration of accessibility', 'impressum', 
-                                                                                   'datenschutz', 'cookie policy', 'accessibility statement']
-                                                                    if not any(keyword in para_text.lower() for keyword in nav_keywords):
-                                                                        lines.append(para_text)
-                                                        else:
-                                                            i += 1
+                                                        
+                                                        # If no paragraphs found, fall back to line-by-line extraction
+                                                        if not para_lines:
+                                                            fallback_text = main_content_for_text.get_text(separator='\n', strip=True)
+                                                            para_lines = [l for l in fallback_text.split('\n') if l.strip() and len(l.strip()) > 2]
+                                                        
+                                                        text = '\n'.join(para_lines)
+                                                        lines = para_lines
                                                     
-                                                    # If no paragraphs found, fall back to line-by-line extraction
-                                                    if not lines:
-                                                        text = main_content_for_text.get_text(separator='\n', strip=True)
-                                                        lines = [l for l in text.split('\n') if l.strip() and len(l.strip()) > 2]
-                                                    
-                                                    text = '\n'.join(lines)
-                                                    
+                                                    # #region agent log
+                                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                        import json
+                                                        f.write(json.dumps({
+                                                            'sessionId': 'debug-session',
+                                                            'runId': 'run1',
+                                                            'hypothesisId': 'H',
+                                                            'location': 'crawl_desy_all_urls.py:6143',
+                                                            'message': 'Text extracted from main_content',
+                                                            'data': {
+                                                                'url': final_url or original_url,
+                                                                'text_length_before_filtering': len(text),
+                                                                'num_lines': len(lines)
+                                                            },
+                                                            'timestamp': int(__import__('time').time() * 1000)
+                                                        }) + '\n')
+                                                    # #endregion
                                                     
                                                     # SIMPLIFIED: Basic filtering - only remove obvious noise
                                                     # Keep all content, including first paragraph and emails
@@ -5449,7 +6543,11 @@ async def crawl_site():
                                                         if len(line_stripped) < 3 and not line_stripped.startswith('#'):
                                                             continue
                                                         # 4. Exact duplicates (keep first occurrence)
+                                                        # CRITICAL FIX: Only filter exact duplicates, not similar lines
+                                                        # This prevents removing legitimate content that happens to be similar
                                                         line_signature = re.sub(r'\s+', ' ', line_stripped.lower()).strip()
+                                                        # Only skip if it's an EXACT duplicate (same signature)
+                                                        # Don't filter based on partial matches or similarity
                                                         if line_signature in seen_lines:
                                                             continue
                                                         seen_lines.add(line_signature)
@@ -5459,9 +6557,47 @@ async def crawl_site():
                                                     
                                                     text = '\n'.join(filtered_lines)
                                                     
+                                                    # #region agent log
+                                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                        import json
+                                                        f.write(json.dumps({
+                                                            'sessionId': 'debug-session',
+                                                            'runId': 'run1',
+                                                            'hypothesisId': 'H',
+                                                            'location': 'crawl_desy_all_urls.py:6262',
+                                                            'message': 'Text after basic filtering',
+                                                            'data': {
+                                                                'url': final_url or original_url,
+                                                                'text_length_after_filtering': len(text),
+                                                                'num_filtered_lines': len(filtered_lines)
+                                                            },
+                                                            'timestamp': int(__import__('time').time() * 1000)
+                                                        }) + '\n')
+                                                    # #endregion
+                                                    
                                                     # Apply enhanced duplication detection
                                                     lines_list = text.split('\n')
                                                     duplicates = detect_enhanced_repetition(lines_list)
+                                                    
+                                                    # #region agent log
+                                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                        import json
+                                                        f.write(json.dumps({
+                                                            'sessionId': 'debug-session',
+                                                            'runId': 'run1',
+                                                            'hypothesisId': 'J',
+                                                            'location': 'crawl_desy_all_urls.py:6377',
+                                                            'message': 'Enhanced duplication detection',
+                                                            'data': {
+                                                                'url': final_url or original_url,
+                                                                'text_length_before_dedup': len(text),
+                                                                'num_lines_before_dedup': len(lines_list),
+                                                                'num_duplicates': len(duplicates),
+                                                                'duplicate_indices': list(duplicates)[:20]  # First 20 for debugging
+                                                            },
+                                                            'timestamp': int(__import__('time').time() * 1000)
+                                                        }) + '\n')
+                                                    # #endregion
                                                     
                                                     # Remove duplicate lines (keep first occurrence)
                                                     deduplicated_lines = []
@@ -5470,6 +6606,24 @@ async def crawl_site():
                                                             deduplicated_lines.append(line)
                                                     
                                                     text = '\n'.join(deduplicated_lines)
+                                                    
+                                                    # #region agent log
+                                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                                        import json
+                                                        f.write(json.dumps({
+                                                            'sessionId': 'debug-session',
+                                                            'runId': 'run1',
+                                                            'hypothesisId': 'J',
+                                                            'location': 'crawl_desy_all_urls.py:6395',
+                                                            'message': 'After enhanced deduplication',
+                                                            'data': {
+                                                                'url': final_url or original_url,
+                                                                'text_length_after_dedup': len(text),
+                                                                'num_lines_after_dedup': len(deduplicated_lines)
+                                                            },
+                                                            'timestamp': int(__import__('time').time() * 1000)
+                                                        }) + '\n')
+                                                    # #endregion
                                                     
                                                     # Clean markdown link syntax (remove whitespace from links)
                                                     text = clean_markdown_links_post_process(text)
@@ -6735,19 +7889,9 @@ async def crawl_site():
                                     continue
                                 seen_headings[heading_sig] = i
                             
-                            # FIX: Remove text lines that are substrings of table content
-                            # This catches role descriptions that appear both as standalone text AND in tables
-                            if tables_markdown and not stripped.startswith(('#', '|', '-', '*')):
-                                # Normalize whitespace for comparison (collapse multiple spaces to single)
-                                stripped_normalized = re.sub(r'\s+', ' ', stripped.lower().strip())
-                                # Check if this line appears inside any table cell
-                                if len(stripped_normalized) > 5:  # Only check meaningful lines
-                                    # Normalize table content for comparison (collapse whitespace)
-                                    tables_normalized = re.sub(r'\s+', ' ', tables_markdown.lower())
-                                    # Check if this text appears in a table cell
-                                    if stripped_normalized in tables_normalized:
-                                        # Skip this line - it's a duplicate of table content
-                                        continue
+                            # NOTE: Previously removed text that appears in tables_markdown, but this
+                            # filter is no longer needed since tables_markdown now contains text items
+                            # from DOM extraction and we want to keep them.
                             
                             # GENERAL: Normalize text spacing to fix concatenation issues
                             # Apply only to non-markdown lines (text content)
@@ -6868,6 +8012,66 @@ async def crawl_site():
                         
                         content_to_save = '\n'.join(final_cleaned)
                         
+                        # MINIMAL FIX: Clean up excessive whitespace at beginning and throughout
+                        # Remove more than 2 consecutive empty lines anywhere in the file
+                        content_to_save = re.sub(r'\n{4,}', '\n\n\n', content_to_save)
+                        # Remove leading whitespace after URL header (keep only 1-2 empty lines)
+                        content_to_save = re.sub(r'(# Source URL\n\n[^\n]+\n)\n{3,}', r'\1\n\n', content_to_save)
+                        
+                        # Skip empty pages: Check if content is meaningful (not just URL header and minimal text)
+                        # Remove URL header and separators to check actual content
+                        content_without_header = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', content_to_save, flags=re.IGNORECASE | re.MULTILINE)
+                        content_meaningful = content_without_header.strip()
+                        
+                        # Skip if content is too short or only contains error messages.
+                        # Preserve seed URLs: do not skip seeds even if small, so every seed writes a file.
+                        is_seed_url = False
+                        if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
+                            is_seed_url = True
+                        is_empty_page = False
+                        if not is_seed_url:
+                            if len(content_meaningful) < 50:  # Very short content
+                                is_empty_page = True
+                            elif len(content_meaningful) < 200:
+                                # Check if it's just error messages or minimal content
+                                error_patterns = [
+                                    r'page could not be found',
+                                    r'404',
+                                    r'not found',
+                                    r'error',
+                                    r'page not available'
+                                ]
+                                content_lower = content_meaningful.lower()
+                                if any(pattern in content_lower for pattern in error_patterns):
+                                    # Count meaningful words (exclude links, headers, etc.)
+                                    words = [w for w in content_meaningful.split() if len(w) > 2 and not w.startswith('http') and not w.startswith('#')]
+                                    if len(words) < 10:  # Less than 10 meaningful words
+                                        is_empty_page = True
+
+                        if is_empty_page:
+                            print(f"[SKIP] Empty/minimal content page: {final_url or original_url}")
+                            continue  # Skip saving this page
+
+                        # #region agent log
+                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                'sessionId': 'debug-session',
+                                'runId': 'run1',
+                                'hypothesisId': 'E',
+                                'location': 'crawl_desy_all_urls.py:7635',
+                                'message': 'Final content before save',
+                                'data': {
+                                    'url': final_url or original_url,
+                                    'content_length': len(content_to_save),
+                                    'content_preview': content_to_save[:500],
+                                    'markdown_content_len': len(markdown_content) if markdown_content else 0,
+                                    'tables_markdown_len': len(tables_markdown) if tables_markdown else 0
+                                },
+                                'timestamp': int(__import__('time').time() * 1000)
+                            }) + '\n')
+                        # #endregion
+
                         filename.write_text(content_to_save, encoding="utf-8")
                         
                         # Log extraction results
@@ -6923,10 +8127,46 @@ async def crawl_site():
             # This shows how many URLs were found at each depth
             
             depth_summary = {}
-            for depth_str, urls in all_urls_by_depth.items():
+            total_unique_final_urls = set()
+            total_unique_original_urls = set()
+            redirect_count = 0
+            
+            for depth_str, url_entries in all_urls_by_depth.items():
+                # Extract final URLs for backward compatibility (simple list)
+                final_urls = [entry.get('final_url') if isinstance(entry, dict) else entry for entry in url_entries]
+                # Also track unique URLs
+                for entry in url_entries:
+                    if isinstance(entry, dict):
+                        if entry.get('final_url'):
+                            total_unique_final_urls.add(entry['final_url'])
+                        if entry.get('original_url'):
+                            total_unique_original_urls.add(entry['original_url'])
+                        if entry.get('is_redirect'):
+                            redirect_count += 1
+                    else:
+                        # Legacy format (string)
+                        total_unique_final_urls.add(entry)
+                        total_unique_original_urls.add(entry)
+                
+                # Create unique_final_urls: deduplicated list of unique final URLs
+                unique_final_urls_list = []
+                seen_in_depth = set()
+                for entry in url_entries:
+                    if isinstance(entry, dict):
+                        final_url = entry.get('final_url')
+                        if final_url and final_url not in seen_in_depth:
+                            unique_final_urls_list.append(final_url)
+                            seen_in_depth.add(final_url)
+                    else:
+                        # Legacy format (string)
+                        if entry and entry not in seen_in_depth:
+                            unique_final_urls_list.append(entry)
+                            seen_in_depth.add(entry)
+                
                 depth_summary[depth_str] = {
-                    'count': len(urls),
-                    'urls': urls
+                    'count': len(url_entries),
+                    'unique_final_urls': unique_final_urls_list,  # NEW: deduplicated unique final URLs
+                    'url_entries': url_entries  # Preserved: detailed entries with redirect info
                 }
             
             urls_by_depth_file = LOG_DIR / "urls_by_depth.json"
@@ -6935,7 +8175,16 @@ async def crawl_site():
                 'root_urls': ROOT_URLS,
                 'max_depth': MAX_DEPTH,
                 'total_urls': sum(len(urls) for urls in all_urls_by_depth.values()),
-                'urls_by_depth': depth_summary
+                'total_unique_final_urls': len(total_unique_final_urls),
+                'total_unique_original_urls': len(total_unique_original_urls),
+                'redirects_detected': redirect_count,
+                'urls_by_depth': depth_summary,
+                'link_analysis': {
+                    'total_links_found_in_html': links_found_vs_crawled['total_links_found_in_html'],
+                    'total_urls_crawled': links_found_vs_crawled['total_urls_crawled'],
+                    'average_links_per_page': links_found_vs_crawled['total_links_found_in_html'] / max(links_found_vs_crawled['total_urls_crawled'], 1),
+                    'sample_pages_with_links': links_found_vs_crawled['links_found_by_page'][:20]  # First 20 pages
+                }
             }
             urls_by_depth_file.write_text(json.dumps(urls_by_depth_data, indent=2), encoding="utf-8")
             print("-" * 60)
@@ -6951,10 +8200,17 @@ async def crawl_site():
             # Save all failed URLs with error reasons to a JSON file
             
             if all_errors:
+                # Categorize errors for better analysis
+                timeout_errors = [e for e in all_errors if 'timeout' in str(e.get('error', '')).lower() or 'timed out' in str(e.get('error', '')).lower()]
+                other_errors = [e for e in all_errors if e not in timeout_errors]
+                
                 error_log = {
                     'timestamp': datetime.now().isoformat(),
                     'total_errors': len(all_errors),
                     'total_successful': len(all_successful_urls),
+                    'timeout_errors': len(timeout_errors),
+                    'other_errors': len(other_errors),
+                    'timeout_urls': [{'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')} for e in timeout_errors],
                     'errors': all_errors
                 }
                 ERROR_LOG_FILE.write_text(json.dumps(error_log, indent=2), encoding="utf-8")
@@ -7008,29 +8264,38 @@ async def crawl_site():
         else:
             # Non-critical cleanup error (browser closed unexpectedly after crawling)
             cleanup_error_msg = f"Browser cleanup error (non-critical): {error_str}"
-        print(f"\n[WARNING] {cleanup_error_msg}")
-        print(f"[INFO] Crawling completed successfully before cleanup error occurred")
-        print(f"[INFO] Files saved: {len(all_successful_urls)} pages")
-        
-        all_errors.append({
-            'url': 'Browser Cleanup',
-            'error': cleanup_error_msg,
-            'timestamp': datetime.now().isoformat(),
-            'note': 'This error occurred during browser cleanup after crawling completed. All pages were successfully crawled and saved.'
-        })
+            print(f"\n[WARNING] {cleanup_error_msg}")
+            print(f"[INFO] Crawling completed successfully before cleanup error occurred")
+            print(f"[INFO] Files saved: {len(all_successful_urls)} pages")
+            
+            all_errors.append({
+                'url': 'Browser Cleanup',
+                'error': cleanup_error_msg,
+                'timestamp': datetime.now().isoformat(),
+                'note': 'This error occurred during browser cleanup after crawling completed. All pages were successfully crawled and saved.'
+            })
     
     finally:
         # Ensure error log is saved even if there was an exception during cleanup
         # This runs regardless of whether there was an error
         try:
+            # Import json here to ensure it's available (in case of import shadowing)
+            import json as json_module
+            # Categorize errors for better analysis (timeout vs other errors)
+            timeout_errors = [e for e in all_errors if e.get('is_timeout', False)]
+            other_errors = [e for e in all_errors if not e.get('is_timeout', False)]
+            
             error_log = {
                 'timestamp': datetime.now().isoformat(),
                 'total_errors': len(all_errors),
                 'total_successful': len(all_successful_urls),
                 'total_crawled': len(all_results),
+                'timeout_errors': len(timeout_errors),
+                'other_errors': len(other_errors),
+                'timeout_urls': [{'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')} for e in timeout_errors],
                 'errors': all_errors
             }
-            ERROR_LOG_FILE.write_text(json.dumps(error_log, indent=2), encoding="utf-8")
+            ERROR_LOG_FILE.write_text(json_module.dumps(error_log, indent=2), encoding="utf-8")
             if all_errors:
                 print(f"\n[ERROR LOG] Saved {len(all_errors)} errors to {ERROR_LOG_FILE}")
         except Exception as log_error:
