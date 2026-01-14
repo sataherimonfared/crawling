@@ -1,0 +1,59 @@
+2025-12-16 16:58:45,493 - WARNING - Column mismatch in table 0 (row 1): 3 headers, 4 effective cells. URL: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html
+2025-12-16 16:59:24,744 - WARNING - Column mismatch in table 27 (row 2): 1 headers, 3 effective cells. URL: https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html
+2025-12-16 17:01:48,393 - WARNING - Column mismatch in table 0 (row 0): 1 headers, 3 effective cells. URL: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+2025-12-16 17:01:50,175 - WARNING - Column mismatch in table 0 (row 0): 4 headers, 2 effective cells. URL: https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html
+2025-12-16 17:02:02,961 - WARNING - Column mismatch in table 0 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,964 - WARNING - Column mismatch in table 1 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,966 - WARNING - Column mismatch in table 2 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,968 - WARNING - Column mismatch in table 3 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,970 - WARNING - Column mismatch in table 4 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,972 - WARNING - Column mismatch in table 5 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,973 - WARNING - Column mismatch in table 6 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,974 - WARNING - Column mismatch in table 7 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,975 - WARNING - Column mismatch in table 8 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,976 - WARNING - Column mismatch in table 9 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,977 - WARNING - Column mismatch in table 10 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,978 - WARNING - Column mismatch in table 11 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:02:02,979 - WARNING - Column mismatch in table 12 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:22:58,238 - WARNING - Column mismatch in table 0 (row 1): 3 headers, 4 effective cells. URL: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html
+2025-12-16 17:23:37,403 - WARNING - Column mismatch in table 27 (row 2): 1 headers, 3 effective cells. URL: https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html
+2025-12-16 17:26:03,774 - WARNING - Column mismatch in table 0 (row 0): 1 headers, 3 effective cells. URL: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+2025-12-16 17:26:05,551 - WARNING - Column mismatch in table 0 (row 0): 4 headers, 2 effective cells. URL: https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html
+2025-12-16 17:26:16,769 - WARNING - Column mismatch in table 0 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,773 - WARNING - Column mismatch in table 1 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,775 - WARNING - Column mismatch in table 2 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,777 - WARNING - Column mismatch in table 3 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,779 - WARNING - Column mismatch in table 4 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,780 - WARNING - Column mismatch in table 5 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,782 - WARNING - Column mismatch in table 6 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,782 - WARNING - Column mismatch in table 7 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,783 - WARNING - Column mismatch in table 8 (row 0): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,784 - WARNING - Column mismatch in table 9 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,785 - WARNING - Column mismatch in table 10 (row 1): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,786 - WARNING - Column mismatch in table 11 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-16 17:26:16,787 - WARNING - Column mismatch in table 12 (row 2): 1 headers, 2 effective cells. URL: https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html
+2025-12-17 11:14:21,416 - INFO - Starting pure crawl4ai scraper: 10 URLs to process
+2025-12-17 11:14:21,434 - INFO - Processing batch 1: 10 URLs
+2025-12-17 11:14:32,308 - INFO - Processed: 10/10, Errors: 10, Time: 11.0s
+2025-12-17 11:14:32,309 - INFO - Pure crawl4ai scraper completed
+2025-12-17 11:17:26,196 - INFO - Starting pure crawl4ai scraper: 10 URLs to process
+2025-12-17 11:17:26,198 - INFO - Processing batch 1: 10 URLs
+2025-12-17 11:17:27,104 - INFO - Processed: 10/10, Errors: 10, Time: 1.0s
+2025-12-17 11:17:27,105 - INFO - Pure crawl4ai scraper completed
+2025-12-17 11:21:21,467 - INFO - Loaded 99997 URLs from URL map
+2025-12-17 11:21:21,480 - INFO - Starting pure crawl4ai scraper: 100 URLs to process
+2025-12-17 11:21:21,480 - INFO - Processing batch 1: 25 URLs
+2025-12-17 11:21:36,655 - INFO - Processed: 25/100, Errors: 0, Time: 15.3s
+2025-12-17 11:21:36,655 - INFO - Processing batch 2: 25 URLs
+2025-12-17 11:21:49,700 - INFO - Processed: 50/100, Errors: 1, Time: 28.3s
+2025-12-17 11:21:49,701 - INFO - Processing batch 3: 25 URLs
+2025-12-17 11:21:59,179 - INFO - Shutdown signal received, saving checkpoint...
+2025-12-17 11:21:59,507 - WARNING - pipe closed by peer or os.write(pipe, data) raised exception.
+2025-12-17 11:21:59,509 - WARNING - pipe closed by peer or os.write(pipe, data) raised exception.
+2025-12-17 11:21:59,510 - WARNING - pipe closed by peer or os.write(pipe, data) raised exception.
+2025-12-17 11:21:59,512 - WARNING - pipe closed by peer or os.write(pipe, data) raised exception.
+2025-12-17 11:22:13,048 - INFO - Loaded 99997 URLs from URL map
+2025-12-17 11:22:13,058 - INFO - Starting pure crawl4ai scraper: 10 URLs to process
+2025-12-17 11:22:13,058 - INFO - Processing batch 1: 10 URLs
+2025-12-17 11:22:13,985 - INFO - Processed: 10/10, Errors: 0, Time: 1.0s
+2025-12-17 11:22:13,985 - INFO - Pure crawl4ai scraper completed

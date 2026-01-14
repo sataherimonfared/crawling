@@ -1,0 +1,1602 @@
+{
+  "timestamp": "2025-12-16T11:49:37.727564",
+  "urls_tested": 13,
+  "comparisons": [
+    {
+      "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+      "original": {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "status": "success",
+        "total_chunks": 12,
+        "character_chunks": 1,
+        "structural_chunks": 1,
+        "table_chunks": 0,
+        "event_chunks": 8,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {},
+        "sample_table_chunks": [],
+        "sample_event_chunks": [
+          {
+            "content_preview": "Type: Theory Seminar\nTitle: The Bearable Inhomogeneity of the Baryon Asymmetry\nDate/Time: 15:00 - 16:00\nPlace: HamburgSR2, Geb. 2a\nSpeaker: Stefan Stelzl\nAffiliation: EPFL\nLink: http://www.desy.de/akt",
+            "metadata": {
+              "entity_type": "event",
+              "event_date": "15:00 - 16:00",
+              "event_place": "HamburgSR2, Geb. 2a",
+              "event_type": "Theory Seminar",
+              "event_title": "The Bearable Inhomogeneity of the Baryon Asymmetry",
+              "event_speaker": "Stefan Stelzl",
+              "event_affiliation": "EPFL",
+              "event_link": "http://www.desy.de/aktuelles/veranstaltungen/index_ger.html/@@events-view?id=68428&lang=ger"
+            }
+          },
+          {
+            "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry on 15:00 - 16:00",
+            "metadata": {
+              "entity_type": "event",
+              "event_date": "15:00 - 16:00",
+              "event_place": "HamburgSR2, Geb. 2a",
+              "event_type": "Theory Seminar",
+              "event_title": "The Bearable Inhomogeneity of the Baryon Asymmetry",
+              "event_speaker": "Stefan Stelzl",
+              "event_affiliation": "EPFL",
+              "event_link": "http://www.desy.de/aktuelles/veranstaltungen/index_ger.html/@@events-view?id=68428&lang=ger"
+            }
+          },
+          {
+            "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry at HamburgSR2, Geb. 2a",
+            "metadata": {
+              "entity_type": "event",
+              "event_date": "15:00 - 16:00",
+              "event_place": "HamburgSR2, Geb. 2a",
+              "event_type": "Theory Seminar",
+              "event_title": "The Bearable Inhomogeneity of the Baryon Asymmetry",
+              "event_speaker": "Stefan Stelzl",
+              "event_affiliation": "EPFL",
+              "event_link": "http://www.desy.de/aktuelles/veranstaltungen/index_ger.html/@@events-view?id=68428&lang=ger"
+            }
+          }
+        ],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "status": "success",
+        "total_chunks": 10,
+        "structural_chunks": 9,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 0,
+        "event_chunks": 8,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {},
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 6094,
+          "html_length": 29066,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/aktuelles/veran",
+            "metadata": {
+              "source": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+              "title": "Veranstaltungen - Deutsches Elektronen-Synchrotron DESY",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -2,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://atlas.desy.de/members/",
+      "original": {
+        "url": "https://atlas.desy.de/members/",
+        "status": "success",
+        "total_chunks": 454,
+        "character_chunks": 11,
+        "structural_chunks": 1,
+        "table_chunks": 440,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "_event_link: https://atlas.desy.de/\nColumn: https://atlas.desy.de/",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.2,
+              "mvr_name": "",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Atlas",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "surname: Moenig\nfirst_name: Klaus\nposition: Scientist\narea: Group leader, top-physics, luminosity\nlocation: Zeuthen\nphone: 7271\nname: Klaus Moenig",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Klaus Moenig",
+              "mvr_position": "Scientist",
+              "mvr_location": "Hamburg - Zeuthen",
+              "mvr_organization": "Atlas",
+              "mvr_phone": "+49(0)033762-77271",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Group leader, top-physics, luminosity",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Klaus Moenig can be contacted at phone number 7271",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Klaus Moenig",
+              "mvr_position": "Scientist",
+              "mvr_location": "Hamburg - Zeuthen",
+              "mvr_organization": "Atlas",
+              "mvr_phone": "+49(0)033762-77271",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Group leader, top-physics, luminosity",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Klaus Moenig can be contacted at +49(0)033762-77271"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://atlas.desy.de/members/",
+        "status": "success",
+        "total_chunks": 442,
+        "structural_chunks": 441,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 440,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 440,
+          "mvr_extraction_method": 440,
+          "mvr_extraction_confidence": 440,
+          "mvr_name": 440,
+          "mvr_position": 440,
+          "mvr_location": 440,
+          "mvr_organization": 440,
+          "mvr_phone": 440,
+          "mvr_email": 440,
+          "mvr_homepage": 440,
+          "mvr_area": 440,
+          "mvr_summary": 340
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 11314,
+          "html_length": 89682,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "[![The DESY-ATLAS Group](https://atlas.desy.de/sites/site_atlas/content/header.jpg)](https://atlas.desy.de/) |  ![](https://atlas.desy.de/common/desy.jpg)  \n---|---  \n  * [![](https://atlas.desy.de/mi",
+            "metadata": {
+              "source": "https://atlas.desy.de/members/",
+              "title": "ATLAS Group Members",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -12,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://cms.desy.de/cms_members/",
+      "original": {
+        "url": "https://cms.desy.de/cms_members/",
+        "status": "success",
+        "total_chunks": 449,
+        "character_chunks": 15,
+        "structural_chunks": 1,
+        "table_chunks": 431,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Abel, Aenne\nposition: PhD Student\nphone: 3368\narea: Tracker Upgrade, Detector Development",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Abel, Aenne",
+              "mvr_position": "PhD Student",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Cms",
+              "mvr_phone": "+49(0)4089983368",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Tracker Upgrade, Detector Development",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Abel, Aenne can be contacted at phone number 3368",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Abel, Aenne",
+              "mvr_position": "PhD Student",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Cms",
+              "mvr_phone": "+49(0)4089983368",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Tracker Upgrade, Detector Development",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Abel, Aenne can be contacted at +49(0)4089983368"
+            }
+          },
+          {
+            "content_preview": "Abel, Aenne holds the position: PhD Student",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Abel, Aenne",
+              "mvr_position": "PhD Student",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Cms",
+              "mvr_phone": "+49(0)4089983368",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Tracker Upgrade, Detector Development",
+              "chunk_subtype": "name_position",
+              "mvr_summary": "Abel, Aenne holds the position PhD Student"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://cms.desy.de/cms_members/",
+        "status": "success",
+        "total_chunks": 433,
+        "structural_chunks": 432,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 431,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 431,
+          "mvr_extraction_method": 431,
+          "mvr_extraction_confidence": 431,
+          "mvr_name": 431,
+          "mvr_position": 431,
+          "mvr_location": 431,
+          "mvr_organization": 431,
+          "mvr_phone": 431,
+          "mvr_email": 431,
+          "mvr_homepage": 431,
+          "mvr_area": 431,
+          "mvr_summary": 323
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 25630,
+          "html_length": 120557,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://cms.desy.de/common/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\nDeutsches Elektronen-Synchrotron DESY   \nA Research Centre of the Helmholtz Association\n ",
+            "metadata": {
+              "source": "https://cms.desy.de/cms_members/",
+              "title": "CMS Members",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -16,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://pitz.desy.de/group_members/",
+      "original": {
+        "url": "https://pitz.desy.de/group_members/",
+        "status": "success",
+        "total_chunks": 79,
+        "character_chunks": 4,
+        "structural_chunks": 1,
+        "table_chunks": 72,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_email": true,
+          "has_mvr_phone": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Dr. Frank Stephan\nemail: frank.stephan@desy.de\nphone: 44\nlocation: 1L / 44",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Dr. Frank Stephan",
+              "mvr_position": "Group Leader",
+              "mvr_location": "Hamburg - 1L / 44",
+              "mvr_organization": "Pitz",
+              "mvr_phone": "",
+              "mvr_email": "frank.stephan@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Dr. Frank Stephan can be contacted at phone number 44",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Dr. Frank Stephan",
+              "mvr_position": "Group Leader",
+              "mvr_location": "Hamburg - 1L / 44",
+              "mvr_organization": "Pitz",
+              "mvr_phone": "",
+              "mvr_email": "frank.stephan@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": ""
+            }
+          },
+          {
+            "content_preview": "Dr. Frank Stephan is located at: 1L / 44",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Dr. Frank Stephan",
+              "mvr_position": "Group Leader",
+              "mvr_location": "Hamburg - 1L / 44",
+              "mvr_organization": "Pitz",
+              "mvr_phone": "",
+              "mvr_email": "frank.stephan@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_location",
+              "mvr_summary": "Dr. Frank Stephan is located in Hamburg - 1L / 44"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://pitz.desy.de/group_members/",
+        "status": "success",
+        "total_chunks": 74,
+        "structural_chunks": 73,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 72,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 72,
+          "mvr_extraction_method": 72,
+          "mvr_extraction_confidence": 72,
+          "mvr_name": 72,
+          "mvr_position": 72,
+          "mvr_location": 72,
+          "mvr_organization": 72,
+          "mvr_phone": 72,
+          "mvr_email": 72,
+          "mvr_homepage": 72,
+          "mvr_area": 72,
+          "mvr_summary": 48
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 37092,
+          "html_length": 106101,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://pitz.desy.de/common/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\nDeutsches Elektronen-Synchrotron DESY   \nA Research Centre of the Helmholtz Association\n",
+            "metadata": {
+              "source": "https://pitz.desy.de/group_members/",
+              "title": "Group Members",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -5,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+      "original": {
+        "url": "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+        "status": "success",
+        "total_chunks": 29,
+        "character_chunks": 2,
+        "structural_chunks": 1,
+        "table_chunks": 24,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Prof. Dr. rer. nat. habil. Philipp Neumann\nlocation: 02b/321\nphone: 2022\nFunction / Working area: Head of IT",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Prof. Dr. rer. nat. habil. Philipp Neumann",
+              "mvr_position": "Head of IT",
+              "mvr_location": "Hamburg - 02b/321",
+              "mvr_organization": "It",
+              "mvr_phone": "+49(0)4089982022",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Head of IT",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Prof. Dr. rer. nat. habil. Philipp Neumann can be contacted at phone number 2022",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Prof. Dr. rer. nat. habil. Philipp Neumann",
+              "mvr_position": "Head of IT",
+              "mvr_location": "Hamburg - 02b/321",
+              "mvr_organization": "It",
+              "mvr_phone": "+49(0)4089982022",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Head of IT",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Prof. Dr. rer. nat. habil. Philipp Neumann can be contacted at +49(0)4089982022"
+            }
+          },
+          {
+            "content_preview": "Prof. Dr. rer. nat. habil. Philipp Neumann is located at: 02b/321",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.6,
+              "mvr_name": "Prof. Dr. rer. nat. habil. Philipp Neumann",
+              "mvr_position": "Head of IT",
+              "mvr_location": "Hamburg - 02b/321",
+              "mvr_organization": "It",
+              "mvr_phone": "+49(0)4089982022",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "Head of IT",
+              "chunk_subtype": "name_location",
+              "mvr_summary": "Prof. Dr. rer. nat. habil. Philipp Neumann is located in Hamburg - 02b/321"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+        "status": "success",
+        "total_chunks": 26,
+        "structural_chunks": 25,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 24,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 24,
+          "mvr_extraction_method": 24,
+          "mvr_extraction_confidence": 24,
+          "mvr_name": 24,
+          "mvr_position": 24,
+          "mvr_location": 24,
+          "mvr_organization": 24,
+          "mvr_phone": 24,
+          "mvr_email": 24,
+          "mvr_homepage": 24,
+          "mvr_area": 24,
+          "mvr_summary": 16
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 6960,
+          "html_length": 32290,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://it.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de/index_eng.html \"To the DESY homepage\")\n## Jump\n  * [To content](https://it.desy.de/about_us/grup",
+            "metadata": {
+              "source": "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+              "title": "DESY - IT - IT-Management",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -3,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+      "original": {
+        "url": "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+        "status": "success",
+        "total_chunks": 120,
+        "character_chunks": 8,
+        "structural_chunks": 2,
+        "table_chunks": 108,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true,
+          "has_mvr_email": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Martin\n             Pohl\nemail: martin.pohl@desy.de\nphone: +49 (0)33762 7\n              7484\nPersonal_website: https://www-zeuthen.desy.de/~pohlmadq/\nposition: Particle acceleration ...",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Martin\n             Pohl",
+              "mvr_position": "Particle acceleration ...",
+              "mvr_location": "Zeuthen",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7484",
+              "mvr_email": "martin.pohl@desy.de",
+              "mvr_homepage": "https://www-zeuthen.desy.de/~pohlmadq/",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Martin\n             Pohl can be contacted at phone number +49 (0)33762 7\n              7484",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Martin\n             Pohl",
+              "mvr_position": "Particle acceleration ...",
+              "mvr_location": "Zeuthen",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7484",
+              "mvr_email": "martin.pohl@desy.de",
+              "mvr_homepage": "https://www-zeuthen.desy.de/~pohlmadq/",
+              "mvr_area": "",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Martin\n             Pohl can be contacted at +49 (0)33762 7\n              7484"
+            }
+          },
+          {
+            "content_preview": "Martin\n             Pohl holds the position: Particle acceleration ...",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Martin\n             Pohl",
+              "mvr_position": "Particle acceleration ...",
+              "mvr_location": "Zeuthen",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7484",
+              "mvr_email": "martin.pohl@desy.de",
+              "mvr_homepage": "https://www-zeuthen.desy.de/~pohlmadq/",
+              "mvr_area": "",
+              "chunk_subtype": "name_position",
+              "mvr_summary": "Martin\n             Pohl holds the position Particle acceleration ..."
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+        "status": "success",
+        "total_chunks": 110,
+        "structural_chunks": 109,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 108,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 108,
+          "mvr_extraction_method": 108,
+          "mvr_extraction_confidence": 108,
+          "mvr_name": 108,
+          "mvr_position": 108,
+          "mvr_location": 108,
+          "mvr_organization": 108,
+          "mvr_phone": 108,
+          "mvr_email": 108,
+          "mvr_homepage": 108,
+          "mvr_area": 108,
+          "mvr_summary": 61
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 19705,
+          "html_length": 75438,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "![loading..](https://astroparticle-physics.desy.de/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://astroparticle-physics.desy.de/common/images/logo_desy.gif) ](http:/",
+            "metadata": {
+              "source": "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+              "title": "Astroparticle Physics Theory Group",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -10,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+      "original": {
+        "url": "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+        "status": "success",
+        "total_chunks": 126,
+        "character_chunks": 7,
+        "structural_chunks": 2,
+        "table_chunks": 115,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true,
+          "has_mvr_email": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Markus\n             Ackermann\nemail: markus.ackermann@desy.de\nphone: +49 (0)33762 7\n              7415\nlocation: 2A / 02\nposition: Fermi, Group Leader IceCube",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Markus\n             Ackermann",
+              "mvr_position": "Fermi, Group Leader IceCube",
+              "mvr_location": "Zeuthen - 2A / 02",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7415",
+              "mvr_email": "markus.ackermann@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Markus\n             Ackermann can be contacted at phone number +49 (0)33762 7\n              7415",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Markus\n             Ackermann",
+              "mvr_position": "Fermi, Group Leader IceCube",
+              "mvr_location": "Zeuthen - 2A / 02",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7415",
+              "mvr_email": "markus.ackermann@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Markus\n             Ackermann can be contacted at +49 (0)33762 7\n              7415"
+            }
+          },
+          {
+            "content_preview": "Markus\n             Ackermann holds the position: Fermi, Group Leader IceCube",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Markus\n             Ackermann",
+              "mvr_position": "Fermi, Group Leader IceCube",
+              "mvr_location": "Zeuthen - 2A / 02",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "+49 (0)33762 7\n              7415",
+              "mvr_email": "markus.ackermann@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_position",
+              "mvr_summary": "Markus\n             Ackermann holds the position Fermi, Group Leader IceCube"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+        "status": "success",
+        "total_chunks": 117,
+        "structural_chunks": 116,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 115,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 115,
+          "mvr_extraction_method": 115,
+          "mvr_extraction_confidence": 115,
+          "mvr_name": 115,
+          "mvr_position": 115,
+          "mvr_location": 115,
+          "mvr_organization": 115,
+          "mvr_phone": 115,
+          "mvr_email": 115,
+          "mvr_homepage": 115,
+          "mvr_area": 115,
+          "mvr_summary": 86
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 18723,
+          "html_length": 66447,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "![loading..](https://astroparticle-physics.desy.de/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://astroparticle-physics.desy.de/common/images/logo_desy.gif) ](http:/",
+            "metadata": {
+              "source": "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+              "title": "Neutrino Astronomy Group",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -9,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+      "original": {
+        "url": "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+        "status": "success",
+        "total_chunks": 70,
+        "character_chunks": 5,
+        "structural_chunks": 1,
+        "table_chunks": 62,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true,
+          "has_mvr_email": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Andrey\r\n    \r\n    \r\n     Siemens\nemail: andrey.siemens@desy.de\nphone: +49 (0)40 8998 \r\n       \r\n       2672\nlocation: 25f / 364\nposition: Engineer - development of  vacuum systems and drive tech",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Andrey\r\n    \r\n    \r\n     Siemens",
+              "mvr_position": "Engineer - development of  vacuum systems and drive technology",
+              "mvr_location": "Hamburg - 25f / 364",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \r\n       \r\n       2672",
+              "mvr_email": "andrey.siemens@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Andrey\r\n    \r\n    \r\n     Siemens can be contacted at phone number +49 (0)40 8998 \r\n       \r\n       2672",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Andrey\r\n    \r\n    \r\n     Siemens",
+              "mvr_position": "Engineer - development of  vacuum systems and drive technology",
+              "mvr_location": "Hamburg - 25f / 364",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \r\n       \r\n       2672",
+              "mvr_email": "andrey.siemens@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Andrey\r\n    \r\n    \r\n     Siemens can be contacted at +49 (0)40 8998 \r\n       \r\n       2672"
+            }
+          },
+          {
+            "content_preview": "Andrey\r\n    \r\n    \r\n     Siemens holds the position: Engineer - development of  vacuum systems and drive technology",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Andrey\r\n    \r\n    \r\n     Siemens",
+              "mvr_position": "Engineer - development of  vacuum systems and drive technology",
+              "mvr_location": "Hamburg - 25f / 364",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \r\n       \r\n       2672",
+              "mvr_email": "andrey.siemens@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_position",
+              "mvr_summary": "Andrey\r\n    \r\n    \r\n     Siemens holds the position Engineer - development of  vacuum systems and drive technology"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+        "status": "success",
+        "total_chunks": 64,
+        "structural_chunks": 63,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 62,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 62,
+          "mvr_extraction_method": 62,
+          "mvr_extraction_confidence": 62,
+          "mvr_name": 62,
+          "mvr_position": 62,
+          "mvr_location": 62,
+          "mvr_organization": 62,
+          "mvr_phone": 62,
+          "mvr_email": 62,
+          "mvr_homepage": 62,
+          "mvr_area": 62,
+          "mvr_summary": 44
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 13522,
+          "html_length": 48123,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "[](http://door.desy.de)\n![loading..](https://photon-science.desy.de/sites/site_photonscience/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://photon-science.desy.de/si",
+            "metadata": {
+              "source": "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+              "title": "Group members",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -6,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+      "original": {
+        "url": "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+        "status": "success",
+        "total_chunks": 21,
+        "character_chunks": 2,
+        "structural_chunks": 1,
+        "table_chunks": 16,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true,
+          "has_mvr_email": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "name: Florian\n    \n    \n     Bertram\nemail: florian.bertram@desy.de\nphone: +49 (0)40 8998 \n       \n       2929\nlocation: 25b / 226\nposition: Beamline scientist in charge",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Florian\n    \n    \n     Bertram",
+              "mvr_position": "Beamline scientist in charge",
+              "mvr_location": "Hamburg - 25b / 226",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \n       \n       2929",
+              "mvr_email": "florian.bertram@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Florian\n    \n    \n     Bertram can be contacted at phone number +49 (0)40 8998 \n       \n       2929",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Florian\n    \n    \n     Bertram",
+              "mvr_position": "Beamline scientist in charge",
+              "mvr_location": "Hamburg - 25b / 226",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \n       \n       2929",
+              "mvr_email": "florian.bertram@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_phone",
+              "mvr_summary": "Florian\n    \n    \n     Bertram can be contacted at +49 (0)40 8998 \n       \n       2929"
+            }
+          },
+          {
+            "content_preview": "Florian\n    \n    \n     Bertram holds the position: Beamline scientist in charge",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.7999999999999999,
+              "mvr_name": "Florian\n    \n    \n     Bertram",
+              "mvr_position": "Beamline scientist in charge",
+              "mvr_location": "Hamburg - 25b / 226",
+              "mvr_organization": "Photon Science",
+              "mvr_phone": "+49 (0)40 8998 \n       \n       2929",
+              "mvr_email": "florian.bertram@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "name_position",
+              "mvr_summary": "Florian\n    \n    \n     Bertram holds the position Beamline scientist in charge"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+        "status": "success",
+        "total_chunks": 18,
+        "structural_chunks": 17,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 16,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 16,
+          "mvr_extraction_method": 16,
+          "mvr_extraction_confidence": 16,
+          "mvr_name": 16,
+          "mvr_position": 16,
+          "mvr_location": 16,
+          "mvr_organization": 16,
+          "mvr_phone": 16,
+          "mvr_email": 16,
+          "mvr_homepage": 16,
+          "mvr_area": 16,
+          "mvr_summary": 12
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 13788,
+          "html_length": 39074,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "[](http://door.desy.de)\n![loading..](https://photon-science.desy.de/sites/site_photonscience/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://photon-science.desy.de/si",
+            "metadata": {
+              "source": "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+              "title": "Contact & Staff",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -3,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+      "original": {
+        "url": "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+        "status": "success",
+        "total_chunks": 9,
+        "character_chunks": 4,
+        "structural_chunks": 1,
+        "table_chunks": 2,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {},
+        "sample_table_chunks": [
+          {
+            "content_preview": "Column_2: any fieldtitleauthorabstractkeywordreport numberjournalyearfulltextreference",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.1,
+              "mvr_name": "",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "_event_link: https://bib-pubdb1.desy.de/help/search-tips?ln=en\nSearch 477,366 records for:: Search Tips\nlink: https://bib-pubdb1.desy.de/help/search-tips?ln=en",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.15000000000000002,
+              "mvr_name": "",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Astroparticle Physics",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+        "status": "success",
+        "total_chunks": 1,
+        "structural_chunks": 1,
+        "character_chunks": 0,
+        "full_text_chunks": 0,
+        "table_chunks": 0,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {},
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 1,
+          "html_length": 244,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "\n",
+            "metadata": {
+              "source": "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+              "title": "No title",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -8,
+        "table_chunks_missing": 2,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+      "original": {
+        "url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+        "status": "success",
+        "total_chunks": 41,
+        "character_chunks": 7,
+        "structural_chunks": 3,
+        "table_chunks": 25,
+        "event_chunks": 0,
+        "researcher_chunks": 4,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "Seit 2020: Seit 2020\nProfessor der Universität Hamburg: Professor der Universität Hamburg",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.1,
+              "mvr_name": "Christian Schwanenberger",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Seit 2020: Seit 2015\nProfessor der Universität Hamburg: Leitender Wissenschafter, DESY",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.1,
+              "mvr_name": "Christian Schwanenberger",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          },
+          {
+            "content_preview": "Seit 2020: Seit 2015\nProfessor der Universität Hamburg: Gastprofessor, School of Physics and Astronomy, Universität Manchester, Großbritannien",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.1,
+              "mvr_name": "Christian Schwanenberger",
+              "mvr_position": "",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "",
+              "mvr_phone": "",
+              "mvr_email": "",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": [
+          {
+            "content_preview": "Researcher: Christian Schwanenberger\n\nContact Information: Phone: +49 (0)40 8998 6004, Email: christian.schwanenberger@desy.de\n\nBiography: Deutsches Elektronen-Synchrotron DESYEin Forschungszentrum de",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Christian Schwanenberger",
+              "researcher_url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html"
+            }
+          },
+          {
+            "content_preview": "Christian Schwanenberger can be contacted at phone number +49 (0)40 8998 6004 can be contacted at email christian.schwanenberger@desy.de.",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Christian Schwanenberger",
+              "researcher_url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html"
+            }
+          },
+          {
+            "content_preview": "Christian Schwanenberger: Deutsches Elektronen-Synchrotron DESYEin Forschungszentrum der Helmholtz-Gemeinschaft URL: https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/in",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Christian Schwanenberger",
+              "researcher_url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html"
+            }
+          }
+        ]
+      },
+      "crawl4ai": {
+        "url": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+        "status": "success",
+        "total_chunks": 31,
+        "structural_chunks": 30,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 25,
+        "event_chunks": 0,
+        "researcher_chunks": 4,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 25,
+          "mvr_extraction_method": 25,
+          "mvr_extraction_confidence": 25,
+          "mvr_name": 25,
+          "mvr_position": 25,
+          "mvr_location": 25,
+          "mvr_organization": 25,
+          "mvr_phone": 25,
+          "mvr_email": 25,
+          "mvr_homepage": 25,
+          "mvr_area": 25
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 15974,
+          "html_length": 55909,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/ueber_desy/leit",
+            "metadata": {
+              "source": "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+              "title": "Christian Schwanenberger - Deutsches Elektronen-Synchrotron DESY",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -10,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://ai.desy.de/people/heuser.html",
+      "original": {
+        "url": "https://ai.desy.de/people/heuser.html",
+        "status": "success",
+        "total_chunks": 22,
+        "character_chunks": 1,
+        "structural_chunks": 3,
+        "table_chunks": 1,
+        "event_chunks": 0,
+        "researcher_chunks": 15,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {
+          "has_mvr_name": true,
+          "has_mvr_position": true,
+          "has_mvr_phone": true,
+          "has_mvr_email": true
+        },
+        "sample_table_chunks": [
+          {
+            "content_preview": "email: Head of HIP Service TeamDESY IT, RICTel. 4622E-mail: philipp.heuser@desy.de",
+            "metadata": {
+              "entity_type": "table_row",
+              "mvr_ready": true,
+              "mvr_extraction_method": "rule_based",
+              "mvr_extraction_confidence": 0.30000000000000004,
+              "mvr_name": "Philipp Heuser",
+              "mvr_position": "Head of HIP Service Team",
+              "mvr_location": "Hamburg",
+              "mvr_organization": "Ai",
+              "mvr_phone": "+49(0)4089984622",
+              "mvr_email": "philipp.heuser@desy.de",
+              "mvr_homepage": "",
+              "mvr_area": "",
+              "chunk_subtype": "comprehensive_row"
+            }
+          }
+        ],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": [
+          {
+            "content_preview": "Researcher: Philipp Heuser\n\nContact Information: Phone: 3028018, Email: philipp.heuser@desy.de\n\nProjects: Helmholtz Analytics Framework, Helmholtz Imaging, HMZ, mdlma, PickYOLO, SRµCT segmentation, Un",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Philipp Heuser",
+              "researcher_url": "https://ai.desy.de/people/heuser.html"
+            }
+          },
+          {
+            "content_preview": "Philipp Heuser works in the following scientific fields: Information technology, Photon science, Machine learning",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Philipp Heuser",
+              "researcher_url": "https://ai.desy.de/people/heuser.html"
+            }
+          },
+          {
+            "content_preview": "Philipp Heuser is working on the following projects: Helmholtz Analytics Framework, Helmholtz Imaging, HMZ, mdlma, PickYOLO, SRµCT segmentation, UniSef",
+            "metadata": {
+              "entity_type": "researcher",
+              "researcher_name": "Philipp Heuser",
+              "researcher_url": "https://ai.desy.de/people/heuser.html"
+            }
+          }
+        ]
+      },
+      "crawl4ai": {
+        "url": "https://ai.desy.de/people/heuser.html",
+        "status": "success",
+        "total_chunks": 28,
+        "structural_chunks": 27,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 1,
+        "event_chunks": 0,
+        "researcher_chunks": 25,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {
+          "mvr_ready": 1,
+          "mvr_extraction_method": 1,
+          "mvr_extraction_confidence": 1,
+          "mvr_name": 1,
+          "mvr_position": 1,
+          "mvr_location": 1,
+          "mvr_organization": 1,
+          "mvr_phone": 1,
+          "mvr_email": 1,
+          "mvr_homepage": 1,
+          "mvr_area": 1
+        },
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 4037,
+          "html_length": 10660,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "## Skip links\n  * [Skip to primary navigation](https://ai.desy.de/people/heuser.html#site-nav)\n  * [Skip to content](https://ai.desy.de/people/heuser.html#main)\n  * [Skip to footer](https://ai.desy.de",
+            "metadata": {
+              "source": "https://ai.desy.de/people/heuser.html",
+              "title": "Philipp Heuser - AI@DESY",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": 6,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": -10,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    },
+    {
+      "url": "https://www.desy.de/career/contact/index_eng.html",
+      "original": {
+        "url": "https://www.desy.de/career/contact/index_eng.html",
+        "status": "success",
+        "total_chunks": 9,
+        "character_chunks": 3,
+        "structural_chunks": 4,
+        "table_chunks": 0,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "full_text_chunks": 1,
+        "mvr_fields_detected": {},
+        "sample_table_chunks": [],
+        "sample_event_chunks": [],
+        "sample_researcher_chunks": []
+      },
+      "crawl4ai": {
+        "url": "https://www.desy.de/career/contact/index_eng.html",
+        "status": "success",
+        "total_chunks": 2,
+        "structural_chunks": 1,
+        "character_chunks": 0,
+        "full_text_chunks": 1,
+        "table_chunks": 0,
+        "event_chunks": 0,
+        "researcher_chunks": 0,
+        "publication_chunks": 0,
+        "mvr_fields_detected": {},
+        "crawl4ai_features": {
+          "markdown_extracted": true,
+          "markdown_length": 8196,
+          "html_length": 36982,
+          "links_found": 2
+        },
+        "sample_chunks": [
+          {
+            "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de/index_eng.html \"To the DESY homepage\")\n## Jump\n  * [To content](https://www.desy.de/career/cont",
+            "metadata": {
+              "source": "https://www.desy.de/career/contact/index_eng.html",
+              "title": "Contact - Deutsches Elektronen-Synchrotron DESY",
+              "depth": 0,
+              "language": "en",
+              "chunk_type": "structural",
+              "extraction_method": "crawl4ai_markdown"
+            }
+          }
+        ]
+      },
+      "differences": {
+        "total_chunks_diff": -7,
+        "table_chunks_missing": 0,
+        "event_chunks_missing": 0,
+        "researcher_chunks_missing": 0,
+        "publication_chunks_missing": 0,
+        "mvr_fields_missing": false
+      }
+    }
+  ]
+}

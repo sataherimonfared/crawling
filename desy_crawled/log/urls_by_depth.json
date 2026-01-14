@@ -1,0 +1,1227 @@
+{
+  "timestamp": "2026-01-14T14:37:17.976747",
+  "root_urls": [
+    "https://desy.de/index_ger.html",
+    "https://desy.de/index_eng.html"
+  ],
+  "max_depth": 1,
+  "total_urls": 182,
+  "total_unique_final_urls": 182,
+  "total_unique_original_urls": 182,
+  "redirects_detected": 42,
+  "urls_by_depth": {
+    "0": {
+      "count": 49,
+      "unique_final_urls": [
+        "https://desy.de/desy_aktuell/index_ger.html?year=2026",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2025",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2024",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2023",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2022",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2021",
+        "https://desy.de/desy_aktuell/index_ger.html?year=2020",
+        "https://desy.de/desy_forschung/index_ger.html",
+        "https://desy.de/desy_forschung/forschung_mit_photonen/index_ger.html",
+        "https://desy.de/desy_forschung/teilchenphysik/index_ger.html",
+        "https://desy.de/desy_forschung/astroteilchenphysik/index_ger.html",
+        "https://desy.de/desy_forschung/anlagen__projekte/index_ger.html",
+        "https://desy.de/desy_forschung/kooperationen__institute/index_ger.html",
+        "https://desy.de/desy_forschung/innovation__technologietransfer/index_ger.html",
+        "https://desy.de/forschungszentrum_desy/index_ger.html",
+        "https://desy.de/desy_fuer_unternehmen/index_ger.html",
+        "https://desy.de/schuelerlabor/index_ger.html",
+        "https://desy.de/kontakt/index_ger.html",
+        "https://desy.de/desy_intern/index_ger.html",
+        "https://desy.de/desy_kalender/index_ger.html",
+        "https://desy.de/desy_karriere/index_ger.html",
+        "https://desy.de/desy_in_leichter_sprache/index_ger.html",
+        "https://desy.de/desy_in_gebaerdensprache/index_ger.html",
+        "https://desy.de/mediennachweis/index_ger.html",
+        "https://desy.de/index_eng.html",
+        "https://desy.de/index_ger.html",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2026",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2025",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2024",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2023",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2022",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2021",
+        "https://desy.de/desy_latest_news/index_eng.html?year=2020",
+        "https://desy.de/desy_research/index_eng.html",
+        "https://desy.de/desy_research/photon_science/index_eng.html",
+        "https://desy.de/desy_research/particle_physics/index_eng.html",
+        "https://desy.de/desy_research/astroparticle_physics/index_eng.html",
+        "https://desy.de/desy_research/facilities__projects/index_eng.html",
+        "https://desy.de/desy_research/cooperations__institutes/index_eng.html",
+        "https://desy.de/desy_research/innovation__technology_transfer/index_eng.html",
+        "https://desy.de/research_centre_desy/index_eng.html",
+        "https://desy.de/desy_for_business/index_eng.html",
+        "https://desy.de/school_lab/index_eng.html",
+        "https://desy.de/contact/index_eng.html",
+        "https://desy.de/desy_user_s_area/index_eng.html",
+        "https://desy.de/desy_calendar/index_eng.html",
+        "https://desy.de/career_at_desy/index_eng.html",
+        "https://desy.de/desy_in_easy_language/index_eng.html",
+        "https://desy.de/media_credits/index_eng.html"
+      ],
+      "url_entries": [
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2026",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2026",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2025",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2025",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2024",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2024",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2023",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2023",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2022",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2022",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2021",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2021",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html?year=2020",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html?year=2020",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/forschung_mit_photonen/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/forschung_mit_photonen/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/teilchenphysik/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/teilchenphysik/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/astroteilchenphysik/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/astroteilchenphysik/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/anlagen__projekte/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/anlagen__projekte/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/kooperationen__institute/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/kooperationen__institute/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/innovation__technologietransfer/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/innovation__technologietransfer/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/forschungszentrum_desy/index_ger.html",
+          "final_url": "https://desy.de/forschungszentrum_desy/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_fuer_unternehmen/index_ger.html",
+          "final_url": "https://desy.de/desy_fuer_unternehmen/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/schuelerlabor/index_ger.html",
+          "final_url": "https://desy.de/schuelerlabor/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/kontakt/index_ger.html",
+          "final_url": "https://desy.de/kontakt/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_intern/index_ger.html",
+          "final_url": "https://desy.de/desy_intern/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_kalender/index_ger.html",
+          "final_url": "https://desy.de/desy_kalender/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_karriere/index_ger.html",
+          "final_url": "https://desy.de/desy_karriere/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_in_leichter_sprache/index_ger.html",
+          "final_url": "https://desy.de/desy_in_leichter_sprache/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_in_gebaerdensprache/index_ger.html",
+          "final_url": "https://desy.de/desy_in_gebaerdensprache/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/mediennachweis/index_ger.html",
+          "final_url": "https://desy.de/mediennachweis/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/index_eng.html",
+          "final_url": "https://desy.de/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/index_ger.html",
+          "final_url": "https://desy.de/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2026",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2026",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2025",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2025",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2024",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2024",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2023",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2023",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2022",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2022",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2021",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2021",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html?year=2020",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html?year=2020",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/index_eng.html",
+          "final_url": "https://desy.de/desy_research/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/photon_science/index_eng.html",
+          "final_url": "https://desy.de/desy_research/photon_science/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/particle_physics/index_eng.html",
+          "final_url": "https://desy.de/desy_research/particle_physics/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/astroparticle_physics/index_eng.html",
+          "final_url": "https://desy.de/desy_research/astroparticle_physics/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/facilities__projects/index_eng.html",
+          "final_url": "https://desy.de/desy_research/facilities__projects/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/cooperations__institutes/index_eng.html",
+          "final_url": "https://desy.de/desy_research/cooperations__institutes/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/innovation__technology_transfer/index_eng.html",
+          "final_url": "https://desy.de/desy_research/innovation__technology_transfer/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/research_centre_desy/index_eng.html",
+          "final_url": "https://desy.de/research_centre_desy/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_for_business/index_eng.html",
+          "final_url": "https://desy.de/desy_for_business/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/school_lab/index_eng.html",
+          "final_url": "https://desy.de/school_lab/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/contact/index_eng.html",
+          "final_url": "https://desy.de/contact/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_user_s_area/index_eng.html",
+          "final_url": "https://desy.de/desy_user_s_area/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_calendar/index_eng.html",
+          "final_url": "https://desy.de/desy_calendar/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/career_at_desy/index_eng.html",
+          "final_url": "https://desy.de/career_at_desy/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_in_easy_language/index_eng.html",
+          "final_url": "https://desy.de/desy_in_easy_language/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/media_credits/index_eng.html",
+          "final_url": "https://desy.de/media_credits/index_eng.html",
+          "is_redirect": false
+        }
+      ]
+    },
+    "1": {
+      "count": 133,
+      "unique_final_urls": [
+        "https://desy.de/desy_aktuell/2026/jens_schroeder_wird_cco_bei_desy/index_ger.html",
+        "https://desy.de/desy_aktuell/2026/leaps__ultrafast/index_ger.html",
+        "https://desy.de/desy_aktuell/index_ger.html",
+        "https://desy.de/microsites/petra-4/content/index_ger.html",
+        "https://desy.de/desy_forschung/beschleuniger/index_ger.html",
+        "https://desy.de/desy_aktuell/2026/uetrecht_cssb_direktorin/index_ger.html",
+        "https://petra4.desy.de/",
+        "https://desy.de/desy_latest_news/2026/jens_schroeder_becomes_cco_at_desy/index_eng.html",
+        "https://petra4.desy.de/index_eng.html",
+        "https://desy.de/desy_latest_news/2026/leaps_ultrafast/index_eng.html",
+        "https://desy.de/desy_latest_news/2026/uetrecht_cssb_director/index_eng.html",
+        "https://desy.de/desy_latest_news/index_eng.html",
+        "https://desy.de/desy_research/accelerators/index_eng.html",
+        "https://desy.de/microsites/petra-4/content/index_eng.html",
+        "https://accelerators.desy.de/",
+        "https://accphysem.desy.de/",
+        "https://indico.desy.de/",
+        "https://ard.desy.de/login_form?lang=eng&destination=https://ard.desy.de/e157650/@@siteview",
+        "https://v22.desy.de/index_eng.html",
+        "https://www.desy.de/research/facilities__projects/european_xfel/index_eng.html",
+        "https://dachs.desy.de/",
+        "https://kds-info.desy.de/index_eng.html",
+        "https://indico.desy.de/event/51609/",
+        "https://indico.desy.de/event/51344/",
+        "https://beschleuniger-ideenmarkt.desy.de/",
+        "https://library.desy.de/",
+        "https://mqm.desy.de/acl_users/ZopeId/login_form?came_from=https%3A//mqm.desy.de/unser_angebot/qm_wissen/qm_seminar/index_ger.html",
+        "https://mqm.desy.de/",
+        "https://www.desy.de/research/facilities__projects/petra_iii/index_eng.html",
+        "https://www.desy.de/research/facilities__projects/regae/index_eng.html",
+        "https://www.desy.de/career/career_programs/theses/index_eng.html",
+        "https://www.desy.de/research/facilities__projects/flash/index_eng.html",
+        "https://accelerators.desy.de/publications_amp_news/news/index_eng.html",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4078",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4105",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4109",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4036",
+        "https://photon-science.desy.de/",
+        "https://door.desy.de/door/",
+        "https://desy.de/desy_latest_news/2025/petra_iv/index_eng.html",
+        "https://indico.desy.de/event/51380/",
+        "https://indico.desy.de/event/52038/",
+        "https://indico.desy.de/event/51230/",
+        "https://indico.desy.de/event/50946/",
+        "https://indico.desy.de/event/51165/",
+        "https://indico.desy.de/event/51547/",
+        "https://photon-science.desy.de/news__events/seminars/index_eng.html",
+        "https://photon-science.desy.de/news__events/news__highlights/x_rays_pave_the_way_for_the_quantum_revolution/index_eng.html",
+        "https://photon-science.desy.de/news__events/news__highlights/workshop_theory_meets_xfels___from_extreme_conditions_to_attosecond_physics/index_eng.html",
+        "https://photon-science.desy.de/news__events/news__highlights/how_the_vital_iron_protein_ferritin_makes_its_way_in_highly_dense_environments/index_eng.html",
+        "https://photon-science.desy.de/news__events/news__highlights/an_onion_core_researchers_find_hints_of_a_multilayered_centre_of_the_earth/index_eng.html",
+        "https://photon-science.desy.de/users_area/calls__deadlines/rolling_proposal_submission",
+        "https://photon-science.desy.de/facilities/desy_nanolab/index_eng.html",
+        "https://photon-science.desy.de/users_area/new_users/index_eng.html",
+        "https://photon-science.desy.de/users_area/industrial_users/index_eng.html",
+        "https://photon-science.desy.de/news__events/workshops__conferences/index_eng.html",
+        "https://photon-science.desy.de/research/scientific_media/desy_photon_science_annual_reports/2024/index_eng.html",
+        "https://photon-science.desy.de/e39/e163829/index_eng.html",
+        "https://particle-physics.desy.de/",
+        "https://welcome-services.desy.de/",
+        "https://dv-zeuthen.desy.de/",
+        "https://indico.desy.de/event/45605/",
+        "https://library-zeuthen.desy.de/",
+        "https://www.desy.de/login_form?lang=ger&destination=https://www.desy.de/raumbelegung/index_ger.html",
+        "https://pr.desy.de/broschueren/index_ger.html",
+        "https://indico.desy.de/event/50299/",
+        "https://indico.desy.de/event/51745/",
+        "https://indico.desy.de/event/51955/",
+        "https://indico.desy.de/event/51555/",
+        "https://indico.desy.de/event/52108/",
+        "https://indico.desy.de/event/52042/",
+        "https://www.desy.de/ueber_desy/desy_im_film/teilchen__und_astroteilchenphysik/index_ger.html",
+        "https://v22.desy.de/",
+        "https://www.desy.de/verwaltung/formulare/index_ger.html",
+        "https://www.desy.de/ueber_desy/jahresberichte/index_ger.html",
+        "https://it.desy.de/dienste/index_ger.html",
+        "http://particle-physics.desy.de/infrastruktur/desy_managementportale/index_ger.html",
+        "http://raumverwaltung.desy.de/zeuthen",
+        "http://testbeam.desy.de",
+        "https://particle-physics.desy.de/e221976/e221978/e311813",
+        "https://particle-physics.desy.de/e221976/e221978/e323817",
+        "https://particle-physics.desy.de/e221976/e221978/e323564",
+        "https://particle-physics.desy.de/e221976/e221978/e323715",
+        "https://particle-physics.desy.de/e221976/e221978/e323372",
+        "https://particle-physics.desy.de/e232011",
+        "https://particle-physics.desy.de/e221976/e221978/index_ger.html",
+        "https://particle-physics.desy.de/forschung/foerderprogramme/index_ger.html",
+        "https://particle-physics.desy.de/forschung/index_ger.html",
+        "https://particle-physics.desy.de/e283270",
+        "https://particle-physics.desy.de/forschung/drittmittelprojekte/drittmittel___antragstellung/index_ger.html",
+        "https://particle-physics.desy.de/e225108/login_form?lang=ger&came_from=https://particle-physics.desy.de/intern/index_ger.html",
+        "https://particle-physics.desy.de/events__news/events/index_ger.html",
+        "https://prc.desy.de/e38",
+        "https://astroparticle-physics.desy.de/",
+        "https://keycloak.desy.de/auth/realms/production/protocol/openid-connect/auth?scope=openid+profile+email+groups&claims=%7B%22id_token%22%3A%7B%22xwiki_instance_id%22%3Anull%7D%2C%22userinfo%22%3A%7B%22groups%22%3Anull%7D%7D&response_type=code&redirect_uri=https%3A%2F%2Fxwiki.desy.de%2Fxwiki%2Foidc%2Fauthenticator%2Fcallback&state=Vf--z7PAGWFYn-BxTUoAFXBKu_XnfyQTsMkRqzFE3lA&client_id=xwiki-desy-client",
+        "https://physikseminar.desy.de/zeuthen",
+        "https://indico.desy.de/event/51793/",
+        "https://www.desy.de/news/events/index_eng.html%20target=",
+        "https://astroparticle-physics.desy.de/about_us/organisation/emmy_noether_programme/index_eng.html",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4094",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4044",
+        "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4006",
+        "https://astroparticle-physics.desy.de/news_amp_events/events/index_eng.html",
+        "https://astroparticle-physics.desy.de/about_us/organisation/humboldt_research_fellowship_for_postdoctoral_researchers/index_eng.html",
+        "https://astroparticle-physics.desy.de/about_us/organisation/young_investigators_groups/index_eng.html",
+        "https://astroparticle-physics.desy.de/about_us/organisation/helmholtz_funding_of_first_time_appointments_of_excellent_female_scientists_w2_w3/index_eng.html",
+        "https://astroparticle-physics.desy.de/bank/index_eng.html",
+        "https://astroparticle-physics.desy.de/about_us/organisation/erc_grants/index_eng.html",
+        "https://astroparticle-physics.desy.de/news_amp_events/news/index_eng.html",
+        "https://innovation.desy.de/index_eng.html",
+        "https://innovation.desy.de/for_industry/services/index_eng.html",
+        "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
+        "https://innovation.desy.de/founding/index_eng.html",
+        "https://innovation.desy.de/news__events/e85/nanotracking/index_eng.html",
+        "https://innovation.desy.de/inventions/index_eng.html",
+        "https://innovation.desy.de/technologies/index_eng.html",
+        "https://petra4.desy.de/index_ger.html",
+        "https://petra4.desy.de/standort/index_ger.html",
+        "https://petra4.desy.de/aktuelles/2025/neues_roentgen_verfahren/index_ger.html",
+        "https://petra4.desy.de/aktuelles/index_ger.html",
+        "https://petra4.desy.de/aktuelles/2025/zoom_ins_denken/index_ger.html",
+        "https://petra4.desy.de/transfer_und_innovation/index_ger.html",
+        "https://petra4.desy.de/petra_iv/index_ger.html",
+        "https://petra4.desy.de/forschung/gesundheit/index_ger.html",
+        "https://petra4.desy.de/aktuelles/2025/raketen_treibstoff/index_ger.html",
+        "https://innovation.desy.de/index_ger.html",
+        "https://innovation.desy.de/erfindungen/index_ger.html",
+        "https://innovation.desy.de/technologien/index_ger.html",
+        "https://innovation.desy.de/gruendung/index_ger.html",
+        "https://innovation.desy.de/fuer_industrie/services/index_ger.html",
+        "https://innovation.desy.de/news_events/e85/nanotracking/index_ger.html",
+        "https://innovation.desy.de/news_events/index_ger.html",
+        "https://v22.desy.de/index_ger.html"
+      ],
+      "url_entries": [
+        {
+          "original_url": "https://desy.de/desy_aktuell/2026/jens_schroeder_wird_cco_bei_desy/index_ger.html",
+          "final_url": "https://desy.de/desy_aktuell/2026/jens_schroeder_wird_cco_bei_desy/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/2026/leaps__ultrafast/index_ger.html",
+          "final_url": "https://desy.de/desy_aktuell/2026/leaps__ultrafast/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/index_ger.html",
+          "final_url": "https://desy.de/desy_aktuell/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/microsites/petra-4/content/index_ger.html",
+          "final_url": "https://desy.de/microsites/petra-4/content/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_forschung/beschleuniger/index_ger.html",
+          "final_url": "https://desy.de/desy_forschung/beschleuniger/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_aktuell/2026/uetrecht_cssb_direktorin/index_ger.html",
+          "final_url": "https://desy.de/desy_aktuell/2026/uetrecht_cssb_direktorin/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de",
+          "final_url": "https://petra4.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/2026/jens_schroeder_becomes_cco_at_desy/index_eng.html",
+          "final_url": "https://desy.de/desy_latest_news/2026/jens_schroeder_becomes_cco_at_desy/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/index_eng.html",
+          "final_url": "https://petra4.desy.de/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/2026/leaps_ultrafast/index_eng.html",
+          "final_url": "https://desy.de/desy_latest_news/2026/leaps_ultrafast/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/2026/uetrecht_cssb_director/index_eng.html",
+          "final_url": "https://desy.de/desy_latest_news/2026/uetrecht_cssb_director/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/index_eng.html",
+          "final_url": "https://desy.de/desy_latest_news/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/desy_research/accelerators/index_eng.html",
+          "final_url": "https://desy.de/desy_research/accelerators/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://desy.de/microsites/petra-4/content/index_eng.html",
+          "final_url": "https://desy.de/microsites/petra-4/content/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://accelerators.desy.de/",
+          "final_url": "https://accelerators.desy.de/",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://accphysem.desy.de",
+          "final_url": "https://accphysem.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de",
+          "final_url": "https://indico.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://ard.desy.de/e157650",
+          "final_url": "https://ard.desy.de/login_form?lang=eng&destination=https://ard.desy.de/e157650/@@siteview",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://v22.desy.de/index_eng.html",
+          "final_url": "https://v22.desy.de/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://www.desy.de/research/facilities__projects/european_xfel/index_eng.html",
+          "final_url": "https://www.desy.de/research/facilities__projects/european_xfel/index_eng.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://dachs.desy.de",
+          "final_url": "https://dachs.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://kds-info.desy.de/index_eng.html",
+          "final_url": "https://kds-info.desy.de/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51609",
+          "final_url": "https://indico.desy.de/event/51609/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51344",
+          "final_url": "https://indico.desy.de/event/51344/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://beschleuniger-ideenmarkt.desy.de",
+          "final_url": "https://beschleuniger-ideenmarkt.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://library.desy.de",
+          "final_url": "https://library.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://mqm.desy.de/unser_angebot/qm_wissen/qm_seminar",
+          "final_url": "https://mqm.desy.de/acl_users/ZopeId/login_form?came_from=https%3A//mqm.desy.de/unser_angebot/qm_wissen/qm_seminar/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://mqm.desy.de",
+          "final_url": "https://mqm.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://www.desy.de/research/facilities__projects/petra_iii/index_eng.html",
+          "final_url": "https://www.desy.de/research/facilities__projects/petra_iii/index_eng.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://www.desy.de/research/facilities__projects/regae/index_eng.html",
+          "final_url": "https://www.desy.de/research/facilities__projects/regae/index_eng.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://www.desy.de/career/career_programs/theses/index_eng.html",
+          "final_url": "https://www.desy.de/career/career_programs/theses/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://www.desy.de/research/facilities__projects/flash/index_eng.html",
+          "final_url": "https://www.desy.de/research/facilities__projects/flash/index_eng.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://accelerators.desy.de/publications_amp_news/news/index_eng.html",
+          "final_url": "https://accelerators.desy.de/publications_amp_news/news/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4078",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4078",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4105",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4105",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4109",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4109",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4036",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4036",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/",
+          "final_url": "https://photon-science.desy.de/",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://door.desy.de",
+          "final_url": "https://door.desy.de/door/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://desy.de/desy_latest_news/2025/petra_iv/index_eng.html",
+          "final_url": "https://desy.de/desy_latest_news/2025/petra_iv/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://indico.desy.de/e/usersmeeting2026",
+          "final_url": "https://indico.desy.de/event/51380/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/52038",
+          "final_url": "https://indico.desy.de/event/52038/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51230",
+          "final_url": "https://indico.desy.de/event/51230/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/50946",
+          "final_url": "https://indico.desy.de/event/50946/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51165",
+          "final_url": "https://indico.desy.de/event/51165/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51547",
+          "final_url": "https://indico.desy.de/event/51547/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/seminars/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/seminars/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/news__highlights/x_rays_pave_the_way_for_the_quantum_revolution/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/news__highlights/x_rays_pave_the_way_for_the_quantum_revolution/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/news__highlights/workshop_theory_meets_xfels___from_extreme_conditions_to_attosecond_physics/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/news__highlights/workshop_theory_meets_xfels___from_extreme_conditions_to_attosecond_physics/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/news__highlights/how_the_vital_iron_protein_ferritin_makes_its_way_in_highly_dense_environments/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/news__highlights/how_the_vital_iron_protein_ferritin_makes_its_way_in_highly_dense_environments/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/news__highlights/an_onion_core_researchers_find_hints_of_a_multilayered_centre_of_the_earth/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/news__highlights/an_onion_core_researchers_find_hints_of_a_multilayered_centre_of_the_earth/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/users_area/calls__deadlines/rolling_proposal_submission",
+          "final_url": "https://photon-science.desy.de/users_area/calls__deadlines/rolling_proposal_submission",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/facilities/desy_nanolab/index_eng.html",
+          "final_url": "https://photon-science.desy.de/facilities/desy_nanolab/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/users_area/new_users/index_eng.html",
+          "final_url": "https://photon-science.desy.de/users_area/new_users/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/users_area/industrial_users/index_eng.html",
+          "final_url": "https://photon-science.desy.de/users_area/industrial_users/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/news__events/workshops__conferences/index_eng.html",
+          "final_url": "https://photon-science.desy.de/news__events/workshops__conferences/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/research/scientific_media/desy_photon_science_annual_reports/2024/index_eng.html",
+          "final_url": "https://photon-science.desy.de/research/scientific_media/desy_photon_science_annual_reports/2024/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://photon-science.desy.de/e39/e163829/index_eng.html",
+          "final_url": "https://photon-science.desy.de/e39/e163829/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/",
+          "final_url": "https://particle-physics.desy.de/",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://guest-services.desy.de",
+          "final_url": "https://welcome-services.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://dv-zeuthen.desy.de",
+          "final_url": "https://dv-zeuthen.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/45605",
+          "final_url": "https://indico.desy.de/event/45605/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://library-zeuthen.desy.de",
+          "final_url": "https://library-zeuthen.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://www.desy.de/raumbuchung",
+          "final_url": "https://www.desy.de/login_form?lang=ger&destination=https://www.desy.de/raumbelegung/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://pr.desy.de/broschueren/index_ger.html",
+          "final_url": "https://pr.desy.de/broschueren/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/50299",
+          "final_url": "https://indico.desy.de/event/50299/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51745",
+          "final_url": "https://indico.desy.de/event/51745/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51955",
+          "final_url": "https://indico.desy.de/event/51955/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51555",
+          "final_url": "https://indico.desy.de/event/51555/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/52108",
+          "final_url": "https://indico.desy.de/event/52108/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://indico.desy.de/event/52042",
+          "final_url": "https://indico.desy.de/event/52042/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://www.desy.de/ueber_desy/desy_im_film/teilchen__und_astroteilchenphysik/index_ger.html",
+          "final_url": "https://www.desy.de/ueber_desy/desy_im_film/teilchen__und_astroteilchenphysik/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://www.desy.de/karriere/stellenangebote/index_ger.html",
+          "final_url": "https://v22.desy.de/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://www.desy.de/verwaltung/formulare/index_ger.html",
+          "final_url": "https://www.desy.de/verwaltung/formulare/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://www.desy.de/ueber_desy/jahresberichte/index_ger.html",
+          "final_url": "https://www.desy.de/ueber_desy/jahresberichte/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://it.desy.de/dienste/index_ger.html",
+          "final_url": "https://it.desy.de/dienste/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://particle-physics.desy.de/infrastruktur/desy_managementportale/index_ger.html",
+          "final_url": "http://particle-physics.desy.de/infrastruktur/desy_managementportale/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://raumverwaltung.desy.de/zeuthen",
+          "final_url": "http://raumverwaltung.desy.de/zeuthen",
+          "is_redirect": false
+        },
+        {
+          "original_url": "http://testbeam.desy.de",
+          "final_url": "http://testbeam.desy.de",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/e311813",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/e311813",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/e323817",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/e323817",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/e323564",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/e323564",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/e323715",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/e323715",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/e323372",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/e323372",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e232011",
+          "final_url": "https://particle-physics.desy.de/e232011",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e221976/e221978/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/e221976/e221978/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/forschung/foerderprogramme/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/forschung/foerderprogramme/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/forschung/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/forschung/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/e283270",
+          "final_url": "https://particle-physics.desy.de/e283270",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/forschung/drittmittelprojekte/drittmittel___antragstellung/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/forschung/drittmittelprojekte/drittmittel___antragstellung/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/intern/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/e225108/login_form?lang=ger&came_from=https://particle-physics.desy.de/intern/index_ger.html",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://particle-physics.desy.de/events__news/events/index_ger.html",
+          "final_url": "https://particle-physics.desy.de/events__news/events/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://prc.desy.de/e38",
+          "final_url": "https://prc.desy.de/e38",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/",
+          "final_url": "https://astroparticle-physics.desy.de/",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://confluence.desy.de/display/DESYAstroparticlePublic/Astroparticle+Seminar",
+          "final_url": "https://keycloak.desy.de/auth/realms/production/protocol/openid-connect/auth?scope=openid+profile+email+groups&claims=%7B%22id_token%22%3A%7B%22xwiki_instance_id%22%3Anull%7D%2C%22userinfo%22%3A%7B%22groups%22%3Anull%7D%7D&response_type=code&redirect_uri=https%3A%2F%2Fxwiki.desy.de%2Fxwiki%2Foidc%2Fauthenticator%2Fcallback&state=Vf--z7PAGWFYn-BxTUoAFXBKu_XnfyQTsMkRqzFE3lA&client_id=xwiki-desy-client",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://physikseminar.desy.de/zeuthen",
+          "final_url": "https://physikseminar.desy.de/zeuthen",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51793",
+          "final_url": "https://indico.desy.de/event/51793/",
+          "is_redirect": true
+        },
+        {
+          "original_url": "http://www.desy.de/news/events/index_eng.html target=",
+          "final_url": "https://www.desy.de/news/events/index_eng.html%20target=",
+          "is_redirect": true
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/about_us/organisation/emmy_noether_programme/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/about_us/organisation/emmy_noether_programme/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4094",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4094",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4044",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4044",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4006",
+          "final_url": "https://www.desy.de/news/news_search/index_eng.html?opendirectanchor=4006",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/news_amp_events/events/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/news_amp_events/events/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/about_us/organisation/humboldt_research_fellowship_for_postdoctoral_researchers/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/about_us/organisation/humboldt_research_fellowship_for_postdoctoral_researchers/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/about_us/organisation/young_investigators_groups/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/about_us/organisation/young_investigators_groups/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/about_us/organisation/helmholtz_funding_of_first_time_appointments_of_excellent_female_scientists_w2_w3/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/about_us/organisation/helmholtz_funding_of_first_time_appointments_of_excellent_female_scientists_w2_w3/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/bank/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/bank/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/about_us/organisation/erc_grants/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/about_us/organisation/erc_grants/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://astroparticle-physics.desy.de/news_amp_events/news/index_eng.html",
+          "final_url": "https://astroparticle-physics.desy.de/news_amp_events/news/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/index_eng.html",
+          "final_url": "https://innovation.desy.de/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/for_industry/services/index_eng.html",
+          "final_url": "https://innovation.desy.de/for_industry/services/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
+          "final_url": "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/founding/index_eng.html",
+          "final_url": "https://innovation.desy.de/founding/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/news__events/e85/nanotracking/index_eng.html",
+          "final_url": "https://innovation.desy.de/news__events/e85/nanotracking/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/inventions/index_eng.html",
+          "final_url": "https://innovation.desy.de/inventions/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/technologies/index_eng.html",
+          "final_url": "https://innovation.desy.de/technologies/index_eng.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/index_ger.html",
+          "final_url": "https://petra4.desy.de/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/standort/index_ger.html",
+          "final_url": "https://petra4.desy.de/standort/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/aktuelles/2025/neues_roentgen_verfahren/index_ger.html",
+          "final_url": "https://petra4.desy.de/aktuelles/2025/neues_roentgen_verfahren/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/aktuelles/index_ger.html",
+          "final_url": "https://petra4.desy.de/aktuelles/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/aktuelles/2025/zoom_ins_denken/index_ger.html",
+          "final_url": "https://petra4.desy.de/aktuelles/2025/zoom_ins_denken/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/transfer_und_innovation/index_ger.html",
+          "final_url": "https://petra4.desy.de/transfer_und_innovation/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/petra_iv/index_ger.html",
+          "final_url": "https://petra4.desy.de/petra_iv/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/forschung/gesundheit/index_ger.html",
+          "final_url": "https://petra4.desy.de/forschung/gesundheit/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://petra4.desy.de/aktuelles/2025/raketen_treibstoff/index_ger.html",
+          "final_url": "https://petra4.desy.de/aktuelles/2025/raketen_treibstoff/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/index_ger.html",
+          "final_url": "https://innovation.desy.de/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/erfindungen/index_ger.html",
+          "final_url": "https://innovation.desy.de/erfindungen/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/technologien/index_ger.html",
+          "final_url": "https://innovation.desy.de/technologien/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/gruendung/index_ger.html",
+          "final_url": "https://innovation.desy.de/gruendung/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/fuer_industrie/services/index_ger.html",
+          "final_url": "https://innovation.desy.de/fuer_industrie/services/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/news_events/e85/nanotracking/index_ger.html",
+          "final_url": "https://innovation.desy.de/news_events/e85/nanotracking/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://innovation.desy.de/news_events/index_ger.html",
+          "final_url": "https://innovation.desy.de/news_events/index_ger.html",
+          "is_redirect": false
+        },
+        {
+          "original_url": "https://v22.desy.de/index_ger.html",
+          "final_url": "https://v22.desy.de/index_ger.html",
+          "is_redirect": false
+        }
+      ]
+    }
+  },
+  "link_analysis": {
+    "total_links_found_in_html": 12022,
+    "total_urls_crawled": 182,
+    "average_links_per_page": 66.05494505494505,
+    "sample_pages_with_links": [
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2026",
+        "depth": "0",
+        "links_found": 64
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2025",
+        "depth": "0",
+        "links_found": 168
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2024",
+        "depth": "0",
+        "links_found": 170
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2023",
+        "depth": "0",
+        "links_found": 69
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2022",
+        "depth": "0",
+        "links_found": 77
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2021",
+        "depth": "0",
+        "links_found": 66
+      },
+      {
+        "url": "https://desy.de/desy_aktuell/index_ger.html?year=2020",
+        "depth": "0",
+        "links_found": 67
+      },
+      {
+        "url": "https://desy.de/desy_forschung/index_ger.html",
+        "depth": "0",
+        "links_found": 54
+      },
+      {
+        "url": "https://desy.de/desy_forschung/forschung_mit_photonen/index_ger.html",
+        "depth": "0",
+        "links_found": 65
+      },
+      {
+        "url": "https://desy.de/desy_forschung/teilchenphysik/index_ger.html",
+        "depth": "0",
+        "links_found": 59
+      },
+      {
+        "url": "https://desy.de/desy_forschung/astroteilchenphysik/index_ger.html",
+        "depth": "0",
+        "links_found": 56
+      },
+      {
+        "url": "https://desy.de/desy_forschung/anlagen__projekte/index_ger.html",
+        "depth": "0",
+        "links_found": 61
+      },
+      {
+        "url": "https://desy.de/desy_forschung/kooperationen__institute/index_ger.html",
+        "depth": "0",
+        "links_found": 56
+      },
+      {
+        "url": "https://desy.de/desy_forschung/innovation__technologietransfer/index_ger.html",
+        "depth": "0",
+        "links_found": 46
+      },
+      {
+        "url": "https://desy.de/forschungszentrum_desy/index_ger.html",
+        "depth": "0",
+        "links_found": 62
+      },
+      {
+        "url": "https://desy.de/desy_fuer_unternehmen/index_ger.html",
+        "depth": "0",
+        "links_found": 46
+      },
+      {
+        "url": "https://desy.de/schuelerlabor/index_ger.html",
+        "depth": "0",
+        "links_found": 47
+      },
+      {
+        "url": "https://desy.de/kontakt/index_ger.html",
+        "depth": "0",
+        "links_found": 52
+      },
+      {
+        "url": "https://desy.de/desy_intern/index_ger.html",
+        "depth": "0",
+        "links_found": 51
+      },
+      {
+        "url": "https://desy.de/desy_kalender/index_ger.html",
+        "depth": "0",
+        "links_found": 50
+      }
+    ]
+  }
+}

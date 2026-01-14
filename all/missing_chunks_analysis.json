@@ -1,0 +1,840 @@
+{
+  "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Records for Approval / Corrections ( ) You have Postponed entries ( ) Please \"Modify\" and \"Finish & Release\" when convenient We use cookies to improve your experience.",
+        "content_length": 167,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (55 total):\n\n\nPublications:\n- Publications database: https://bib-pubdb1.desy.de/collection/VDB?ln=en\n- External Publications: https://bib-pubdb1.desy.de/collection/External?ln=en\n- Vita Pub...",
+        "content_length": 3957,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "\n",
+        "content_length": 1,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html": {
+    "original_count": 8,
+    "crawl4ai_count": 2,
+    "missing_count": 4,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": ". Christian Schwanenberger CMS-Experiment am LHC Christian Schwanenberger ist Leitender Wissenschaftler bei DESY und Professor der Universität Hamburg. Er ist Mitglied beim CMS-Experiment am Large Had...",
+        "content_length": 362,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Sein Hauptforschungsgebiet ist Elementarteilchenphysik, insbesondere Präzisionsmessungen der Eigenschaften des -Quarks und seiner elektroschwachen und starken Kopplungen, die Wechselwirkung des -Quark...",
+        "content_length": 423,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Dunkler Materie. Kontakt Christian Schwanenberger T +49 (0)40 8998 6004 E. christian.schwanenberger@ Persönliche Homepage Publikationen in INSPIRE Wissenschaftlicher Werdegang Mitgliedschaften",
+        "content_length": 192,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Page Links (2 total):\n\n\nPersonal Websites:\n- Persönliche Homepage: https://www-d0.fnal.gov/~schwanen/\n\nPublications:\n- Publikationen in INSPIRE: http://inspirehep.net/search?ln=en&p=find+author+schwan...",
+        "content_length": 256,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/ueber_desy/leit...",
+        "content_length": 15974,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": ". IT-Management Contact - Management - Sekretariat - Address",
+        "content_length": 60,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (0 total):\n",
+        "content_length": 22,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://it.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de/index_eng.html \"To the DESY homepage\")\n## Jump\n  * [To content](https://it.desy.de/about_us/grup...",
+        "content_length": 6960,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://cms.desy.de/cms_members/": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "CMS Members Compact Muon Solenoid Experiment CMS Members",
+        "content_length": 56,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (2 total):\n\n\nExternal Links (1):\n- www.desy.de: https://www.desy.de\n\nInternal Links (1):\n- CMS: https://cms.desy.de/",
+        "content_length": 127,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://cms.desy.de/common/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\nDeutsches Elektronen-Synchrotron DESY   \nA Research Centre of the Helmholtz Association\n ...",
+        "content_length": 25630,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://www.desy.de/career/contact/index_eng.html": {
+    "original_count": 10,
+    "crawl4ai_count": 2,
+    "missing_count": 5,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": ". Contact Contact We assist you on your way The DESY recruitment team is your central contact in all aspects of your application at our institutes. We will always be glad to answer your questions, whe...",
+        "content_length": 380,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "application, and questions regarding a personal interview at our premises. Jochen Barnstedt (he/him) Head of Recruitment and Employer Branding T. (040) 8998-4219 E. jochen.barnstedt@ Alica Frahm (she/...",
+        "content_length": 464,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Hooghiemstra (she/her) HR Manager Recruitment Administration Staff T. (040) 8998-3285 E. laura.hooghiemstra@ Nadine Krüger (she/her) HR Team Assistent Recruitment T. (040) 8998-3392 E. nadine.krueger@...",
+        "content_length": 461,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Heinrich Zimmermann (he/him) Team Leader Recruitment T. (040) 8998-1589 E. heinrich.zimmermann@",
+        "content_length": 95,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Page Links (0 total):\n",
+        "content_length": 22,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de/index_eng.html \"To the DESY homepage\")\n## Jump\n  * [To content](https://www.desy.de/career/cont...",
+        "content_length": 8196,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Group members Former group members",
+        "content_length": 34,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (1 total):\n\n\nExternal Links (1):\n- DOOR: https://door.desy.de",
+        "content_length": 72,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "[](http://door.desy.de)\n![loading..](https://photon-science.desy.de/sites/site_photonscience/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://photon-science.desy.de/si...",
+        "content_length": 13522,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://atlas.desy.de/members/": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "ATLAS Group Members (To sort click on the blue fields)",
+        "content_length": 54,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (0 total):\n",
+        "content_length": 22,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "[![The DESY-ATLAS Group](https://atlas.desy.de/sites/site_atlas/content/header.jpg)](https://atlas.desy.de/) |  ![](https://atlas.desy.de/common/desy.jpg)  \n---|---  \n  * [![](https://atlas.desy.de/mi...",
+        "content_length": 11314,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://ai.desy.de/people/heuser.html": {
+    "original_count": 8,
+    "crawl4ai_count": 2,
+    "missing_count": 4,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Philipp Heuser Scientific fields Information technology Photon science Projects Helmholtz Analytics Framework Helmholtz Imaging HMZ mdlma PickYOLO SRµCT segmentation UniSef Latest Publications Machine...",
+        "content_length": 454,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "detector for annotation of cryo electron tomograms: Erik Genthe et al. et al., Journal of Structural Biology , doi: 10.1016/j.jsb.2023.107990 An learning approach for the interactive and guided segmen...",
+        "content_length": 493,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Diana Krüger et al., Bioactive Materials , doi: 10.1016/j.bioactmat.2021.10.041 Scaling the U-net: segmentation of biodegradable bone implants in high-resolution synchrotron radiation microtomograms: ...",
+        "content_length": 268,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Page Links (19 total):\n\n\nPublications:\n- Machine learning for the reconstruction and analysis of synchrotron-radiation tomography data:: https://ai.desy.de/publications/ab666a94e9330ff2a6ae04aa76b6607...",
+        "content_length": 1803,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "## Skip links\n  * [Skip to primary navigation](https://ai.desy.de/people/heuser.html#site-nav)\n  * [Skip to content](https://ai.desy.de/people/heuser.html#main)\n  * [Skip to footer](https://ai.desy.de...",
+        "content_length": 4037,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Contact & Staff Beamline phones Control hutch: +49 40 8998 86234 Experimental hutch: +49 40 8998 86235 Beamline Staff Former group members Jana Raabe Carsten Richter Raphael Grifone Yury Matveev Kseni...",
+        "content_length": 257,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (1 total):\n\n\nExternal Links (1):\n- DOOR: https://door.desy.de",
+        "content_length": 72,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "[](http://door.desy.de)\n![loading..](https://photon-science.desy.de/sites/site_photonscience/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://photon-science.desy.de/si...",
+        "content_length": 13788,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html": {
+    "original_count": 6,
+    "crawl4ai_count": 2,
+    "missing_count": 3,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Information Website of the German partners for IceCube-Gen2 The planned expansion of the IceCube observatory at the South Pole marks a new era in neutrino astronomy. Graduate Education Website of the ...",
+        "content_length": 494,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "2025. External Support Emmy Noether Programme ERC Grants Helmholtz Funding Programs For Leading Female Scientists Humboldt Research Fellowship Young Investigators Groups Investitionsbank des Landes Br...",
+        "content_length": 330,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Page Links (14 total):\n\n\nPersonal Websites:\n- Website of the Multimessenger School: https://www.multimessenger-school.de/\n- Personal website: https://www-zeuthen.desy.de/~pohlmadq/\n- Personal website:...",
+        "content_length": 873,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "![loading..](https://astroparticle-physics.desy.de/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://astroparticle-physics.desy.de/common/images/logo_desy.gif) ](http:/...",
+        "content_length": 19705,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://pitz.desy.de/group_members/": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Group Members Photo Injector Test Facility at DESY, Zeuthen site Group Members Group Leader Scientists Post Docs PhD Students Guest Scientists ...",
+        "content_length": 146,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (1 total):\n\n\nInternal Links (1):\n- PITZ: https://pitz.desy.de/",
+        "content_length": 73,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://pitz.desy.de/common/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\nDeutsches Elektronen-Synchrotron DESY   \nA Research Centre of the Helmholtz Association\n...",
+        "content_length": 37092,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html": {
+    "original_count": 6,
+    "crawl4ai_count": 2,
+    "missing_count": 3,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": "Information Website of the German partners for IceCube-Gen2 The planned expansion of the IceCube observatory at the South Pole marks a new era in neutrino astronomy. Graduate Education Website of the ...",
+        "content_length": 494,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "2025. External Support Emmy Noether Programme ERC Grants Helmholtz Funding Programs For Leading Female Scientists Humboldt Research Fellowship Young Investigators Groups Investitionsbank des Landes Br...",
+        "content_length": 346,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "continued",
+          "page_link_count",
+          "has_personal_websites"
+        ]
+      },
+      {
+        "content_preview": "Page Links (3 total):\n\n\nPersonal Websites:\n- Website of the Multimessenger School: https://www.multimessenger-school.de/\n- personal website: https://www-zeuthen.desy.de/~csspier/\n\nInternal Links (1):\n...",
+        "content_length": 291,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "![loading..](https://astroparticle-physics.desy.de/common/images/loading.gif)   \nLoading menu, please wait.. \n[ ![DESY Logo](https://astroparticle-physics.desy.de/common/images/logo_desy.gif) ](http:/...",
+        "content_length": 18723,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  },
+  "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html": {
+    "original_count": 4,
+    "crawl4ai_count": 2,
+    "missing_count": 2,
+    "extra_count": 1,
+    "missing_chunks": [
+      {
+        "content_preview": ". Veranstaltungen Veranstaltungen Vorträge und Veranstaltungen bei DESY",
+        "content_length": 71,
+        "chunk_type": "structural",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "content_preview": "Page Links (4 total):\n\n\nInternal Links (4):\n- «: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html?time=-1&site=0&range=0\n- »: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html?t...",
+        "content_length": 404,
+        "chunk_type": "links",
+        "chunk_subtype": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ],
+    "extra_chunks": [
+      {
+        "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/aktuelles/veran...",
+        "content_length": 6094,
+        "chunk_type": "structural",
+        "extraction_method": "crawl4ai_markdown"
+      }
+    ]
+  }
+}

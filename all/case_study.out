@@ -1,0 +1,123 @@
+================================================================================
+Comparing Original Scraper vs Crawl4AI Implementation
+================================================================================
+
+1. Structural Chunks - Detailed Comparison
+--------------------------------------------------------------------------------
+  Original: 930 chunks, 96 URLs
+  Crawl4AI: 982 chunks, 96 URLs
+  Difference: +52 chunks
+
+  URLs only in original (1):
+    - https://www.desy.de/instagram
+
+  URLs only in Crawl4AI (1):
+    - https://accelerators.desy.de/
+
+  URLs with MORE chunks in Crawl4AI (4):
+    +64 chunks: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+      (68 unique chunks in Crawl4AI)
+        Sample 1 [table_row/entity_centric/comprehensive_row]: name: Naturwissenschaftliche Fakult
+phone: 2017-11587...
+        Sample 2 [table_row/entity_centric/name_phone]: Master Thesis can be contacted at phone number 2021-01468...
+    +3 chunks: https://particle-physics.desy.de/forschung/forschungsprojekte/ilcdesy/index_ger.html
+      (5 unique chunks in Crawl4AI)
+        Sample 1 [structural]: ILC@DESY QuickLinks ILC-Projektteam bei DESY LC NewsLine Visualisierung des International Linear Collider ILC. Bild: ILC-Collaboration ILC@DESY Projec...
+        Sample 2 [structural]: , Hamburg Hamburg , Germany , 20 Aug 2023 - 25 Aug 2023 2023-08-20 2023-08-25 Proceedings of Science / International School for Advanced Studies (EPS-...
+    +1 chunks: https://astroparticle-physics.desy.de/about_us/organisation/index_eng.html
+      (1 unique chunks in Crawl4AI)
+        Sample 1 [structural]: 2025. External Support Emmy Noether Programme ERC Grants Helmholtz Funding Programs For Leading Female Scientists Humboldt Research Fellowship Young I...
+    +1 chunks: https://v22.desy.de/index_ger.html
+      (30 unique chunks in Crawl4AI)
+        Sample 1 [table_row/entity_centric/comprehensive_row]: Titel: Auszubildende als Fachinformatikerin (w/m/d) Fachrichtung Systemintegration
+Tätigkeitsbereich: IT
+Karrierestufe: Ausbildung
+Standort: Zeuthen...
+        Sample 2 [table_row/entity_centric/comprehensive_row]: Titel: Postdoc for a networked atomic clock experiment for ultralight dark matter
+Tätigkeitsbereich: Wissenschaft
+Karrierestufe: Postdoc
+Standort: Zeu...
+
+  URLs with FEWER chunks in Crawl4AI (5):
+    -6 chunks: https://www.desy.de/schule/schuelerlabore/index_ger.html
+      (7 chunks missing in Crawl4AI)
+        Missing 1 [structural]: Siebt- und Achtklässler*innen in unserem Schülerlabor am Standort Hamburg. Mehr Information Hamburg Radioaktivität geeignet für: 8. - 10. Klasse Wie k...
+        Missing 2 [structural]: sich Oberstufenkurse auf die Suche nach "Quantensprüngen" machen und verschiedene quantenphysikalische Phänomene untersuchen. Mehr Information Weiter ...
+    -3 chunks: https://particle-physics.desy.de/ueber_uns/fh_leitende_wissenschaftler/ingrid_maria_gregor/index_ger.html
+      (3 chunks missing in Crawl4AI)
+        Missing 1 [structural]: und Bau eines Rückstoßdetektors für die letzte Phase des HERMES-Betriebs. Nach ihrem Wechsel in einen anderen Teil des HERA-Rings zum ZEUS-Experiment ...
+        Missing 2 [structural]: Wiedereintritt in die ATLAS-Kollaboration leitet sie nun die ATLAS-Gruppe bei DESY, einer der größten Gruppen in der internationalen ATLAS-Kollaborati...
+    -2 chunks: https://particle-physics.desy.de/infrastruktur/test_beam/desy_ii_description__status/index_ger.html
+      (2 chunks missing in Crawl4AI)
+        Missing 1 [structural]: for Testbeam 21 and 24, with 6 GeV Electrons or Positrons in DESYII. Figure 8 shows a comparison of the rates for 6 GeV and 7 GeV in DESY II (measurem...
+        Missing 2 [structural]: is 1 MHz, the RF frequency 500 MHz, and the bunch length around 30 ps. In theory, particles could be injected into the synchrotron every cycle. But ty...
+    -2 chunks: https://astroparticle-physics.desy.de/
+      (5 chunks missing in Crawl4AI)
+        Missing 1 [structural]: technique to detect neutrinos by the radio emission produced in their interactions. DESY researchers develop and field test this new technology in Gre...
+        Missing 2 [links]: Page Links (2 total):
+
+
+Personal Websites:
+- Website of the Multimessenger School: https://www.multimessenger-school.de/
+
+Internal Links (1):
+- ·: htt...
+    -1 chunks: https://innovation.desy.de/news_events/index_ger.html
+      (2 chunks missing in Crawl4AI)
+        Missing 1 [structural]: für Europa von Hamburg aus 11.06.2025 Neugründung: Start-up WAIV-FTIR bringt kompakte Hochleistungsspektroskopie auf den Markt 30.04.2025 Impossible F...
+        Missing 2 [structural]: 27.03.2025 Start des Doktoranden-Netzwerks EPACE mit Fokus auf kompakte Beschleuniger und Innovation 26.03.2025 Grundstein für DESY Innovation Factory...
+
+  URLs with DIFFERENT chunks (same count, different content) (8):
+    https://indico.desy.de/categoryDisplay.py?categId=480
+      Original: 2 chunks, Crawl4AI: 2 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+    https://www.desy.de/infos__services/presse/index_ger.html
+      Original: 4 chunks, Crawl4AI: 4 chunks
+      2 unique chunks in Crawl4AI
+      2 chunks only in original
+    https://www.desy.de/schule/ausbildungsplaetze/index_ger.html
+      Original: 6 chunks, Crawl4AI: 6 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+    https://particle-physics.desy.de/test_beams_at_desy/
+      Original: 26 chunks, Crawl4AI: 26 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+    https://indico.desy.de/event/51058/
+      Original: 2 chunks, Crawl4AI: 2 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+    https://kaldera.desy.de/
+      Original: 2 chunks, Crawl4AI: 2 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+    https://particle-physics.desy.de/
+      Original: 10 chunks, Crawl4AI: 10 chunks
+      6 unique chunks in Crawl4AI
+      6 chunks only in original
+    https://indico.desy.de/event/45599/
+      Original: 2 chunks, Crawl4AI: 2 chunks
+      1 unique chunks in Crawl4AI
+      1 chunks only in original
+
+2. Processed URLs Comparison
+--------------------------------------------------------------------------------
+  Original: 96 URLs
+  Crawl4AI: 96 URLs
+  Common: 95 URLs
+  Overlap: 99.0%
+  Only in original: 1
+    - https://www.desy.de/instagram
+  Only in crawl4ai: 1
+    - https://accelerators.desy.de/
+
+================================================================================
+Summary
+================================================================================
+✓ Both implementations processed similar numbers of URLs
+✓ Chunk difference: +52 chunks
+✓ URL overlap: 86 URLs with same chunk count
+✓ Crawl4AI has 69 extra chunks across 4 URLs
+✓ Crawl4AI is missing 14 chunks across 5 URLs
+

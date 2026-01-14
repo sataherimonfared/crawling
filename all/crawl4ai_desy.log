@@ -1,0 +1,29 @@
+2025-12-16 09:58:28,065 - INFO - 🚀 Starting crawl4ai DESY scraper...
+2025-12-16 09:58:28,065 - INFO - Configuration: max_depth=7, batch_size=25, limit=100
+2025-12-16 09:58:28,065 - INFO - Loading URL map from ../scraper-correcting-deepness-final/desy_url_map_20251203_221759_urls=100_000.json
+2025-12-16 09:58:28,315 - INFO - Total URLs to process: 100
+2025-12-16 09:58:28,980 - INFO - Processing batch 1: 25 URLs
+2025-12-16 09:58:49,429 - WARNING - Column mismatch in table 0 (row 1): 3 headers, 4 effective cells. URL: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html
+2025-12-16 09:59:01,197 - INFO - Batch 1 completed: 25 processed, 0 errors (0.0% error rate)
+2025-12-16 09:59:01,698 - INFO - Processing batch 2: 25 URLs
+2025-12-16 09:59:28,990 - WARNING - Column mismatch in table 0 (row 0): 1 headers, 3 effective cells. URL: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+2025-12-16 09:59:29,096 - WARNING - Column mismatch in table 13 (row 0): 1 headers, 2 effective cells. URL: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+2025-12-16 09:59:51,754 - WARNING - Column mismatch in table 1 (row 0): 4 headers, 2 effective cells. URL: https://particle-physics.desy.de/test_beams_at_desy/
+2025-12-16 09:59:51,907 - INFO - Checkpoint saved: 49 processed, 1 errors
+2025-12-16 09:59:51,960 - INFO - Batch 2 completed: 24 processed, 1 errors (4.0% error rate)
+2025-12-16 09:59:52,461 - INFO - Processing batch 3: 25 URLs
+2025-12-16 10:00:33,796 - WARNING - Column mismatch in table 0 (row 0): 4 headers, 2 effective cells. URL: https://particle-physics.desy.de/ueber_uns/fh_leitende_wissenschaftler/ingrid_maria_gregor/index_ger.html
+2025-12-16 10:00:33,798 - WARNING - Column mismatch in table 1 (row 0): 4 headers, 2 effective cells. URL: https://particle-physics.desy.de/ueber_uns/fh_leitende_wissenschaftler/ingrid_maria_gregor/index_ger.html
+2025-12-16 10:00:43,663 - INFO - Batch 3 completed: 23 processed, 2 errors (8.0% error rate)
+2025-12-16 10:00:44,163 - INFO - Processing batch 4: 25 URLs
+2025-12-16 10:01:15,079 - INFO - Checkpoint saved: 96 processed, 4 errors
+2025-12-16 10:01:15,105 - INFO - Batch 4 completed: 24 processed, 1 errors (4.0% error rate)
+2025-12-16 10:01:16,467 - INFO - Processing completed, generating final outputs...
+2025-12-16 10:01:16,487 - INFO - Merging batch results...
+2025-12-16 10:01:16,566 - INFO - Final outputs generated successfully
+2025-12-16 10:01:16,566 - INFO - Cleaned up crawl4ai_batch_0001.json
+2025-12-16 10:01:16,566 - INFO - Cleaned up crawl4ai_batch_0002.json
+2025-12-16 10:01:16,566 - INFO - Cleaned up crawl4ai_batch_0003.json
+2025-12-16 10:01:16,566 - INFO - Cleaned up crawl4ai_batch_0004.json
+2025-12-16 10:01:16,568 - INFO - Session closed successfully
+2025-12-16 10:01:16,568 - INFO - 🎉 Scraping completed successfully!

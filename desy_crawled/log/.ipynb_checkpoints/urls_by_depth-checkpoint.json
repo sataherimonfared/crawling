@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-12T12:58:37.236115",
+  "root_urls": [
+    "https://www.desy.de"
+  ],
+  "max_depth": 1,
+  "total_urls": 9,
+  "urls_by_depth": {
+    "0": {
+      "count": 1,
+      "urls": [
+        "https://www.desy.de"
+      ]
+    },
+    "1": {
+      "count": 8,
+      "urls": [
+        "https://petra4.desy.de",
+        "https://desy.de/index_ger.html",
+        "https://desy.de/desy_aktuell/2026/uetrecht_cssb_direktorin/index_ger.html",
+        "https://desy.de/desy_aktuell/2026/jens_schroeder_wird_cco_bei_desy/index_ger.html",
+        "https://desy.de/desy_aktuell/index_ger.html",
+        "https://desy.de/desy_forschung/beschleuniger/index_ger.html",
+        "https://desy.de/microsites/petra-4/content/index_ger.html",
+        "https://desy.de/desy_aktuell/2025/laserfokussierung_plasmainjektor_piv/index_ger.html"
+      ]
+    }
+  }
+}

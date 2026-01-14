@@ -1,0 +1,19 @@
+{
+  "crawl4ai": {
+    "suitability_score": 97.31065088757396,
+    "verdict": "\u2705 EXCELLENT - Ready for RAG",
+    "content_quality": 93.2766272189349,
+    "language_accuracy": 1.0,
+    "link_metadata_completeness": 1.0,
+    "chunk_types_correct": true
+  },
+  "original": {
+    "suitability_score": 87.38144329896907,
+    "verdict": "\u2705 GOOD - Suitable for RAG with minor improvements",
+    "content_quality": 93.45360824742268,
+    "language_accuracy": 1.0,
+    "link_metadata_completeness": 1.0,
+    "chunk_types_correct": false
+  },
+  "timestamp": "2025-12-16 16:14:41.470306"
+}

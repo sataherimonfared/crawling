@@ -1,0 +1,218 @@
+================================================================================
+Generating Detailed JSON Files for Deep Analysis
+================================================================================
+
+[1/13] Processing: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://www.desy.de/aktuelles/veranstaltungen/index_ger.html             
+| ✓ | ⏱: 0.50s 
+[SCRAPE].. ◆ https://www.desy.de/aktuelles/veranstaltungen/index_ger.html             
+| ✓ | ⏱: 0.02s 
+[COMPLETE] ● https://www.desy.de/aktuelles/veranstaltungen/index_ger.html             
+| ✓ | ⏱: 0.52s 
+    Original: 12 chunks (tables: 0, events: 8, researchers: 0)
+    Crawl4AI: 10 chunks (tables: 0, events: 8, researchers: 0)
+
+[2/13] Processing: https://atlas.desy.de/members/
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://atlas.desy.de/members/                                           
+| ✓ | ⏱: 0.52s 
+[SCRAPE].. ◆ https://atlas.desy.de/members/                                           
+| ✓ | ⏱: 0.08s 
+[COMPLETE] ● https://atlas.desy.de/members/                                           
+| ✓ | ⏱: 0.60s 
+    Original: 454 chunks (tables: 440, events: 0, researchers: 0)
+    Crawl4AI: 442 chunks (tables: 440, events: 0, researchers: 0)
+
+[3/13] Processing: https://cms.desy.de/cms_members/
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://cms.desy.de/cms_members/                                         
+| ✓ | ⏱: 1.02s 
+[SCRAPE].. ◆ https://cms.desy.de/cms_members/                                         
+| ✓ | ⏱: 0.10s 
+[COMPLETE] ● https://cms.desy.de/cms_members/                                         
+| ✓ | ⏱: 1.12s 
+    Original: 449 chunks (tables: 431, events: 0, researchers: 0)
+    Crawl4AI: 433 chunks (tables: 431, events: 0, researchers: 0)
+
+[4/13] Processing: https://pitz.desy.de/group_members/
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://pitz.desy.de/group_members/                                      
+| ✓ | ⏱: 1.10s 
+[SCRAPE].. ◆ https://pitz.desy.de/group_members/                                      
+| ✓ | ⏱: 0.09s 
+[COMPLETE] ● https://pitz.desy.de/group_members/                                      
+| ✓ | ⏱: 1.19s 
+    Original: 79 chunks (tables: 72, events: 0, researchers: 0)
+    Crawl4AI: 74 chunks (tables: 72, events: 0, researchers: 0)
+
+[5/13] Processing: https://it.desy.de/about_us/gruppenleitung/management/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://it.desy.de/about_us/gruppenleitung/management/index_eng.html     
+| ✓ | ⏱: 0.81s 
+[SCRAPE].. ◆ https://it.desy.de/about_us/gruppenleitung/management/index_eng.html     
+| ✓ | ⏱: 0.03s 
+[COMPLETE] ● https://it.desy.de/about_us/gruppenleitung/management/index_eng.html     
+| ✓ | ⏱: 0.84s 
+    Original: 29 chunks (tables: 24, events: 0, researchers: 0)
+    Crawl4AI: 26 chunks (tables: 24, events: 0, researchers: 0)
+
+[6/13] Processing: https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html    
+| ✓ | ⏱: 1.94s 
+[SCRAPE].. ◆ 
+https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html    
+| ✓ | ⏱: 0.07s 
+[COMPLETE] ● 
+https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html    
+| ✓ | ⏱: 2.02s 
+    Original: 120 chunks (tables: 108, events: 0, researchers: 0)
+    Crawl4AI: 110 chunks (tables: 108, events: 0, researchers: 0)
+
+[7/13] Processing: https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_
+eng.html       | ✓ | ⏱: 1.90s 
+[SCRAPE].. ◆ 
+https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_
+eng.html       | ✓ | ⏱: 0.07s 
+[COMPLETE] ● 
+https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_
+eng.html       | ✓ | ⏱: 1.97s 
+    Original: 126 chunks (tables: 115, events: 0, researchers: 0)
+    Crawl4AI: 117 chunks (tables: 115, events: 0, researchers: 0)
+
+[8/13] Processing: https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://photon-science.desy.de/research/research..._coherent_phenomena/group_members/i
+ndex_eng.html  | ✓ | ⏱: 0.60s 
+[SCRAPE].. ◆ 
+https://photon-science.desy.de/research/research..._coherent_phenomena/group_members/i
+ndex_eng.html  | ✓ | ⏱: 0.05s 
+[COMPLETE] ● 
+https://photon-science.desy.de/research/research..._coherent_phenomena/group_members/i
+ndex_eng.html  | ✓ | ⏱: 0.65s 
+    Original: 70 chunks (tables: 62, events: 0, researchers: 0)
+    Crawl4AI: 64 chunks (tables: 62, events: 0, researchers: 0)
+
+[9/13] Processing: https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://photon-science.desy.de/facilities/petra_...action_and_imaging/contact__staff/i
+ndex_eng.html  | ✓ | ⏱: 0.58s 
+[SCRAPE].. ◆ 
+https://photon-science.desy.de/facilities/petra_...action_and_imaging/contact__staff/i
+ndex_eng.html  | ✓ | ⏱: 0.03s 
+[COMPLETE] ● 
+https://photon-science.desy.de/facilities/petra_...action_and_imaging/contact__staff/i
+ndex_eng.html  | ✓ | ⏱: 0.62s 
+    Original: 21 chunks (tables: 16, events: 0, researchers: 0)
+    Crawl4AI: 18 chunks (tables: 16, events: 0, researchers: 0)
+
+[10/13] Processing: https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_e
+ng.html        | ✓ | ⏱: 1.14s 
+[SCRAPE].. ◆ 
+https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_e
+ng.html        | ✓ | ⏱: 0.00s 
+[COMPLETE] ● 
+https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_e
+ng.html        | ✓ | ⏱: 1.14s 
+    Original: 9 chunks (tables: 2, events: 0, researchers: 0)
+    Crawl4AI: 1 chunks (tables: 0, events: 0, researchers: 0)
+
+[11/13] Processing: https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ 
+https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index
+_ger.html      | ✓ | ⏱: 0.51s 
+[SCRAPE].. ◆ 
+https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index
+_ger.html      | ✓ | ⏱: 0.04s 
+[COMPLETE] ● 
+https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index
+_ger.html      | ✓ | ⏱: 0.55s 
+    Original: 41 chunks (tables: 25, events: 0, researchers: 4)
+    Crawl4AI: 31 chunks (tables: 25, events: 0, researchers: 4)
+
+[12/13] Processing: https://ai.desy.de/people/heuser.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://ai.desy.de/people/heuser.html                                    
+| ✓ | ⏱: 0.52s 
+[SCRAPE].. ◆ https://ai.desy.de/people/heuser.html                                    
+| ✓ | ⏱: 0.01s 
+[COMPLETE] ● https://ai.desy.de/people/heuser.html                                    
+| ✓ | ⏱: 0.54s 
+    Original: 22 chunks (tables: 1, events: 0, researchers: 15)
+    Crawl4AI: 28 chunks (tables: 1, events: 0, researchers: 25)
+
+[13/13] Processing: https://www.desy.de/career/contact/index_eng.html
+  → Processing with Original Scraper...
+  → Processing with Crawl4AI...
+[INIT].... → Crawl4AI 0.7.8 
+[FETCH]... ↓ https://www.desy.de/career/contact/index_eng.html                        
+| ✓ | ⏱: 0.49s 
+[SCRAPE].. ◆ https://www.desy.de/career/contact/index_eng.html                        
+| ✓ | ⏱: 0.03s 
+[COMPLETE] ● https://www.desy.de/career/contact/index_eng.html                        
+| ✓ | ⏱: 0.52s 
+    Original: 9 chunks (tables: 0, events: 0, researchers: 0)
+    Crawl4AI: 2 chunks (tables: 0, events: 0, researchers: 0)
+
+================================================================================
+Files Generated:
+  - original_scraper_detailed.json
+  - crawl4ai_scraper_detailed.json
+================================================================================
+
+Comparison Summary:
+--------------------------------------------------------------------------------
+Total Chunks:
+  Original: 1441
+  Crawl4AI: 1356
+  Difference: -85
+
+Table Chunks:
+  Original: 1296
+  Crawl4AI: 1294
+  Difference: -2
+
+Event Chunks:
+  Original: 8
+  Crawl4AI: 8
+  Difference: +0
+
+Researcher Chunks:
+  Original: 19
+  Crawl4AI: 29
+  Difference: +10

@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-01-14T14:37:18.112315",
+  "total_errors": 8,
+  "total_successful": 174,
+  "total_crawled": 216,
+  "timeout_errors": 0,
+  "other_errors": 8,
+  "timeout_urls": [],
+  "errors": [
+    {
+      "url": "http://particle-physics.desy.de/infrastruktur/desy_managementportale/index_ger.html",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://particle-physics.desy.de/infrastruktur/desy_managementportale/index_ger.html\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.135498"
+    },
+    {
+      "url": "http://raumverwaltung.desy.de/zeuthen",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://raumverwaltung.desy.de/zeuthen\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.135733"
+    },
+    {
+      "url": "http://testbeam.desy.de",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://testbeam.desy.de/\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.135930"
+    },
+    {
+      "url": "https://particle-physics.desy.de/e221976/e221978/e311813",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://particle-physics.desy.de/e221976/e221978/e311813\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.136133"
+    },
+    {
+      "url": "https://particle-physics.desy.de/e221976/e221978/e323817",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://particle-physics.desy.de/e221976/e221978/e323817\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.136336"
+    },
+    {
+      "url": "https://particle-physics.desy.de/e221976/e221978/e323564",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://particle-physics.desy.de/e221976/e221978/e323564\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.136530"
+    },
+    {
+      "url": "https://particle-physics.desy.de/e221976/e221978/e323715",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://particle-physics.desy.de/e221976/e221978/e323715\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.136713"
+    },
+    {
+      "url": "https://particle-physics.desy.de/e221976/e221978/e323372",
+      "error": "Unexpected error in _crawl_web at line 696 in _crawl_web (../../../data/dust/user/taheri/.conda/envs/crawl4ai/lib/python3.11/site-packages/crawl4ai/async_crawler_strategy.py):\nError: Failed on navigating ACS-GOTO:\nPage.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://particle-physics.desy.de/e221976/e221978/e323372\", waiting until \"networkidle\"\n\n\nCode context:\n 691                               tag=\"GOTO\",\n 692                               params={\"url\": url},\n 693                           )\n 694                           response = None\n 695                       else:\n 696 \u2192                         raise RuntimeError(f\"Failed on navigating ACS-GOTO:\\n{str(e)}\")\n 697   \n 698                   await self.execute_hook(\n 699                       \"after_goto\", page, context=context, url=url, response=response, config=config\n 700                   )\n 701   ",
+      "timestamp": "2026-01-14T14:36:36.136909"
+    }
+  ]
+}

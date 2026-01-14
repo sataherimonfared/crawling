@@ -1,0 +1,1068 @@
+{
+  "original_analysis": {
+    "source": "original",
+    "total_urls": 13,
+    "structural_chunks_by_url": {
+      "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html": {
+        "total": 12,
+        "regular": 2,
+        "entity": 10
+      },
+      "https://atlas.desy.de/members/": {
+        "total": 444,
+        "regular": 2,
+        "entity": 442
+      },
+      "https://cms.desy.de/cms_members/": {
+        "total": 435,
+        "regular": 2,
+        "entity": 433
+      },
+      "https://pitz.desy.de/group_members/": {
+        "total": 76,
+        "regular": 2,
+        "entity": 74
+      },
+      "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html": {
+        "total": 28,
+        "regular": 2,
+        "entity": 26
+      },
+      "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html": {
+        "total": 114,
+        "regular": 3,
+        "entity": 111
+      },
+      "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html": {
+        "total": 121,
+        "regular": 3,
+        "entity": 118
+      },
+      "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html": {
+        "total": 66,
+        "regular": 2,
+        "entity": 64
+      },
+      "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html": {
+        "total": 20,
+        "regular": 2,
+        "entity": 18
+      },
+      "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html": {
+        "total": 6,
+        "regular": 2,
+        "entity": 4
+      },
+      "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html": {
+        "total": 37,
+        "regular": 4,
+        "entity": 33
+      },
+      "https://ai.desy.de/people/heuser.html": {
+        "total": 24,
+        "regular": 4,
+        "entity": 20
+      },
+      "https://www.desy.de/career/contact/index_eng.html": {
+        "total": 10,
+        "regular": 5,
+        "entity": 5
+      }
+    },
+    "metadata_analysis": {
+      "common_keys": [],
+      "all_keys": [
+        "event_speaker",
+        "mvr_area",
+        "chunk_type",
+        "project_urls",
+        "location",
+        "publications",
+        "row_link",
+        "entity_type",
+        "mvr_organization",
+        "row_personal_website",
+        "phone",
+        "row_year",
+        "row__event_link",
+        "has_projects",
+        "table_context",
+        "event_place",
+        "area",
+        "row_surname",
+        "row_column",
+        "personal_website_urls",
+        "has_publications",
+        "title",
+        "position",
+        "page_title",
+        "internal_links_count",
+        "researcher_name",
+        "total_chunks",
+        "fields",
+        "personal_websites_count",
+        "event_type",
+        "event_link",
+        "personal_websites",
+        "row_search_477,371_records_for:",
+        "all_links",
+        "has_fields",
+        "row_function_/_working_area",
+        "publication_urls",
+        "source",
+        "external_links_count",
+        "row_seit_2020",
+        "has_papers",
+        "chunk_subtype",
+        "has_personal_websites",
+        "row_first_name",
+        "row_professor_der_universität_hamburg",
+        "event_title",
+        "mvr_name",
+        "researcher_url",
+        "event_affiliation",
+        "page_link_count",
+        "language",
+        "mvr_ready",
+        "depth",
+        "mvr_location",
+        "mvr_position",
+        "project_url",
+        "mvr_homepage",
+        "event_date",
+        "projects_count",
+        "mvr_extraction_confidence",
+        "row_alumni_member",
+        "projects",
+        "publications_count",
+        "row_column_3",
+        "paper_count",
+        "row_index",
+        "row_current_positions_in_cms",
+        "project_names",
+        "chunk_index",
+        "project_name",
+        "mvr_email",
+        "has_contact",
+        "table_index",
+        "email",
+        "mvr_summary",
+        "mvr_phone",
+        "field_name",
+        "link_count",
+        "mvr_extraction_method",
+        "row_column_2",
+        "continued"
+      ],
+      "key_frequency": {
+        "source": 1393,
+        "language": 1393,
+        "depth": 1393,
+        "entity_type": 1323,
+        "table_index": 1304,
+        "table_context": 1304,
+        "row_index": 1304,
+        "chunk_type": 1393,
+        "page_title": 1304,
+        "event_date": 8,
+        "event_place": 8,
+        "event_type": 8,
+        "event_title": 8,
+        "event_speaker": 8,
+        "event_affiliation": 8,
+        "event_link": 8,
+        "chunk_subtype": 1323,
+        "page_link_count": 1367,
+        "has_personal_websites": 1367,
+        "has_publications": 1367,
+        "has_projects": 1367,
+        "personal_websites_count": 1393,
+        "publications_count": 1393,
+        "projects_count": 1393,
+        "title": 70,
+        "chunk_index": 44,
+        "total_chunks": 44,
+        "link_count": 26,
+        "external_links_count": 26,
+        "internal_links_count": 26,
+        "all_links": 26,
+        "personal_websites": 26,
+        "publications": 26,
+        "projects": 26,
+        "mvr_ready": 1296,
+        "mvr_extraction_method": 1296,
+        "mvr_extraction_confidence": 1296,
+        "mvr_name": 1296,
+        "mvr_position": 1296,
+        "mvr_location": 1296,
+        "mvr_organization": 1296,
+        "mvr_phone": 1296,
+        "mvr_email": 1296,
+        "mvr_homepage": 1296,
+        "mvr_area": 1296,
+        "row__event_link": 8,
+        "row_column": 1,
+        "row_surname": 439,
+        "row_first_name": 439,
+        "phone": 294,
+        "mvr_summary": 930,
+        "position": 280,
+        "area": 159,
+        "location": 199,
+        "row_current_positions_in_cms": 116,
+        "row_function_/_working_area": 24,
+        "row_personal_website": 32,
+        "personal_website_urls": 266,
+        "row_alumni_member": 20,
+        "row_column_2": 20,
+        "row_link": 7,
+        "row_column_3": 14,
+        "continued": 18,
+        "publication_urls": 61,
+        "project_urls": 26,
+        "row_search_477,371_records_for:": 1,
+        "researcher_name": 31,
+        "researcher_url": 31,
+        "has_contact": 2,
+        "has_fields": 2,
+        "has_papers": 2,
+        "email": 2,
+        "paper_count": 2,
+        "row_seit_2020": 19,
+        "row_professor_der_universität_hamburg": 19,
+        "row_year": 6,
+        "fields": 1,
+        "project_names": 1,
+        "project_name": 7,
+        "project_url": 7,
+        "field_name": 3
+      },
+      "chunk_type_distribution": {
+        "entity_centric": 1323,
+        "structural": 44,
+        "links": 26
+      },
+      "entity_type_distribution": {
+        "event": 8,
+        "table_row": 1296,
+        "researcher": 19
+      },
+      "extraction_method_distribution": {
+        "unknown": 1393
+      }
+    },
+    "content_analysis": {
+      "total_chunks": 1393,
+      "total_content_length": 124981,
+      "avg_content_length": 89.72074659009333,
+      "min_content_length": 22,
+      "max_content_length": 3957,
+      "empty_chunks": 0,
+      "very_short_chunks": 448,
+      "short_chunks": 891,
+      "medium_chunks": 50,
+      "long_chunks": 4
+    },
+    "entity_chunks_analysis": {
+      "table_chunks": 1296,
+      "event_chunks": 8,
+      "researcher_chunks": 19,
+      "publication_chunks": 0,
+      "regular_structural_chunks": 70
+    },
+    "sample_chunks": [
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 0,
+        "content_preview": "Type: Theory Seminar\nTitle: The Bearable Inhomogeneity of the Baryon Asymmetry\nDate/Time: 15:00 - 16:00\nPlace: HamburgSR2, Geb. 2a\nSpeaker: Stefan Stelzl\nAffiliation: EPFL\nLink: http://www.desy.de/akt",
+        "content_length": 269,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 1,
+        "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry on 15:00 - 16:00",
+        "content_length": 74,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 2,
+        "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry at HamburgSR2, Geb. 2a",
+        "content_length": 80,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 3,
+        "content_preview": "Stefan Stelzl presents: The Bearable Inhomogeneity of the Baryon Asymmetry",
+        "content_length": 74,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 4,
+        "content_preview": "Type: Particle and Astroparticle Physics Colloquium\nTitle: Resolving the Hubble Tension with New Early Dark Energy.\nDate/Time: 16:00 - 17:30\nPlace: HamburgMain auditorium\nSpeaker: Martin Sloth\nAffilia",
+        "content_length": 334,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 5,
+        "content_preview": "Event: Resolving the Hubble Tension with New Early Dark Energy. on 16:00 - 17:30",
+        "content_length": 80,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 6,
+        "content_preview": "Event: Resolving the Hubble Tension with New Early Dark Energy. at HamburgMain auditorium",
+        "content_length": 89,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 7,
+        "content_preview": "Martin Sloth presents: Resolving the Hubble Tension with New Early Dark Energy.",
+        "content_length": 79,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 8,
+        "content_preview": ". Veranstaltungen Veranstaltungen Vorträge und Veranstaltungen bei DESY",
+        "content_length": 71,
+        "chunk_type": "structural",
+        "entity_type": null,
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "title",
+          "chunk_index",
+          "total_chunks",
+          "chunk_type",
+          "page_link_count",
+          "has_personal_websites",
+          "has_publications"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 9,
+        "content_preview": "Page Links (4 total):\n\n\nInternal Links (4):\n- «: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html?time=-1&site=0&range=0\n- »: https://www.desy.de/aktuelles/veranstaltungen/index_ger.html?t",
+        "content_length": 404,
+        "chunk_type": "links",
+        "entity_type": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "link_count",
+          "personal_websites_count",
+          "publications_count",
+          "projects_count",
+          "external_links_count"
+        ]
+      }
+    ]
+  },
+  "crawl4ai_analysis": {
+    "source": "crawl4ai",
+    "total_urls": 13,
+    "structural_chunks_by_url": {
+      "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html": {
+        "total": 10,
+        "regular": 1,
+        "entity": 9
+      },
+      "https://atlas.desy.de/members/": {
+        "total": 442,
+        "regular": 1,
+        "entity": 441
+      },
+      "https://cms.desy.de/cms_members/": {
+        "total": 433,
+        "regular": 1,
+        "entity": 432
+      },
+      "https://pitz.desy.de/group_members/": {
+        "total": 74,
+        "regular": 1,
+        "entity": 73
+      },
+      "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html": {
+        "total": 26,
+        "regular": 1,
+        "entity": 25
+      },
+      "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html": {
+        "total": 110,
+        "regular": 1,
+        "entity": 109
+      },
+      "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html": {
+        "total": 117,
+        "regular": 1,
+        "entity": 116
+      },
+      "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html": {
+        "total": 64,
+        "regular": 1,
+        "entity": 63
+      },
+      "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html": {
+        "total": 18,
+        "regular": 1,
+        "entity": 17
+      },
+      "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html": {
+        "total": 2,
+        "regular": 1,
+        "entity": 1
+      },
+      "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html": {
+        "total": 31,
+        "regular": 1,
+        "entity": 30
+      },
+      "https://ai.desy.de/people/heuser.html": {
+        "total": 28,
+        "regular": 1,
+        "entity": 27
+      },
+      "https://www.desy.de/career/contact/index_eng.html": {
+        "total": 2,
+        "regular": 1,
+        "entity": 1
+      }
+    },
+    "metadata_analysis": {
+      "common_keys": [],
+      "all_keys": [
+        "row_column_3",
+        "title",
+        "mvr_extraction_confidence",
+        "event_speaker",
+        "mvr_area",
+        "row_alumni_member",
+        "chunk_type",
+        "row_first_name",
+        "position",
+        "row_professor_der_universität_hamburg",
+        "page_title",
+        "location",
+        "researcher_name",
+        "fields",
+        "event_title",
+        "mvr_name",
+        "researcher_url",
+        "row_link",
+        "event_type",
+        "entity_type",
+        "language",
+        "event_affiliation",
+        "mvr_ready",
+        "mvr_organization",
+        "row_index",
+        "depth",
+        "event_link",
+        "row_current_positions_in_cms",
+        "row_personal_website",
+        "paper_count",
+        "project_names",
+        "project_name",
+        "mvr_email",
+        "mvr_location",
+        "phone",
+        "row_year",
+        "row__event_link",
+        "has_projects",
+        "table_context",
+        "mvr_position",
+        "has_fields",
+        "has_contact",
+        "project_url",
+        "event_place",
+        "row_function_/_working_area",
+        "area",
+        "table_index",
+        "row_surname",
+        "source",
+        "email",
+        "mvr_summary",
+        "row_column",
+        "mvr_phone",
+        "extraction_method",
+        "mvr_homepage",
+        "field_name",
+        "row_seit_2020",
+        "has_papers",
+        "event_date",
+        "mvr_extraction_method",
+        "row_column_2",
+        "chunk_subtype"
+      ],
+      "key_frequency": {
+        "source": 1357,
+        "title": 26,
+        "depth": 1357,
+        "language": 1357,
+        "chunk_type": 1357,
+        "extraction_method": 1357,
+        "entity_type": 1331,
+        "table_index": 1302,
+        "table_context": 1302,
+        "row_index": 1302,
+        "page_title": 1302,
+        "event_date": 8,
+        "event_place": 8,
+        "event_type": 8,
+        "event_title": 8,
+        "event_speaker": 8,
+        "event_affiliation": 8,
+        "event_link": 8,
+        "chunk_subtype": 1331,
+        "mvr_ready": 1294,
+        "mvr_extraction_method": 1294,
+        "mvr_extraction_confidence": 1294,
+        "mvr_name": 1294,
+        "mvr_position": 1294,
+        "mvr_location": 1294,
+        "mvr_organization": 1294,
+        "mvr_phone": 1294,
+        "mvr_email": 1294,
+        "mvr_homepage": 1294,
+        "mvr_area": 1294,
+        "row__event_link": 7,
+        "row_column": 1,
+        "row_surname": 439,
+        "row_first_name": 439,
+        "phone": 294,
+        "mvr_summary": 930,
+        "position": 280,
+        "area": 159,
+        "location": 199,
+        "row_current_positions_in_cms": 116,
+        "row_function_/_working_area": 24,
+        "row_personal_website": 32,
+        "row_alumni_member": 20,
+        "row_column_2": 19,
+        "row_link": 6,
+        "row_column_3": 14,
+        "row_seit_2020": 19,
+        "row_professor_der_universität_hamburg": 19,
+        "row_year": 6,
+        "researcher_name": 29,
+        "researcher_url": 29,
+        "has_contact": 2,
+        "has_projects": 2,
+        "has_fields": 2,
+        "has_papers": 2,
+        "email": 2,
+        "paper_count": 2,
+        "fields": 1,
+        "project_names": 1,
+        "project_name": 9,
+        "project_url": 9,
+        "field_name": 11
+      },
+      "chunk_type_distribution": {
+        "structural": 26,
+        "entity_centric": 1331
+      },
+      "entity_type_distribution": {
+        "event": 8,
+        "table_row": 1294,
+        "researcher": 29
+      },
+      "extraction_method_distribution": {
+        "crawl4ai_markdown": 26,
+        "crawl4ai_with_custom_extraction": 1331
+      }
+    },
+    "content_analysis": {
+      "total_chunks": 1357,
+      "total_content_length": 458767,
+      "avg_content_length": 338.0744288872513,
+      "min_content_length": 1,
+      "max_content_length": 37092,
+      "empty_chunks": 0,
+      "very_short_chunks": 451,
+      "short_chunks": 865,
+      "medium_chunks": 17,
+      "long_chunks": 24
+    },
+    "entity_chunks_analysis": {
+      "table_chunks": 1294,
+      "event_chunks": 8,
+      "researcher_chunks": 29,
+      "publication_chunks": 0,
+      "regular_structural_chunks": 26
+    },
+    "sample_chunks": [
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 0,
+        "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/aktuelles/veran",
+        "content_length": 6094,
+        "chunk_type": "structural",
+        "entity_type": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "extraction_method"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 1,
+        "content_preview": "Type: Theory Seminar\nTitle: The Bearable Inhomogeneity of the Baryon Asymmetry\nDate/Time: 15:00 - 16:00\nPlace: HamburgSR2, Geb. 2a\nSpeaker: Stefan Stelzl\nAffiliation: EPFL\nLink: http://www.desy.de/akt",
+        "content_length": 269,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 2,
+        "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry on 15:00 - 16:00",
+        "content_length": 74,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 3,
+        "content_preview": "Event: The Bearable Inhomogeneity of the Baryon Asymmetry at HamburgSR2, Geb. 2a",
+        "content_length": 80,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 4,
+        "content_preview": "Stefan Stelzl presents: The Bearable Inhomogeneity of the Baryon Asymmetry",
+        "content_length": 74,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 5,
+        "content_preview": "Type: Particle and Astroparticle Physics Colloquium\nTitle: Resolving the Hubble Tension with New Early Dark Energy.\nDate/Time: 16:00 - 17:30\nPlace: HamburgMain auditorium\nSpeaker: Martin Sloth\nAffilia",
+        "content_length": 334,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 6,
+        "content_preview": "Event: Resolving the Hubble Tension with New Early Dark Energy. on 16:00 - 17:30",
+        "content_length": 80,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 7,
+        "content_preview": "Event: Resolving the Hubble Tension with New Early Dark Energy. at HamburgMain auditorium",
+        "content_length": 89,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 8,
+        "content_preview": "Martin Sloth presents: Resolving the Hubble Tension with New Early Dark Energy.",
+        "content_length": 79,
+        "chunk_type": "entity_centric",
+        "entity_type": "event",
+        "metadata_keys": [
+          "source",
+          "language",
+          "depth",
+          "entity_type",
+          "table_index",
+          "table_context",
+          "row_index",
+          "chunk_type",
+          "page_title",
+          "event_date"
+        ]
+      },
+      {
+        "url": "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+        "chunk_index": 0,
+        "content_preview": "#  [ ![DESY Logo](https://www.desy.de/++resource++desy/images/desy_logo_3c_web.svg) ](http://www.desy.de \"Zur DESY Startseite\")\n## Sprungnavigation\n  * [Zum Inhalt](https://www.desy.de/aktuelles/veran",
+        "content_length": 6094,
+        "chunk_type": "structural",
+        "entity_type": null,
+        "metadata_keys": [
+          "source",
+          "title",
+          "depth",
+          "language",
+          "chunk_type",
+          "extraction_method"
+        ]
+      }
+    ]
+  },
+  "comparison": {
+    "chunk_counts": {
+      "original_total": 1393,
+      "crawl4ai_total": 1357,
+      "difference": -36
+    },
+    "content_quality": {
+      "original_avg_length": 89.72074659009333,
+      "crawl4ai_avg_length": 338.0744288872513,
+      "original_empty": 0,
+      "crawl4ai_empty": 0
+    },
+    "metadata_differences": {
+      "keys_only_in_original": [
+        "projects_count",
+        "has_personal_websites",
+        "projects",
+        "project_urls",
+        "publications_count",
+        "internal_links_count",
+        "publications",
+        "total_chunks",
+        "personal_websites_count",
+        "page_link_count",
+        "personal_websites",
+        "chunk_index",
+        "row_search_477,371_records_for:",
+        "all_links",
+        "publication_urls",
+        "personal_website_urls",
+        "external_links_count",
+        "has_publications",
+        "link_count",
+        "continued"
+      ],
+      "keys_only_in_crawl4ai": [
+        "extraction_method"
+      ],
+      "common_keys": [
+        "title",
+        "mvr_extraction_confidence",
+        "event_speaker",
+        "mvr_area",
+        "row_alumni_member",
+        "chunk_type",
+        "row_first_name",
+        "position",
+        "row_professor_der_universität_hamburg",
+        "page_title",
+        "location",
+        "fields",
+        "researcher_name",
+        "event_title",
+        "mvr_name",
+        "researcher_url",
+        "row_link",
+        "event_type",
+        "row_column_3",
+        "entity_type",
+        "language",
+        "event_affiliation",
+        "mvr_ready",
+        "mvr_organization",
+        "row_index",
+        "depth",
+        "event_link",
+        "row_current_positions_in_cms",
+        "row_personal_website",
+        "paper_count",
+        "project_names",
+        "project_name",
+        "mvr_email",
+        "mvr_location",
+        "phone",
+        "row_year",
+        "row__event_link",
+        "has_projects",
+        "table_context",
+        "mvr_position",
+        "has_fields",
+        "has_contact",
+        "project_url",
+        "event_place",
+        "row_function_/_working_area",
+        "area",
+        "table_index",
+        "row_surname",
+        "source",
+        "email",
+        "mvr_summary",
+        "row_column",
+        "mvr_phone",
+        "mvr_homepage",
+        "field_name",
+        "row_seit_2020",
+        "has_papers",
+        "event_date",
+        "mvr_extraction_method",
+        "row_column_2",
+        "chunk_subtype"
+      ]
+    },
+    "entity_chunks_comparison": {
+      "table_chunks": {
+        "original": 1296,
+        "crawl4ai": 1294
+      },
+      "event_chunks": {
+        "original": 8,
+        "crawl4ai": 8
+      },
+      "researcher_chunks": {
+        "original": 19,
+        "crawl4ai": 29
+      },
+      "regular_structural": {
+        "original": 70,
+        "crawl4ai": 26
+      }
+    },
+    "extraction_methods": {
+      "original": {
+        "unknown": 1393
+      },
+      "crawl4ai": {
+        "crawl4ai_markdown": 26,
+        "crawl4ai_with_custom_extraction": 1331
+      }
+    }
+  },
+  "rag_analysis": {
+    "recommendation": "original",
+    "reasons": [
+      "Higher RAG suitability score (9 vs 3)"
+    ],
+    "strengths_original": [
+      "More chunks (1393 vs 1357)",
+      "More optimally-sized chunks (50 vs 17)",
+      "Fewer empty/very short chunks (448 vs 451)",
+      "Richer metadata (81 unique keys vs 62)"
+    ],
+    "strengths_crawl4ai": [
+      "More entity chunks (1331 vs 1323)",
+      "Has extraction_method tracking"
+    ],
+    "weaknesses_original": [],
+    "weaknesses_crawl4ai": [],
+    "rag_suitability_score": {
+      "original": 9,
+      "crawl4ai": 3
+    },
+    "modifications_needed": [
+      {
+        "issue": "Too many very short chunks in original (>10%)",
+        "count": 448,
+        "fix": "Consider merging very short chunks or filtering them"
+      },
+      {
+        "issue": "Too many very short chunks in crawl4ai (>10%)",
+        "count": 451,
+        "fix": "Consider merging very short chunks or filtering them"
+      }
+    ]
+  }
+}
