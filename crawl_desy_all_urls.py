@@ -57,6 +57,17 @@ from datetime import datetime
 from html import unescape
 from urllib.parse import urlparse, urljoin
 
+# Ensure the debug-log directory exists.
+# This script contains debug instrumentation that writes to
+# `/home/taheri/crawl4ai/.cursor/debug.log`. On batch nodes / fresh clones,
+# the `.cursor/` folder may not exist, which would raise FileNotFoundError and
+# abort the crawl early (leading to "Files saved: 0 pages").
+try:
+    Path("/home/taheri/crawl4ai/.cursor").mkdir(parents=True, exist_ok=True)
+except Exception:
+    # Debug logging is non-critical; never fail the crawl due to logging setup.
+    pass
+
 # Crawl4AI is a required runtime dependency for this script.
 # Keep the failure mode explicit and actionable (no URL-specific behavior).
 try:
@@ -188,7 +199,7 @@ CONCURRENT_TASKS = 30
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 1
+MAX_DEPTH = 5
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
