@@ -158,6 +158,10 @@ ROOT_URLS = [
 ]
 
 
+
+
+
+
 # Directory where crawled pages will be saved as markdown files
 OUTPUT_DIR = Path("desy_crawled")
 OUTPUT_DIR.mkdir(exist_ok=True)  # Create directory if it doesn't exist
