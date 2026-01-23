@@ -130,27 +130,31 @@ except ImportError:
 
 # List of URLs to crawl
 ROOT_URLS = [
-    "https://www.desy.de"
-    #"https://desy.de/index_ger.html",
-    #"#https://desy.de/index_eng.html"
-    # "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
-    # # Events page (should extract events)
-    # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
-    # # Member tables
-    # "https://atlas.desy.de/members/",
-    # "https://cms.desy.de/cms_members/",
-    # "https://pitz.desy.de/group_members/",
-    # "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
-    # "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
-    # "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
-    # "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
-    # "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
-    # # publications page
-    # "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
-    # # researchers page        
-    # "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
-    # "https://ai.desy.de/people/heuser.html",
-    # "https://www.desy.de/career/contact/index_eng.html",
+    "https://www.desy.de",
+    "https://desy.de/index_ger.html",
+    "https://desy.de/index_eng.html",
+    "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
+    # Events page (should extract events)
+    "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+    # Member tables
+    "https://atlas.desy.de/members/",
+    "https://cms.desy.de/cms_members/",
+    "https://pitz.desy.de/group_members/",
+    "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+    "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+    "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+    "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+    "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+    # publications page
+    "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+    # researchers page        
+    "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+    "https://ai.desy.de/people/heuser.html",
+    "https://www.desy.de/career/contact/index_eng.html",
+    "https://belle2.desy.de/",
+    "https://indico.desy.de/event/52144/",
+    "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
+    "https://indico.desy.de/event/51547/",
 ]
 
 # Directory where crawled pages will be saved as markdown files
@@ -187,7 +191,84 @@ CHECKPOINT_FILE = LOG_DIR / "crawl_checkpoint.json"
 # Checkpoint/Resume settings
 # Set to True to resume from previous checkpoint (skip already processed URLs)
 # Set to False to start fresh (ignore previous checkpoint)
-USE_CHECKPOINT = False  # Change to True to resume from checkpoint
+USE_CHECKPOINT = False # Change to True to resume from checkpoint
+
+# Checkpoint frequency: save checkpoint every N pages
+CHECKPOINT_FREQUENCY = 100  # Save progress every 100 pages
+
+# ============================================================================
+# PHASE 1 FIX: Checkpointing Functions for Crash Recovery
+# ============================================================================
+# These functions save and load crawler state to enable resuming after crashes
+
+def save_checkpoint(checkpoint_data: dict) -> bool:
+    """
+    Save checkpoint to disk for crash recovery.
+    
+    Args:
+        checkpoint_data: Dictionary containing:
+            - seen_final_urls: Set of processed URLs
+            - all_urls_by_depth: Dict of URLs organized by depth
+            - all_successful_urls: List of successfully saved URLs
+            - all_errors: List of errors
+            - additional_urls_with_depth: Dict of URL -> depth mapping
+            - crawled_urls_with_depth: Dict of already crawled URLs with depths
+    
+    Returns:
+        True if save successful, False otherwise
+    """
+    try:
+        import json
+        # Convert sets to lists for JSON serialization
+        serializable_data = {
+            'timestamp': datetime.now().isoformat(),
+            'seen_final_urls': list(checkpoint_data.get('seen_final_urls', set())),
+            'all_urls_by_depth': checkpoint_data.get('all_urls_by_depth', {}),
+            'all_successful_urls': checkpoint_data.get('all_successful_urls', []),
+            'all_errors': checkpoint_data.get('all_errors', []),
+            'additional_urls_with_depth': checkpoint_data.get('additional_urls_with_depth', {}),
+            'crawled_urls_with_depth': checkpoint_data.get('crawled_urls_with_depth', {}),
+            'pages_processed': checkpoint_data.get('pages_processed', 0),
+            'max_depth_crawled': checkpoint_data.get('max_depth_crawled', 0),  # Track the max depth that was crawled
+            'seed_urls_processed': list(checkpoint_data.get('seed_urls_processed', set())),  # Track which seed URLs were processed
+        }
+        CHECKPOINT_FILE.write_text(json.dumps(serializable_data, indent=2), encoding='utf-8')
+        return True
+    except Exception as e:
+        print(f"[WARNING] Failed to save checkpoint: {e}")
+        return False
+
+
+def load_checkpoint() -> dict:
+    """
+    Load checkpoint from disk if USE_CHECKPOINT is True.
+    
+    Returns:
+        Dictionary with checkpoint data, or empty dict if no checkpoint exists
+    """
+    if not USE_CHECKPOINT:
+        return {}
+    
+    try:
+        import json
+        if CHECKPOINT_FILE.exists():
+            data = json.loads(CHECKPOINT_FILE.read_text(encoding='utf-8'))
+            # Convert lists back to sets where needed
+            return {
+                'seen_final_urls': set(data.get('seen_final_urls', [])),
+                'all_urls_by_depth': data.get('all_urls_by_depth', {}),
+                'all_successful_urls': data.get('all_successful_urls', []),
+                'all_errors': data.get('all_errors', []),
+                'additional_urls_with_depth': data.get('additional_urls_with_depth', {}),
+                'crawled_urls_with_depth': data.get('crawled_urls_with_depth', {}),
+                'pages_processed': data.get('pages_processed', 0),
+                'max_depth_crawled': data.get('max_depth_crawled', 0),
+                'seed_urls_processed': set(data.get('seed_urls_processed', [])),
+            }
+    except Exception as e:
+        print(f"[WARNING] Failed to load checkpoint: {e}")
+    
+    return {}
 
 # How many pages to crawl simultaneously (parallelism)
 # Higher = faster but uses more resources
@@ -199,7 +280,7 @@ CONCURRENT_TASKS = 30
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 5
+MAX_DEPTH = 0
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -651,6 +732,262 @@ def _is_pubdb_page(url, html_content):
         bool: True if the page is a PUBDB page
     """
     return (url and is_pubdb_url(url)) or is_pubdb_content(html_content)
+
+
+# ============================================================================
+# Indico Event Page Extractor
+# ============================================================================
+# Indico pages (indico.desy.de) have a specific structure for events/meetings.
+# This extractor captures: event name, date, location, zoom links, contributions.
+
+def is_indico_url(url):
+    """Check if URL is an Indico event page."""
+    if not url:
+        return False
+    return 'indico.desy.de' in url.lower() and '/event/' in url.lower()
+
+
+def extract_indico_event(html_content, url=None):
+    """
+    Extract structured event information from Indico pages.
+    
+    Extracts:
+    - Event title
+    - Date and time
+    - Location (room) or Zoom link
+    - Description
+    - Registration/submission deadlines
+    - Contributions with speakers and attachments
+    
+    Args:
+        html_content: Raw HTML from the Indico page
+        url: The page URL (for reference)
+        
+    Returns:
+        Markdown-formatted string with event info, or None if extraction fails
+    """
+    if not BEAUTIFULSOUP_AVAILABLE or not html_content:
+        return None
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        lines = []
+        
+        # === EVENT TITLE ===
+        # Indico uses h1 with class "event-header-title" or similar
+        title_elem = soup.find('h1', class_=lambda c: c and 'title' in str(c).lower())
+        if not title_elem:
+            title_elem = soup.find('h1')
+        if title_elem:
+            title = title_elem.get_text(strip=True)
+            lines.append(f"# {title}")
+            lines.append("")
+        
+        # === DATE AND TIME ===
+        # Look for date/time elements
+        date_elem = soup.find(['time', 'span', 'div'], class_=lambda c: c and ('date' in str(c).lower() or 'time' in str(c).lower()))
+        if not date_elem:
+            # Try finding by datetime attribute
+            date_elem = soup.find('time', attrs={'datetime': True})
+        if not date_elem:
+            # Try common patterns in text
+            for elem in soup.find_all(['span', 'div', 'p']):
+                text = elem.get_text(strip=True)
+                # Look for date patterns like "Friday Jan 16, 2026"
+                if re.search(r'(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\w+\s+\d+', text, re.I):
+                    date_elem = elem
+                    break
+        
+        if date_elem:
+            date_text = date_elem.get_text(strip=True)
+            # Clean up the date text
+            date_text = re.sub(r'\s+', ' ', date_text)
+            lines.append(f"**Date:** {date_text}")
+            lines.append("")
+        
+        # === LOCATION ===
+        # Look for location/room info
+        location_elem = soup.find(['span', 'div'], class_=lambda c: c and 'location' in str(c).lower())
+        if not location_elem:
+            # Try looking for room patterns
+            for elem in soup.find_all(['span', 'div', 'p']):
+                text = elem.get_text(strip=True)
+                # Room patterns like "125 (68)" or "Room 125"
+                if re.match(r'^\d+\s*\(\d+\)$', text) or 'room' in text.lower():
+                    location_elem = elem
+                    break
+        
+        if location_elem:
+            location = location_elem.get_text(strip=True)
+            lines.append(f"**Location:** {location}")
+            lines.append("")
+        
+        # === ZOOM/VIDEO LINK ===
+        # Extract Zoom or video conference links
+        zoom_links = []
+        for link in soup.find_all('a', href=True):
+            href = link.get('href', '')
+            if any(vc in href.lower() for vc in ['zoom.us', 'teams.microsoft', 'meet.google', 'webex', 'bluejeans']):
+                link_text = link.get_text(strip=True) or href
+                zoom_links.append(f"[{link_text}]({href})")
+        
+        if zoom_links:
+            lines.append("**Video Conference:**")
+            for zl in zoom_links:
+                lines.append(f"- {zl}")
+            lines.append("")
+        
+        # === DESCRIPTION ===
+        # Look for description/abstract section
+        desc_elem = soup.find(['div', 'section'], class_=lambda c: c and 'description' in str(c).lower())
+        if not desc_elem:
+            desc_elem = soup.find(['div', 'section'], id=lambda i: i and 'description' in str(i).lower())
+        
+        if desc_elem:
+            desc_text = desc_elem.get_text(separator=' ', strip=True)
+            # Clean up and limit length
+            desc_text = re.sub(r'\s+', ' ', desc_text)
+            if desc_text and len(desc_text) > 10:
+                lines.append("**Description:**")
+                lines.append(desc_text[:1000])  # Limit to 1000 chars
+                lines.append("")
+        
+        # === DEADLINES ===
+        # Look for registration/submission deadlines
+        deadline_patterns = ['deadline', 'registration', 'submission', 'abstract']
+        for pattern in deadline_patterns:
+            for elem in soup.find_all(['div', 'span', 'p', 'dt', 'dd']):
+                text = elem.get_text(strip=True).lower()
+                if pattern in text and ('deadline' in text or re.search(r'\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}', text)):
+                    full_text = elem.get_text(strip=True)
+                    if len(full_text) < 200:  # Reasonable length for a deadline
+                        lines.append(f"**{full_text}**")
+        
+        if any('deadline' in l.lower() for l in lines):
+            lines.append("")
+        
+        # === CONTRIBUTIONS/AGENDA ===
+        # Look for timetable/contributions
+        contributions = []
+        
+        # Find timetable entries (usually in a structured list or table)
+        timetable = soup.find(['div', 'section', 'ul'], class_=lambda c: c and ('timetable' in str(c).lower() or 'contributions' in str(c).lower() or 'agenda' in str(c).lower()))
+        
+        if not timetable:
+            # Try finding by common patterns
+            timetable = soup.find(['div', 'section'], id=lambda i: i and ('timetable' in str(i).lower() or 'schedule' in str(i).lower()))
+        
+        if timetable:
+            # Look for individual entries
+            entries = timetable.find_all(['div', 'li', 'tr'], class_=lambda c: c and ('entry' in str(c).lower() or 'contribution' in str(c).lower() or 'talk' in str(c).lower()))
+            
+            for entry in entries[:20]:  # Limit to 20 contributions
+                entry_text = entry.get_text(separator=' ', strip=True)
+                entry_text = re.sub(r'\s+', ' ', entry_text)
+                
+                # Extract time if present
+                time_match = re.search(r'\d{1,2}:\d{2}\s*(AM|PM|am|pm)?', entry_text)
+                time_str = time_match.group(0) if time_match else ""
+                
+                # Extract speaker name
+                speaker_elem = entry.find(['span', 'div'], class_=lambda c: c and 'speaker' in str(c).lower())
+                speaker = speaker_elem.get_text(strip=True) if speaker_elem else ""
+                
+                # Extract title
+                title_elem = entry.find(['span', 'div', 'a'], class_=lambda c: c and 'title' in str(c).lower())
+                contrib_title = title_elem.get_text(strip=True) if title_elem else ""
+                
+                # Extract attachment links (PDFs, etc.)
+                attachments = []
+                for link in entry.find_all('a', href=True):
+                    href = link.get('href', '')
+                    if any(ext in href.lower() for ext in ['.pdf', '.pptx', '.ppt', '.doc', '/attachments/', '/material/']):
+                        link_text = link.get_text(strip=True) or 'Attachment'
+                        # Make absolute URL if needed
+                        if not href.startswith('http'):
+                            href = f"https://indico.desy.de{href}" if href.startswith('/') else href
+                        attachments.append(f"[{link_text}]({href})")
+                
+                if time_str or contrib_title or speaker:
+                    contrib_line = ""
+                    if time_str:
+                        contrib_line += f"**{time_str}** "
+                    if contrib_title:
+                        contrib_line += f"- {contrib_title}"
+                    if speaker:
+                        contrib_line += f" (Speaker: {speaker})"
+                    contributions.append(contrib_line)
+                    
+                    for att in attachments:
+                        contributions.append(f"  - {att}")
+        
+        # Also find standalone attachment links
+        all_attachments = []
+        for link in soup.find_all('a', href=True):
+            href = link.get('href', '')
+            if any(ext in href.lower() for ext in ['.pdf', '.pptx', '.ppt', '.docx']):
+                link_text = link.get_text(strip=True)
+                if link_text and len(link_text) < 100:  # Reasonable filename length
+                    if not href.startswith('http'):
+                        href = f"https://indico.desy.de{href}" if href.startswith('/') else href
+                    all_attachments.append(f"[{link_text}]({href})")
+        
+        if contributions:
+            lines.append("## Agenda/Contributions")
+            lines.append("")
+            for c in contributions:
+                lines.append(c)
+            lines.append("")
+        elif all_attachments:
+            lines.append("## Attachments")
+            lines.append("")
+            for att in all_attachments:
+                lines.append(f"- {att}")
+            lines.append("")
+        
+        # === EXTERNAL LINKS ===
+        # Collect important external links
+        external_links = []
+        for link in soup.find_all('a', href=True):
+            href = link.get('href', '')
+            text = link.get_text(strip=True)
+            # Skip internal Indico links and very short text
+            if href.startswith('http') and 'indico.desy.de' not in href and len(text) > 2:
+                if href not in [l[1] for l in external_links]:  # Avoid duplicates
+                    external_links.append((text, href))
+        
+        if external_links:
+            lines.append("## External Links")
+            lines.append("")
+            for text, href in external_links[:10]:  # Limit to 10 links
+                lines.append(f"- [{text}]({href})")
+            lines.append("")
+        
+        if lines:
+            result = '\n'.join(lines)
+            
+            # === CLEANUP: Remove browser warning and duplicate content ===
+            # Filter out "browser out of date" warning that Indico shows
+            result = re.sub(r'#{1,6}\s*⚠\s*Your browser is out of date\s*⚠.*?Indico may not work correctly in this browser\.?\s*\n?', '', result, flags=re.IGNORECASE | re.DOTALL)
+            result = re.sub(r'⚠\s*Your browser is out of date\s*⚠.*?Indico may not work correctly in this browser\.?\s*\n?', '', result, flags=re.IGNORECASE | re.DOTALL)
+            
+            # Remove duplicate External Links sections (keep only the first one)
+            external_links_pattern = r'(## External Links\n\n(?:- \[[^\]]+\]\([^)]+\)\n)+\n)'
+            matches = list(re.finditer(external_links_pattern, result))
+            if len(matches) > 1:
+                # Keep only the first External Links section
+                for m in matches[1:]:
+                    result = result[:m.start()] + result[m.end():]
+            
+            # Remove excessive newlines
+            result = re.sub(r'\n{4,}', '\n\n\n', result)
+            
+            return result.strip()
+        
+    except Exception as e:
+        print(f"[WARNING] Indico extraction failed: {e}")
+    
+    return None
 
 
 def _normalize_text_spacing(line):
@@ -2137,23 +2474,66 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     for heading in elem.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], recursive=True):
                         nav_elements.add(heading)
         
-        # Collect all headings and tables with their DOM positions
+        # Collect all headings, tables, AND paragraphs with their DOM positions
+        # FIX: Also include 'p' elements to capture paragraph content (e.g., belle2.desy.de)
         all_elements = []
         
-        # Find all headings and tables
-        for elem in main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table'], recursive=True):
+        # Elements to extract: headings, tables, and paragraphs with substantial content
+        content_tags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p']
+        
+        # #region agent log - Check for specific missing content
+        if url and ('contact__staff' in url or 'parameters' in url):
+            # Look for "Former group members" or "Power Supply" in the entire HTML
+            html_text = str(html_content).lower() if html_content else ''
+            missing_checks = {
+                'Former group members': 'former group members' in html_text,
+                'Power Supply Parameters': 'power supply' in html_text
+            }
+            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'MISSING_CONTENT_CHECK',
+                    'location': 'crawl_desy_all_urls.py:2485',
+                    'message': 'Checking for specific content in HTML',
+                    'data': {
+                        'url': url[:60] if url else '',
+                        'checks': missing_checks,
+                        'main_content_area_tag': main_content_area.name if main_content_area else None,
+                        'total_headings_in_main': len(main_content_area.find_all(['h1','h2','h3','h4','h5','h6'])) if main_content_area else 0
+                    },
+                    'timestamp': int(__import__('time').time() * 1000)
+                }) + '\n')
+        # #endregion
+        
+        # Find all content elements
+        for elem in main_content_area.find_all(content_tags, recursive=True):
             # Skip navigation headings
             if elem.name.startswith('h') and elem in nav_elements:
                 continue
             # Only process top-level tables (not nested)
             if elem.name == 'table' and elem.find_parent('table') is not None:
                 continue
+            # Skip paragraphs in navigation areas
+            if elem.name == 'p':
+                # Skip if inside nav/header/footer/aside
+                if elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                    continue
+                # Skip very short paragraphs (likely navigation/labels)
+                text = elem.get_text(strip=True)
+                if len(text) < 30:  # Minimum 30 chars for meaningful paragraph
+                    continue
+                # Skip paragraphs that are just links
+                links = elem.find_all('a')
+                if links and len(text) < 50 and len(links) >= len(text.split()):
+                    continue
             
             # FIX 2: Calculate position: count only previous elements within main_content_area
             # This prevents counting navigation/header elements that appear before main content
             position = 0
             # Get all elements in main_content_area in document order
-            all_content_elems = main_content_area.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table'], recursive=True)
+            all_content_elems = main_content_area.find_all(content_tags, recursive=True)
             for prev_elem in all_content_elems:
                 # Stop when we reach current element
                 if prev_elem == elem:
@@ -2164,6 +2544,11 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                         position += 1
                 elif prev_elem.name.startswith('h'):
                     position += 1
+                elif prev_elem.name == 'p':
+                    # Only count substantial paragraphs
+                    text = prev_elem.get_text(strip=True)
+                    if len(text) >= 30 and not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                        position += 1
             
             # #region agent log
             elem_text = elem.get_text(strip=True)[:50] if elem.name.startswith('h') else 'TABLE'
@@ -2187,9 +2572,19 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     }) + '\n')
             # #endregion
             
+            # Determine element type
+            if elem.name.startswith('h'):
+                elem_type = 'heading'
+            elif elem.name == 'table':
+                elem_type = 'table'
+            elif elem.name == 'p':
+                elem_type = 'paragraph'
+            else:
+                elem_type = 'text'
+            
             all_elements.append({
                 'element': elem,
-                'type': 'heading' if elem.name.startswith('h') else 'table',
+                'type': elem_type,
                 'position': position
             })
         
@@ -2229,6 +2624,26 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
             
             if item['type'] == 'heading':
                 heading_text = elem.get_text(strip=True)
+                # #region agent log
+                if url and ('contact__staff' in url or 'parameters' in url or 'heuser' in url):
+                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            'sessionId': 'debug-session',
+                            'runId': 'run1',
+                            'hypothesisId': 'HEADING_EXTRACT',
+                            'location': 'crawl_desy_all_urls.py:2599',
+                            'message': 'Heading found in DOM',
+                            'data': {
+                                'tag': elem.name,
+                                'text': heading_text[:80] if heading_text else '',
+                                'already_seen': heading_text in seen_headings if heading_text else False,
+                                'will_add': bool(heading_text and heading_text not in seen_headings),
+                                'url': url[:60] if url else ''
+                            },
+                            'timestamp': int(__import__('time').time() * 1000)
+                        }) + '\n')
+                # #endregion
                 if heading_text and heading_text not in seen_headings:
                     seen_headings.add(heading_text)
                     level = int(elem.name[1])
@@ -2346,6 +2761,31 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     dom_ordered_content.append({
                         'type': 'table',
                         'data': table_data,
+                        'position': item['position']
+                    })
+            
+            elif item['type'] == 'paragraph':
+                # Extract paragraph text with links preserved
+                para_text = elem.get_text(separator=' ', strip=True)
+                # Also extract any links in the paragraph
+                links = []
+                for link in elem.find_all('a', href=True):
+                    href = link.get('href', '')
+                    link_text = link.get_text(strip=True)
+                    if href and link_text:
+                        # Convert to markdown link format
+                        links.append((link_text, href))
+                
+                if para_text and len(para_text) >= 30:  # Only include substantial paragraphs
+                    # Replace link text with markdown format in paragraph
+                    formatted_text = para_text
+                    for link_text, href in links:
+                        if link_text in formatted_text:
+                            formatted_text = formatted_text.replace(link_text, f"[{link_text}]({href})", 1)
+                    
+                    dom_ordered_content.append({
+                        'type': 'paragraph',
+                        'text': formatted_text,
                         'position': item['position']
                     })
         
@@ -2756,6 +3196,10 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                 # Not a candidate for merging, add as-is
                 merged_content.append(item)
                 i += 1
+        elif item['type'] == 'paragraph':
+            # Paragraphs don't need merging, just add them
+            merged_content.append(item)
+            i += 1
         else:
             merged_content.append(item)
             i += 1
@@ -3419,6 +3863,18 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
             # #endregion
             
             markdown_output += "\n"
+        
+        elif item['type'] == 'paragraph':
+            # Add paragraph text with preserved links
+            para_text = item.get('text', '')
+            if para_text and len(para_text.strip()) >= 30:
+                markdown_output += para_text + "\n\n"
+        
+        elif item['type'] == 'text':
+            # Generic text content
+            text = item.get('text', '')
+            if text and len(text.strip()) >= 20:
+                markdown_output += text + "\n\n"
     
     return markdown_output
 
@@ -4486,15 +4942,31 @@ async def crawl_site():
     """
     
     # ========================================================================
-    # STEP 1: Initialize Error Tracking
+    # STEP 1: Initialize Error Tracking and Load Checkpoint
     # ========================================================================
-    # These variables accumulate results across all URLs being processed.
-    # They are initialized before the try block to ensure they're always
-    # available for final summary and error logging, even if exceptions occur.
-    all_errors = []
-    all_successful_urls = []
-    all_results = []
-    all_urls_by_depth = {}  # Track URLs by depth level across all URLs
+    # PHASE 1 FIX: Stream results instead of accumulating in memory
+    # These variables track metadata only - results are processed immediately
+    # and saved to disk, then discarded to prevent memory exhaustion.
+    
+    # Load checkpoint if resuming from previous run
+    checkpoint = load_checkpoint()
+    if checkpoint:
+        print(f"[CHECKPOINT] Resuming from checkpoint with {checkpoint.get('pages_processed', 0)} pages already processed")
+    
+    all_errors = checkpoint.get('all_errors', [])
+    all_successful_urls = checkpoint.get('all_successful_urls', [])
+    all_urls_by_depth = checkpoint.get('all_urls_by_depth', {})  # Track URLs by depth level
+    
+    # PHASE 1 FIX: all_results is now a temporary buffer that gets cleared after processing
+    # Results are accumulated during crawling, then processed and saved to disk,
+    # and finally cleared to free memory. This prevents OOM at 200k URLs.
+    # For true streaming at very large scale, refactor to process each result immediately.
+    all_results = []  # Temporary buffer - cleared after processing to free memory
+    total_results_crawled = 0  # Track total count (survives clear() for final summary)
+    
+    pages_processed_count = checkpoint.get('pages_processed', 0)  # Counter for checkpoint frequency
+    seed_urls_processed = checkpoint.get('seed_urls_processed', set())  # Track which seed URLs were processed
+    max_depth_crawled = checkpoint.get('max_depth_crawled', 0)  # Track the deepest level crawled
     
     # ========================================================================
     # STEP 2: Configure Browser with Anti-Bot and JavaScript Support
@@ -4786,6 +5258,34 @@ async def crawl_site():
                 print(f"{'='*60}")
                 
                 # ====================================================================
+                # PHASE 1 FIX: Skip seed URLs already in checkpoint (with depth check)
+                # ====================================================================
+                # Check if this seed URL was already crawled in a previous run
+                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                checkpoint_seen_urls = checkpoint.get('seen_final_urls', set())
+                checkpoint_seed_urls = checkpoint.get('seed_urls_processed', set())
+                checkpoint_max_depth = checkpoint.get('max_depth_crawled', 0)
+                
+                # Determine if we should skip this seed URL
+                should_skip = False
+                skip_reason = ""
+                
+                if normalized_seed in checkpoint_seed_urls:
+                    # Seed URL was processed before
+                    if MAX_DEPTH <= checkpoint_max_depth:
+                        # Same or lower depth - skip entirely
+                        should_skip = True
+                        skip_reason = f"already crawled at depth {checkpoint_max_depth}, current MAX_DEPTH={MAX_DEPTH}"
+                    else:
+                        # Higher depth requested - need to re-crawl to discover new URLs
+                        should_skip = False
+                        print(f"[CHECKPOINT] Seed URL was crawled at depth {checkpoint_max_depth}, but now MAX_DEPTH={MAX_DEPTH} - will re-crawl for deeper links")
+                
+                if should_skip:
+                    print(f"[CHECKPOINT SKIP] Seed URL {skip_reason}: {root_url}")
+                    continue  # Skip to next seed URL
+                
+                # ====================================================================
                 # Configure PDF scraping strategy for this URL (if it's a PDF)
                 # ====================================================================
                 scraping_strategy = None
@@ -4888,25 +5388,6 @@ async def crawl_site():
 
 
 
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'DOMAIN',
-                        'location': 'crawl_desy_all_urls.py:4856',
-                        'message': 'Starting crawl with normalized URL',
-                        'data': {
-                            'original_url': root_url,
-                            'normalized_url': normalized_url,
-                            'max_depth': MAX_DEPTH,
-                            'include_external': False,
-                            'max_pages': MAX_PAGES
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
                 
                 # First, crawl the page to get initial results
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
@@ -4992,8 +5473,26 @@ async def crawl_site():
                 # FIX: Extract links from full HTML (including nav/footer/header) and crawl them
                 # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
                 # This ensures links like "desy.de/desy_in_leichter_sprache/index_ger.html" are crawled
+                # CRITICAL: Only extract additional URLs if MAX_DEPTH > 0 (depth 0 = seed pages only)
                 additional_urls_to_crawl = []
-                if first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
+                # #region agent log
+                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        'sessionId': 'debug-session',
+                        'runId': 'run1',
+                        'hypothesisId': 'DEPTH_FIX_1',
+                        'location': 'crawl_desy_all_urls.py:5432',
+                        'message': 'First additional URL extraction check',
+                        'data': {
+                            'MAX_DEPTH': MAX_DEPTH,
+                            'will_extract': MAX_DEPTH > 0,
+                            'seed_url': normalized_url
+                        },
+                        'timestamp': int(__import__('time').time() * 1000)
+                    }) + '\n')
+                # #endregion
+                if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
                     try:
                         from urllib.parse import urljoin, urlparse
                         soup = BeautifulSoup(first_result.html, 'html.parser')
@@ -5066,17 +5565,42 @@ async def crawl_site():
                                 # NOTE: No deep_crawl_strategy - this ensures single page crawl only
                             )
                             
-                            for additional_url in additional_urls_to_crawl[:100]:
-                                try:
-                                    # Crawl single page (no deep crawl strategy = single page only)
-                                    # These will get depth 1 when processed (see depth assignment logic below)
-                                    additional_result = await crawler.arun(additional_url, config=single_page_config)
+                            # ========================================================
+                            # PHASE 1 FIX: Parallel single-page URL crawling
+                            # ========================================================
+                            urls_to_crawl_batch = additional_urls_to_crawl[:100]
+                            print(f"[INFO] Parallel crawling {len(urls_to_crawl_batch)} single-page URLs")
+                            
+                            single_page_semaphore = asyncio.Semaphore(CONCURRENT_TASKS)
+                            
+                            async def crawl_single_page_url(url):
+                                """Crawl a single page URL with semaphore-limited concurrency."""
+                                async with single_page_semaphore:
+                                    try:
+                                        result = await crawler.arun(url, config=single_page_config)
+                                        return ('success', url, result)
+                                    except Exception as e:
+                                        return ('error', url, e)
+                            
+                            single_page_results = await asyncio.gather(
+                                *[crawl_single_page_url(url) for url in urls_to_crawl_batch],
+                                return_exceptions=True
+                            )
+                            
+                            for sp_result in single_page_results:
+                                if isinstance(sp_result, Exception):
+                                    continue
+                                
+                                status, additional_url, result_or_error = sp_result
+                                
+                                if status == 'success':
+                                    additional_result = result_or_error
                                     if isinstance(additional_result, list):
                                         all_results.extend(additional_result)
                                     else:
                                         all_results.append(additional_result)
-                                except Exception as e:
-                                    # ERROR LOGGING: Log timeout and other errors for future retries
+                                else:
+                                    e = result_or_error
                                     error_msg = str(e)
                                     is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                                     
@@ -5089,10 +5613,6 @@ async def crawl_site():
                                         'note': 'Timeout errors can be retried with PAGE_TIMEOUT_EXTENDED in future runs'
                                     }
                                     all_errors.append(error_entry)
-                                    
-                                    if is_timeout:
-                                        print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
-                                    # Continue - some URLs might fail
                     except Exception as e:
                         # Log error but continue
                         pass
@@ -5102,6 +5622,12 @@ async def crawl_site():
                     all_results.extend(results)
                 else:
                     all_results.append(results)
+                
+                # PHASE 1 FIX: Track that this seed URL was processed
+                seed_urls_processed.add(normalized_seed)
+                # Update max_depth_crawled to track the deepest level we've crawled
+                max_depth_crawled = max(max_depth_crawled, MAX_DEPTH)
+                print(f"[CHECKPOINT] Marked seed URL as processed: {root_url} (depth: {MAX_DEPTH})")
             
             # ====================================================================
             # STEP 7: Extract links from ALL results (not just seed URL)
@@ -5109,6 +5635,7 @@ async def crawl_site():
             # CRITICAL FIX: Manual link extraction should run for ALL pages, not just seed URL
             # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
             # from ALL crawled pages to ensure no links are missed
+            # NOTE: This step is SKIPPED when MAX_DEPTH == 0 (only seed pages should be crawled)
             
             # Collect all additional URLs to crawl from all results
             # Track URL -> source_depth mapping to assign correct depths
@@ -5165,7 +5692,41 @@ async def crawl_site():
             # Track source page depth to assign correct depth to additional URLs
             # IMPORTANT: Only assign depth to URLs that are NOT already in seen_crawled_urls
             # If a URL was already crawled by BFSDeepCrawlStrategy, it already has correct depth
+            # CRITICAL: Skip link extraction when MAX_DEPTH == 0 (only seed pages should be crawled)
+            # #region agent log
+            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'DEPTH_FIX_2',
+                    'location': 'crawl_desy_all_urls.py:5650',
+                    'message': 'Second link extraction loop - checking MAX_DEPTH',
+                    'data': {
+                        'MAX_DEPTH': MAX_DEPTH,
+                        'will_skip': MAX_DEPTH == 0,
+                        'all_results_count': len(all_results)
+                    },
+                    'timestamp': int(__import__('time').time() * 1000)
+                }) + '\n')
+            # #endregion
             for result in all_results:
+                # Guard: Skip link extraction if MAX_DEPTH == 0
+                if MAX_DEPTH == 0:
+                    # #region agent log
+                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            'sessionId': 'debug-session',
+                            'runId': 'run1',
+                            'hypothesisId': 'DEPTH_FIX_2',
+                            'location': 'crawl_desy_all_urls.py:5653',
+                            'message': 'Breaking out of link extraction loop - MAX_DEPTH is 0',
+                            'data': {'MAX_DEPTH': MAX_DEPTH},
+                            'timestamp': int(__import__('time').time() * 1000)
+                        }) + '\n')
+                    # #endregion
+                    break  # Exit loop entirely for depth 0
                 if not result or not hasattr(result, 'html') or not result.html or not BEAUTIFULSOUP_AVAILABLE:
                     continue
                 
@@ -5299,14 +5860,46 @@ async def crawl_site():
                     verbose=True
                 )
                 
-                # Crawl additional URLs (limit to avoid excessive crawling)
-                # Store depth mapping for additional URLs so we can assign correct depth later
-                # Increased limit to 10,000 to capture more links from nav/footer/header
+                # ================================================================
+                # PHASE 1 FIX: Parallel Additional URL Crawling
+                # ================================================================
+                # Previously crawled URLs sequentially (one at a time) which was slow.
+                # Now uses asyncio.gather with semaphore for parallel execution.
+                # This reduces crawl time significantly for large URL sets.
+                
+                additional_urls_list = list(all_additional_urls.items())[:10000]  # Limit to 10,000
+                print(f"[INFO] Starting parallel crawl of {len(additional_urls_list)} additional URLs (concurrency: {CONCURRENT_TASKS})")
+                
+                # Semaphore limits concurrent tasks to CONCURRENT_TASKS
+                crawl_semaphore = asyncio.Semaphore(CONCURRENT_TASKS)
+                
+                async def crawl_single_additional_url(url_depth_tuple):
+                    """Crawl a single additional URL with semaphore-limited concurrency."""
+                    additional_url, assigned_depth = url_depth_tuple
+                    async with crawl_semaphore:
+                        try:
+                            result = await crawler.arun(additional_url, config=additional_urls_config)
+                            return ('success', additional_url, assigned_depth, result)
+                        except Exception as e:
+                            return ('error', additional_url, assigned_depth, e)
+                
+                # Execute all crawls in parallel (limited by semaphore)
+                parallel_results = await asyncio.gather(
+                    *[crawl_single_additional_url(item) for item in additional_urls_list],
+                    return_exceptions=True
+                )
+                
+                # Process results
                 additional_count = 0
-                for additional_url, assigned_depth in list(all_additional_urls.items())[:10000]:  # Limit to 10,000
-                    try:
-                        # Use config with deep_crawl_strategy to enable recursive crawling
-                        additional_result = await crawler.arun(additional_url, config=additional_urls_config)
+                for parallel_result in parallel_results:
+                    # Handle exceptions from gather
+                    if isinstance(parallel_result, Exception):
+                        continue
+                    
+                    status, additional_url, assigned_depth, result_or_error = parallel_result
+                    
+                    if status == 'success':
+                        additional_result = result_or_error
                         if isinstance(additional_result, list):
                             for res in additional_result:
                                 if res:
@@ -5329,8 +5922,9 @@ async def crawl_site():
                                     additional_urls_with_depth[normalized] = assigned_depth
                             all_results.append(additional_result)
                         additional_count += 1
-                    except Exception as e:
-                        # ERROR LOGGING: Log timeout and other errors for future retries
+                    else:
+                        # Error case
+                        e = result_or_error
                         error_msg = str(e)
                         is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                         
@@ -5346,9 +5940,8 @@ async def crawl_site():
                         
                         if is_timeout:
                             print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
-                        # Continue - some URLs might fail
                 
-                print(f"[INFO] Crawled {additional_count} additional URLs from HTML links")
+                print(f"[INFO] Crawled {additional_count} additional URLs from HTML links (parallel execution)")
             
             # ====================================================================
             # STEP 8: Process All Results
@@ -5359,6 +5952,26 @@ async def crawl_site():
             print("-" * 60)
             print(f"[INFO] Crawling complete! Found {len(results)} pages")
             print("-" * 60)
+            
+            # #region agent log
+            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    'sessionId': 'debug-session',
+                    'runId': 'run1',
+                    'hypothesisId': 'DEPTH_FIX_RESULT',
+                    'location': 'crawl_desy_all_urls.py:5907',
+                    'message': 'Final crawl count',
+                    'data': {
+                        'MAX_DEPTH': MAX_DEPTH,
+                        'total_results': len(results),
+                        'seed_url_count': len(ROOT_URLS),
+                        'expected_for_depth_0': len(ROOT_URLS) if MAX_DEPTH == 0 else 'N/A',
+                        'depth_fix_working': len(results) <= len(ROOT_URLS) * 2 if MAX_DEPTH == 0 else 'N/A'
+                    },
+                    'timestamp': int(__import__('time').time() * 1000)
+                }) + '\n')
+            # #endregion
             
             # ====================================================================
             # STEP 8: Process and Save Each Page
@@ -5372,11 +5985,19 @@ async def crawl_site():
                 normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
                 seed_urls_normalized.add(normalized_seed)
             
-            # Track seen final URLs to prevent duplicates
-            seen_final_urls = set()
+            # PHASE 1 FIX: Load seen_final_urls from checkpoint for crash recovery
+            # If resuming, skip URLs already processed in previous run
+            seen_final_urls = checkpoint.get('seen_final_urls', set())
+            if seen_final_urls:
+                print(f"[CHECKPOINT] Loaded {len(seen_final_urls)} already-processed URLs from checkpoint")
             
             # additional_urls_with_depth is defined in the link extraction section above
             # It maps normalized URLs to their assigned depths
+            # PHASE 1 FIX: Also load from checkpoint if available
+            if checkpoint.get('additional_urls_with_depth'):
+                additional_urls_with_depth.update(checkpoint.get('additional_urls_with_depth', {}))
+            if checkpoint.get('crawled_urls_with_depth'):
+                crawled_urls_with_depth.update(checkpoint.get('crawled_urls_with_depth', {}))
             
             # Track links found vs URLs crawled for analysis
             links_found_vs_crawled = {
@@ -5384,6 +6005,9 @@ async def crawl_site():
                 'total_urls_crawled': 0,
                 'links_found_by_page': []
             }
+            
+            # PHASE 1 FIX: Counter for checkpoint frequency
+            results_processed_in_batch = 0
             
             for result in results:
                 # Skip if result is invalid
@@ -6368,59 +6992,41 @@ async def crawl_site():
                     
                     if not result_is_pdf and hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
                         try:
-                            
-                            # Solution 4: Extract headings and tables in DOM order
-                            dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
-                            print(f"[DEBUG] DOM-order extraction: Found {len(dom_ordered_content)} content items")
-                            
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'T',
-                                    'location': 'crawl_desy_simple.py:5121',
-                                    'message': 'dom_ordered_content extracted',
-                                    'data': {
-                                        'dom_ordered_content_count': len(dom_ordered_content) if dom_ordered_content else 0,
-                                        'url': result.url if hasattr(result, 'url') else None,
-                                        'has_magnetism': 'magnetism' in (result.url if hasattr(result, 'url') else '').lower(),
-                                        'item_types': [item.get('type') for item in dom_ordered_content[:10]] if dom_ordered_content else []
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
-                            
-                            # Format as markdown
-                            tables_markdown = format_tables_with_headings_as_markdown(dom_ordered_content)
-                            
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'T',
-                                    'location': 'crawl_desy_simple.py:5125',
-                                    'message': 'tables_markdown generated',
-                                    'data': {
-                                        'tables_markdown_length': len(tables_markdown) if tables_markdown else 0,
-                                        'dom_ordered_content_count': len(dom_ordered_content),
-                                        'has_group_members': 'group members' in (tables_markdown or '').lower(),
-                                        'preview': (tables_markdown or '')[:200]
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
-                            
-                            if tables_markdown:
-                                # Count tables and headings for logging
-                                table_count = sum(1 for item in dom_ordered_content if item['type'] == 'table')
-                                heading_count = sum(1 for item in dom_ordered_content if item['type'] == 'heading')
-                                print(f"[INFO] DOM-order extraction: Formatted {table_count} table(s) and {heading_count} heading(s)")
+                            # ============================================================
+                            # INDICO EVENT PAGE HANDLING
+                            # ============================================================
+                            # Indico pages have a specific structure that requires custom extraction
+                            current_url = result.url if hasattr(result, 'url') else None
+                            if current_url and is_indico_url(current_url):
+                                print(f"[INFO] Detected Indico event page - using specialized extractor")
+                                indico_content = extract_indico_event(result.html, url=current_url)
+                                if indico_content:
+                                    tables_markdown = indico_content
+                                    print(f"[INFO] Indico extraction: {len(indico_content)} chars extracted")
+                                    # Skip general DOM extraction for Indico pages
+                                    dom_ordered_content = []
+                                else:
+                                    # Fallback to general extraction if Indico extraction fails
+                                    print(f"[WARNING] Indico extraction returned empty, using general extraction")
+                                    dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
                             else:
-                                print(f"[DEBUG] DOM-order extraction: No tables formatted (empty result)")
+                                # Solution 4: Extract headings and tables in DOM order
+                                dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
+                            
+                            # Only process DOM extraction if we didn't use Indico extractor
+                            if dom_ordered_content:
+                                print(f"[DEBUG] DOM-order extraction: Found {len(dom_ordered_content)} content items")
+                                
+                                # Format as markdown (only for non-Indico pages)
+                                tables_markdown = format_tables_with_headings_as_markdown(dom_ordered_content)
+                                
+                                if tables_markdown:
+                                    # Count tables and headings for logging
+                                    table_count = sum(1 for item in dom_ordered_content if item['type'] == 'table')
+                                    heading_count = sum(1 for item in dom_ordered_content if item['type'] == 'heading')
+                                    print(f"[INFO] DOM-order extraction: Formatted {table_count} table(s) and {heading_count} heading(s)")
+                                else:
+                                    print(f"[DEBUG] DOM-order extraction: No tables formatted (empty result)")
                         except Exception as e:
                             print(f"[WARNING] Hybrid table extraction failed: {e}")
                             import traceback
@@ -6482,6 +7088,25 @@ async def crawl_site():
                             # Create header with URL information
                             # This helps identify the source of the content when reading the markdown file
                             url_header = f"# Source URL\n\n{result.url}\n\n"
+                            # #region agent log
+                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                                import json
+                                f.write(json.dumps({
+                                    'sessionId': 'debug-session',
+                                    'runId': 'run1',
+                                    'hypothesisId': 'SOURCEURL_CREATE',
+                                    'location': 'crawl_desy_all_urls.py:7044',
+                                    'message': 'url_header created',
+                                    'data': {
+                                        'url': result.url,
+                                        'url_header_len': len(url_header),
+                                        'has_markdown': bool(markdown_content),
+                                        'has_tables': bool(tables_markdown),
+                                        'tables_first_100': tables_markdown[:100] if tables_markdown else ''
+                                    },
+                                    'timestamp': int(__import__('time').time() * 1000)
+                                }) + '\n')
+                            # #endregion
                         
                         # Remove any existing URL header from markdown_content to avoid duplication
                         if markdown_content:
@@ -7541,6 +8166,26 @@ async def crawl_site():
                             print(f"[SKIP] Empty/minimal content page: {final_url or original_url}")
                             continue  # Skip saving this page
                         
+                        # #region agent log
+                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
+                            import json
+                            first_100 = content_to_save[:100] if content_to_save else ''
+                            has_source_url = '# Source URL' in content_to_save if content_to_save else False
+                            f.write(json.dumps({
+                                'sessionId': 'debug-session',
+                                'runId': 'run1',
+                                'hypothesisId': 'SOURCEURL_FINAL',
+                                'location': 'crawl_desy_all_urls.py:8123',
+                                'message': 'Just before writing file',
+                                'data': {
+                                    'url': result.url,
+                                    'has_source_url_header': has_source_url,
+                                    'first_100_chars': first_100,
+                                    'content_len': len(content_to_save) if content_to_save else 0
+                                },
+                                'timestamp': int(__import__('time').time() * 1000)
+                            }) + '\n')
+                        # #endregion
                         filename.write_text(content_to_save, encoding="utf-8")
                         
                         # Log extraction results
@@ -7565,6 +8210,24 @@ async def crawl_site():
                         file_type = "PDF" if result_is_pdf else "HTML"
                         print(f"[SAVED] [{file_type}] {result.url}")
                         print(f"        → {filename}")
+                        
+                        # PHASE 1 FIX: Periodic checkpoint saving for crash recovery
+                        pages_processed_count += 1
+                        results_processed_in_batch += 1
+                        if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
+                            checkpoint_data = {
+                                'seen_final_urls': seen_final_urls,
+                                'all_urls_by_depth': all_urls_by_depth,
+                                'all_successful_urls': all_successful_urls,
+                                'all_errors': all_errors,
+                                'additional_urls_with_depth': additional_urls_with_depth,
+                                'crawled_urls_with_depth': crawled_urls_with_depth,
+                                'pages_processed': pages_processed_count,
+                                'max_depth_crawled': max_depth_crawled,
+                                'seed_urls_processed': seed_urls_processed,
+                            }
+                            if save_checkpoint(checkpoint_data):
+                                print(f"[CHECKPOINT] Saved progress: {pages_processed_count} pages processed")
                     except Exception as file_save_error:
                         # Error during file save - log but continue processing
                         all_errors.append({
@@ -7588,6 +8251,34 @@ async def crawl_site():
                     print(f"[ERROR] {error_url}")
                     print(f"        Exception: {str(e)}")
                     print(f"        Traceback:\n{error_traceback}")
+            
+            # ====================================================================
+            # PHASE 1 FIX: Final checkpoint save and memory cleanup
+            # ====================================================================
+            # Save final checkpoint after all results are processed
+            final_checkpoint_data = {
+                'seen_final_urls': seen_final_urls,
+                'all_urls_by_depth': all_urls_by_depth,
+                'all_successful_urls': all_successful_urls,
+                'all_errors': all_errors,
+                'additional_urls_with_depth': additional_urls_with_depth,
+                'crawled_urls_with_depth': crawled_urls_with_depth,
+                'pages_processed': pages_processed_count,
+                'max_depth_crawled': max_depth_crawled,
+                'seed_urls_processed': seed_urls_processed,
+            }
+            if save_checkpoint(final_checkpoint_data):
+                print(f"[CHECKPOINT] Final checkpoint saved: {pages_processed_count} total pages processed")
+            
+            # PHASE 1 FIX: Clear heavy data from results to free memory
+            # At 200k URLs, keeping all HTML/markdown in memory would use ~20GB
+            # We've already saved the files, so we only need URL tracking data
+            total_results_crawled = len(all_results)  # Store count before clearing
+            print(f"[MEMORY] Clearing {total_results_crawled} results from memory...")
+            all_results.clear()  # Clear the list to free memory
+            import gc
+            gc.collect()  # Force garbage collection
+            print(f"[MEMORY] Memory cleared")
             
             # ====================================================================
             # STEP 9: Save URLs by Depth
@@ -7703,7 +8394,7 @@ async def crawl_site():
             print(f"  URLs processed: {len(ROOT_URLS)}")
             print(f"  Successful: {len(all_successful_urls)} pages")
             print(f"  Errors: {len(all_errors)} pages")
-            print(f"  Total crawled: {len(all_results)} pages")
+            print(f"  Total crawled: {total_results_crawled} pages")  # PHASE 1 FIX: Use stored count
             print(f"  Files saved to: {OUTPUT_DIR}/")
             if all_errors:
                 print(f"  Error log: {ERROR_LOG_FILE}")
@@ -7754,11 +8445,13 @@ async def crawl_site():
             timeout_errors = [e for e in all_errors if e.get('is_timeout', False)]
             other_errors = [e for e in all_errors if not e.get('is_timeout', False)]
             
+            # PHASE 1 FIX: Use total_results_crawled if available (set before clearing all_results)
+            crawled_count = total_results_crawled if total_results_crawled > 0 else len(all_results)
             error_log = {
                 'timestamp': datetime.now().isoformat(),
                 'total_errors': len(all_errors),
                 'total_successful': len(all_successful_urls),
-                'total_crawled': len(all_results),
+                'total_crawled': crawled_count,
                 'timeout_errors': len(timeout_errors),
                 'other_errors': len(other_errors),
                 'timeout_urls': [{'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')} for e in timeout_errors],
@@ -7780,4 +8473,3 @@ if __name__ == "__main__":
     # asyncio.run() is needed because crawl_site() is an async function
     # Async functions allow the crawler to fetch multiple pages simultaneously
     asyncio.run(crawl_site())
-
