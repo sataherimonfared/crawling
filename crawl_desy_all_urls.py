@@ -1635,23 +1635,7 @@ def extract_table_from_html(html_table):
             # Only treat as headers if ALL cells in first row are <th> tags
             # This avoids misidentifying data rows as headers
             if header_cells and all(cell.name == 'th' for cell in header_cells):
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    header_texts = [extract_cell_links(cell)[:50] for cell in header_cells[:2]]
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'I',
-                        'location': 'crawl_desy_simple.py:1141',
-                        'message': 'Found headers from th tags in first row',
-                        'data': {
-                            'header_texts': header_texts,
-                            'num_headers': len(header_cells)
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 table_data['headers'] = [extract_cell_links(cell) for cell in header_cells]
             # Additional check: if first row has <th> tags mixed with <td>, 
             # only use the <th> cells as headers (common in complex tables)
@@ -1714,9 +1698,7 @@ def extract_table_from_html(html_table):
         # Only use recursive=True if direct children don't exist
         cells = tr.find_all(['td', 'th'], recursive=False)
         
-        # #region agent log
-        cells_before_filter = len(cells)
-        # #endregion
+        
         
         # If no direct children, try recursive but filter nested tables
         if not cells:
@@ -1742,25 +1724,7 @@ def extract_table_from_html(html_table):
                 filtered_cells.append(c)
             cells = filtered_cells
         
-        # #region agent log
-        if cells_before_filter > 2 or len(cells) > 2:
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'L',
-                    'location': 'crawl_desy_simple.py:1202',
-                    'message': 'Table row cell extraction',
-                    'data': {
-                        'cells_before_filter': cells_before_filter,
-                        'cells_after_filter': len(cells),
-                        'used_recursive': cells_before_filter == 0,
-                        'first_cell_preview': str(cells[0])[:100] if cells else None
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-        # #endregion
+        
         
         # Extract cell content
         if cells:
@@ -2453,6 +2417,8 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                            soup.find('body') or
                            soup)
         
+        
+        
         # FIX 2B: Filter out navigation/header/footer headings if main_content_area is body
         # This prevents extracting navigation headings when body is used as fallback
         navigation_containers = ['nav', 'header', 'footer', 'aside']
@@ -2479,33 +2445,8 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
         all_elements = []
         
         # Elements to extract: headings, tables, and paragraphs with substantial content
-        content_tags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p']
+        content_tags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p',  'ul', 'ol']  # 'ul', 'ol'
         
-        # #region agent log - Check for specific missing content
-        if url and ('contact__staff' in url or 'parameters' in url):
-            # Look for "Former group members" or "Power Supply" in the entire HTML
-            html_text = str(html_content).lower() if html_content else ''
-            missing_checks = {
-                'Former group members': 'former group members' in html_text,
-                'Power Supply Parameters': 'power supply' in html_text
-            }
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'MISSING_CONTENT_CHECK',
-                    'location': 'crawl_desy_all_urls.py:2485',
-                    'message': 'Checking for specific content in HTML',
-                    'data': {
-                        'url': url[:60] if url else '',
-                        'checks': missing_checks,
-                        'main_content_area_tag': main_content_area.name if main_content_area else None,
-                        'total_headings_in_main': len(main_content_area.find_all(['h1','h2','h3','h4','h5','h6'])) if main_content_area else 0
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-        # #endregion
         
         # Find all content elements
         for elem in main_content_area.find_all(content_tags, recursive=True):
@@ -2518,11 +2459,22 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
             # Skip paragraphs in navigation areas
             if elem.name == 'p':
                 # Skip if inside nav/header/footer/aside
-                if elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                in_nav = elem.find_parent(['nav', 'header', 'footer', 'aside'])
+                if in_nav:
+                    
                     continue
                 # Skip very short paragraphs (likely navigation/labels)
                 text = elem.get_text(strip=True)
-                if len(text) < 30:  # Minimum 30 chars for meaningful paragraph
+                # FIX: Allow short paragraphs that are questions or follow headings (common on landing pages)
+                # Questions (ending with ?) are often descriptive text after headings
+                is_question = text.endswith('?')
+                # Check if previous sibling is a heading
+                prev_sibling = elem.find_previous_sibling(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                is_after_heading = prev_sibling is not None
+                
+                # Lower threshold for questions or paragraphs after headings
+                min_length = 15 if (is_question or is_after_heading) else 30
+                if len(text) < min_length:
                     continue
                 # Skip paragraphs that are just links
                 links = elem.find_all('a')
@@ -2549,28 +2501,12 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     text = prev_elem.get_text(strip=True)
                     if len(text) >= 30 and not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
                         position += 1
+                elif prev_elem.name in ['ul', 'ol']:
+                    # Count lists (but skip if in navigation areas)
+                    if not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                        position += 1
             
-            # #region agent log
-            elem_text = elem.get_text(strip=True)[:50] if elem.name.startswith('h') else 'TABLE'
-            if 'heuser' in str(html_content).lower():
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'H1',
-                        'location': 'crawl_desy_simple.py:2036',
-                        'message': 'Element found in DOM',
-                        'data': {
-                            'type': 'heading' if elem.name.startswith('h') else 'table',
-                            'tag': elem.name,
-                            'position': position,
-                            'text_preview': elem_text,
-                            'has_parent_table': elem.find_parent('table') is not None if elem.name == 'table' else False
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-            # #endregion
+            
             
             # Determine element type
             if elem.name.startswith('h'):
@@ -2579,6 +2515,8 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                 elem_type = 'table'
             elif elem.name == 'p':
                 elem_type = 'paragraph'
+            elif elem.name in ['ul', 'ol']: 
+                elem_type = 'list'
             else:
                 elem_type = 'text'
             
@@ -2591,59 +2529,20 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
         # Sort by position
         all_elements.sort(key=lambda x: x['position'])
         
-        # #region agent log
-        if 'heuser' in str(html_content).lower():
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'H1',
-                    'location': 'crawl_desy_simple.py:2067',
-                    'message': 'Elements sorted by position',
-                    'data': {
-                        'sorted_order': [
-                            {
-                                'type': item['type'],
-                                'position': item['position'],
-                                'text_preview': item['element'].get_text(strip=True)[:50] if item['element'].name.startswith('h') else 'TABLE'
-                            }
-                            for item in all_elements[:10]
-                        ]
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-        # #endregion
+        
         
         # Process elements and extract content
         dom_ordered_content = []
         seen_headings = set()
+        # FIX: Track table row text to avoid duplicating as paragraphs
+        table_row_texts = set()
         
         for item in all_elements:
             elem = item['element']
             
             if item['type'] == 'heading':
                 heading_text = elem.get_text(strip=True)
-                # #region agent log
-                if url and ('contact__staff' in url or 'parameters' in url or 'heuser' in url):
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'HEADING_EXTRACT',
-                            'location': 'crawl_desy_all_urls.py:2599',
-                            'message': 'Heading found in DOM',
-                            'data': {
-                                'tag': elem.name,
-                                'text': heading_text[:80] if heading_text else '',
-                                'already_seen': heading_text in seen_headings if heading_text else False,
-                                'will_add': bool(heading_text and heading_text not in seen_headings),
-                                'url': url[:60] if url else ''
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                # #endregion
+                
                 if heading_text and heading_text not in seen_headings:
                     seen_headings.add(heading_text)
                     level = int(elem.name[1])
@@ -2661,77 +2560,15 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     table_text = elem.get_text(strip=True).lower()
                     
                     if is_pubdb_ui_table(table_text):
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'PUBDB',
-                                'location': 'crawl_desy_simple.py:2134',
-                                'message': 'Skipping PUBDB UI table in DOM extraction',
-                                'data': {
-                                    'table_text_preview': table_text[:150],
-                                    'matched_keywords': [kw for kw in _PUBDB_UI_KEYWORDS if kw in table_text],
-                                    'url': url,
-                                    'is_pubdb_url': url and is_pubdb_url(url) if url else False,
-                                    'is_pubdb_content': is_pubdb_content(html_content) if html_content else False
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         continue  # Skip this UI table
                 
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'H1',
-                        'location': 'crawl_desy_simple.py:2067',
-                        'message': 'Table element found in DOM',
-                        'data': {
-                            'table_html_preview': str(elem)[:200],
-                            'table_id': elem.get('id', ''),
-                            'table_class': ' '.join(elem.get('class', []))
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 
                 # Extract table data using existing function
                 table_data = extract_table_from_html(elem)
                 
-                # #region agent log
-                # Check if this table contains Andrey, Anjali, or Ankita
-                table_text = elem.get_text()
-                is_first_three = any(name in table_text for name in ['Andrey Siemens', 'Anjali Panchwanee', 'Ankita Negi'])
-                is_other = any(name in table_text for name in ['Anna Barinskaya', 'Bojan Bosnjak', 'Christina Bömer'])
                 
-                if is_first_three or is_other:
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'H2',
-                            'location': 'crawl_desy_simple.py:2108',
-                            'message': 'Table extraction result',
-                            'data': {
-                                'is_first_three': is_first_three,
-                                'is_other': is_other,
-                                'has_rows': bool(table_data.get('rows')),
-                                'num_rows': len(table_data.get('rows', [])),
-                                'num_cols': len(table_data.get('rows', [0])) if table_data.get('rows') else 0,
-                                'has_headers': bool(table_data.get('headers')),
-                                'headers': [str(h)[:50] for h in table_data.get('headers', [])],
-                                'first_row_preview': [str(c)[:50] for c in table_data.get('rows', [])[0][:3]] if table_data.get('rows') else None,
-                                'table_html_first_500': str(elem)[:500]
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                # #endregion
                 
                 if table_data.get('rows'):
                     # Solution 3: Check if single-column table and convert to multi-column
@@ -2739,34 +2576,58 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                     if is_single_column:
                         table_data = convert_single_column_to_multi_column_table(table_data, elem)
                     
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'A',
-                            'location': 'crawl_desy_simple.py:1969',
-                            'message': 'Table found in DOM extraction',
-                            'data': {
-                                'num_rows': len(table_data.get('rows', [])),
-                                'num_cols': len(table_data.get('rows', [0])) if table_data.get('rows') else 0,
-                                'has_headers': bool(table_data.get('headers')),
-                                'first_row_preview': str(table_data.get('rows', [])[0][:2]) if table_data.get('rows') else None
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     
                     dom_ordered_content.append({
                         'type': 'table',
                         'data': table_data,
                         'position': item['position']
                     })
+                    
+                    # FIX: Collect combined row text to avoid duplicating as paragraphs
+                    # Individual cells may be short, but paragraphs often contain all cells concatenated
+                    for row in table_data.get('rows', []):
+                        # Combine all cells in this row
+                        row_text = ' '.join(str(cell) for cell in row if cell)
+                        if row_text:
+                            # Normalize: lowercase, collapse whitespace, strip markdown links
+                            row_text = row_text.lower()
+                            row_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', row_text)  # Remove markdown links
+                            row_text = ' '.join(row_text.split())  # Normalize whitespace
+                            if len(row_text) > 30:  # Only track substantial text
+                                table_row_texts.add(row_text)
             
             elif item['type'] == 'paragraph':
                 # Extract paragraph text with links preserved
                 para_text = elem.get_text(separator=' ', strip=True)
+                
+                
+                
+                # FIX: Skip paragraphs whose text is already in a table row
+                # Match based on key fields (names, emails, phone numbers) rather than exact text
+                if para_text and table_row_texts:
+                    para_normalized = para_text.lower()
+                    para_normalized = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', para_normalized)  # Remove markdown links
+                    para_normalized = re.sub(r'(e-?mail|phone|tel|location|office|room):\s*', '', para_normalized)  # Remove labels
+                    para_normalized = ' '.join(para_normalized.split())  # Normalize whitespace
+                    
+                    # Check if paragraph shares significant content with any table row
+                    is_duplicate = False
+                    for row_text in table_row_texts:
+                        # Extract key tokens (words 3+ chars, not common words)
+                        para_tokens = set(w for w in para_normalized.split() if len(w) >= 3 and w not in ('the', 'and', 'for'))
+                        row_tokens = set(w for w in row_text.split() if len(w) >= 3 and w not in ('the', 'and', 'for'))
+                        
+                        # If many tokens match, it's likely a duplicate
+                        common_tokens = para_tokens & row_tokens
+                        if len(common_tokens) >= 3 and len(common_tokens) >= len(para_tokens) * 0.5:
+                            is_duplicate = True
+                            
+                            break
+                    
+                    if is_duplicate:
+                        continue  # Skip this paragraph - it's duplicate table content
+                
                 # Also extract any links in the paragraph
                 links = []
                 for link in elem.find_all('a', href=True):
@@ -2776,16 +2637,58 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                         # Convert to markdown link format
                         links.append((link_text, href))
                 
-                if para_text and len(para_text) >= 30:  # Only include substantial paragraphs
+                if para_text and len(para_text) >= 15: # 30:  # Only include substantial paragraphs
                     # Replace link text with markdown format in paragraph
                     formatted_text = para_text
                     for link_text, href in links:
                         if link_text in formatted_text:
                             formatted_text = formatted_text.replace(link_text, f"[{link_text}]({href})", 1)
                     
+                    
+                    
                     dom_ordered_content.append({
                         'type': 'paragraph',
                         'text': formatted_text,
+                        'position': item['position']
+                    })
+            
+            elif item['type'] == 'list':
+                # Extract list items with links preserved
+                list_items = []
+                is_ordered = elem.name == 'ol'
+                
+                # Skip lists in navigation areas
+                if elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                    continue
+                
+                for li in elem.find_all('li', recursive=False):  # Only direct children
+                    # Extract text and links from list item
+                    item_text = li.get_text(separator=' ', strip=True)
+                    if not item_text:
+                        continue
+                    
+                    # Extract links and replace with markdown format
+                    links = []
+                    for link in li.find_all('a', href=True):
+                        href = link.get('href', '')
+                        link_text = link.get_text(strip=True)
+                        if href and link_text:
+                            links.append((link_text, href))
+                    
+                    # Replace link text with markdown format
+                    formatted_item = item_text
+                    for link_text, href in links:
+                        if link_text in formatted_item:
+                            formatted_item = formatted_item.replace(link_text, f"[{link_text}]({href})", 1)
+                    
+                    list_items.append(formatted_item)
+                
+                # Only add list if it has items
+                if list_items:
+                    dom_ordered_content.append({
+                        'type': 'list',
+                        'items': list_items,
+                        'ordered': is_ordered,
                         'position': item['position']
                     })
         
@@ -2836,25 +2739,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                                        len(headers) >= 2 and
                                        any(label.lower() in ['name', 'e-mail', 'email', 'phone', 'location'] for label in headers))
             
-            # #region agent log
-            if headers and any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'M',
-                        'location': 'crawl_desy_simple.py:2177',
-                        'message': 'Checking merge candidate',
-                        'data': {
-                            'num_rows': len(rows),
-                            'num_headers': len(headers) if headers else 0,
-                            'headers': [str(h) for h in headers] if headers else [],
-                            'is_single_row_structured': is_single_row_structured
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-            # #endregion
+            
             
             if is_single_row_structured:
                 # Look ahead for consecutive single-row tables with same headers
@@ -2862,39 +2747,9 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                 j = i + 1
                 while j < len(dom_ordered_content):
                     next_item = dom_ordered_content[j]
-                    # #region agent log
-                    if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'M',
-                                'location': 'crawl_desy_simple.py:2208',
-                                'message': 'Checking next item for merge',
-                                'data': {
-                                    'j': j,
-                                    'next_item_type': next_item.get('type'),
-                                    'total_items': len(dom_ordered_content)
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                    # #endregion
+                    
                     if next_item['type'] != 'table':
-                        # #region agent log
-                        if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'M',
-                                    'location': 'crawl_desy_simple.py:2210',
-                                    'message': 'Next item is not a table, stopping merge',
-                                    'data': {'next_item_type': next_item.get('type')},
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                        # #endregion
+                        
                         break
                     
                     next_table_data = next_item.get('data', {}) or {}
@@ -2905,24 +2760,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     # GENERAL: Headers may have person-specific values (e.g., "Andrey Siemens E-mail" vs "Anjali Panchwanee E-mail")
                     # So we check if headers have the same field types (E-mail, Location, Phone) rather than exact match
                     # Also allow different numbers of columns as long as field types match (some tables may be missing columns)
-                    # #region agent log
-                    if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'M',
-                                'location': 'crawl_desy_simple.py:2225',
-                                'message': 'Checking if next table is mergeable',
-                                'data': {
-                                    'next_num_rows': len(next_rows),
-                                    'next_has_headers': bool(next_headers),
-                                    'next_headers': [str(h)[:30] for h in next_headers[:3]] if next_headers else []
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                    # #endregion
+                    
                     if len(next_rows) == 1 and next_headers:
                         # Extract field types from headers (normalize to generic labels)
                         def extract_field_type(header):
@@ -2946,93 +2784,21 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                         intersection = current_field_types & next_field_types
                         will_merge = len(intersection) >= 2
                         
-                        # #region agent log
-                        if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'M',
-                                    'location': 'crawl_desy_simple.py:2240',
-                                    'message': 'Field type check for merge',
-                                    'data': {
-                                        'current_field_types': list(current_field_types),
-                                        'next_field_types': list(next_field_types),
-                                        'intersection': list(intersection),
-                                        'intersection_len': len(intersection),
-                                        'will_merge': will_merge,
-                                        'current_headers': [str(h)[:30] for h in (headers or [])[:3]],
-                                        'next_headers': [str(h)[:30] for h in (next_headers or [])[:3]]
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                        # #endregion
+                        
                         
                         if will_merge:
                             merge_candidates.append(next_item)
-                            # #region agent log
-                            if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                    import json
-                                    f.write(json.dumps({
-                                        'sessionId': 'debug-session',
-                                        'runId': 'run1',
-                                        'hypothesisId': 'M',
-                                        'location': 'crawl_desy_simple.py:2267',
-                                        'message': 'Added merge candidate',
-                                        'data': {
-                                            'current_field_types': list(current_field_types),
-                                            'next_field_types': list(next_field_types),
-                                            'merge_candidates_count': len(merge_candidates)
-                                        },
-                                        'timestamp': int(__import__('time').time() * 1000)
-                                    }) + '\n')
-                            # #endregion
+                            
                             j += 1
                         else:
-                            # #region agent log
-                            if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                    import json
-                                    f.write(json.dumps({
-                                        'sessionId': 'debug-session',
-                                        'runId': 'run1',
-                                        'hypothesisId': 'M',
-                                        'location': 'crawl_desy_simple.py:2222',
-                                        'message': 'Field types do not match, stopping merge',
-                                        'data': {
-                                            'current_field_types': list(current_field_types),
-                                            'next_field_types': list(next_field_types),
-                                            'intersection': list(intersection),
-                                            'intersection_len': len(intersection)
-                                        },
-                                        'timestamp': int(__import__('time').time() * 1000)
-                                    }) + '\n')
-                            # #endregion
+                            
                             break
                     else:
                         # Next item is not a table or doesn't have single row, stop merging
                         break
                 
                 # If we found multiple tables to merge, merge them
-                # #region agent log
-                if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'M',
-                            'location': 'crawl_desy_simple.py:2227',
-                            'message': 'Merge decision',
-                            'data': {
-                                'merge_candidates_count': len(merge_candidates),
-                                'will_merge': len(merge_candidates) > 1
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                # #endregion
+                
                 if len(merge_candidates) > 1:
                     # Merge all rows from candidates into one table
                     merged_rows = []
@@ -3169,24 +2935,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                         'position': item['position']
                     }
                     merged_content.append(merged_table)
-                    # #region agent log
-                    if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers):
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'M',
-                                'location': 'crawl_desy_simple.py:2369',
-                                'message': 'Merged table added to merged_content',
-                                'data': {
-                                    'merged_rows_count': len(merged_rows),
-                                    'normalized_headers': normalized_headers,
-                                    'merge_candidates_count': len(merge_candidates)
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                    # #endregion
+                    
                     i = j  # Skip all merged tables
                 else:
                     # No merge needed, add as-is
@@ -3208,22 +2957,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
     markdown_output = ""
     seen_table_signatures = set()  # For deduplication
     
-    # #region agent log
-    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            'sessionId': 'debug-session',
-            'runId': 'run1',
-            'hypothesisId': 'T',
-            'location': 'crawl_desy_simple.py:2383',
-            'message': 'Starting to format merged_content',
-            'data': {
-                'merged_content_count': len(merged_content),
-                'item_types': [item.get('type') for item in merged_content[:10]]
-            },
-            'timestamp': int(__import__('time').time() * 1000)
-        }) + '\n')
-    # #endregion
+    
     
     for item in merged_content:
         if item['type'] == 'heading':
@@ -3236,43 +2970,10 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
             headers = table_data.get('headers', []) or []
             rows = table_data.get('rows', []) or []
             
-            # #region agent log
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'Q',
-                    'location': 'crawl_desy_simple.py:2065',
-                    'message': 'Processing table in DOM-order format',
-                    'data': {
-                        'num_rows': len(rows),
-                        'num_cols': len(rows[0]) if rows else 0,
-                        'has_headers': bool(headers),
-                        'headers_preview': [str(h)[:30] for h in headers[:2]] if headers else None,
-                        'first_row_preview': [str(c)[:30] for c in rows[0][:2]] if rows else None
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-            # #endregion
+            
             
             if not rows:
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'C',
-                        'location': 'crawl_desy_simple.py:2448',
-                        'message': 'Table filtered: no rows',
-                        'data': {
-                            'headers': [str(h)[:30] for h in headers[:3]] if headers else [],
-                            'has_headers': bool(headers)
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 continue
             
             # GENERAL: Filter out trivial/small tables (single-row tables with just links, empty tables, etc.)
@@ -3292,19 +2993,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     link_count = sum(1 for cell in non_empty_cells if re.search(r'\[.*?\]\(.*?\)|https?://', str(cell)))
                     if link_count >= len(non_empty_cells):
                         # This is a trivial link table - skip it
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'D',
-                                'location': 'crawl_desy_simple.py:2035',
-                                'message': 'Table filtered: trivial link table',
-                                'data': {'num_rows': len(rows), 'link_count': link_count, 'num_cols': num_cols},
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         continue
                 # GENERAL: Filter out single-cell tables that are likely broken fragments
                 # Pattern: Single-cell table with just a value (no label, no structure)
@@ -3312,19 +3001,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     single_cell = non_empty_cells[0]
                     # Skip if it's just a number/unit with no label (broken fragment)
                     if re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad)?\s*$', single_cell, re.I):
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'N',
-                                'location': 'crawl_desy_simple.py:2132',
-                                'message': 'Table filtered: single-cell broken fragment',
-                                'data': {'cell_content': single_cell[:50]},
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         continue
                 # GENERAL: Filter out single-cell tables that are likely broken fragments
                 # Pattern: Single-cell table with just a value (no label, no structure)
@@ -3332,37 +3009,13 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     single_cell = non_empty_cells[0]
                     # Skip if it's just a number/unit with no label (broken fragment)
                     if re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad)?\s*$', single_cell, re.I):
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'N',
-                                'location': 'crawl_desy_simple.py:2132',
-                                'message': 'Table filtered: single-cell broken fragment',
-                                'data': {'cell_content': single_cell[:50]},
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         continue
             
             # GENERAL: Filter out malformed tables (too many columns, concatenated data)
             # Pattern: Tables with 10+ columns are likely malformed (concatenated data)
             if rows and len(rows[0]) > 10:
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'E',
-                        'location': 'crawl_desy_simple.py:2040',
-                        'message': 'Table filtered: too many columns',
-                        'data': {'num_cols': len(rows[0])},
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 continue
             
             # Deduplication: Create signature from first few non-empty cells of first row
@@ -3385,78 +3038,19 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                 field_labels_in_sig = len(re.findall(r'\b(e-mail|phone|location|email|tel|telephone):', table_sig, re.I))
                 # Only filter if: (many columns AND field labels) OR (single-column with 3+ field labels)
                 # This allows legitimate 2-column tables where cells contain structured data
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'F',
-                        'location': 'crawl_desy_simple.py:2062',
-                        'message': 'Table signature check',
-                        'data': {
-                            'num_columns': num_columns,
-                            'field_labels_in_sig': field_labels_in_sig,
-                            'table_sig_preview': table_sig[:100]
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 if (num_columns > 10 and field_labels_in_sig >= 3) or (num_columns == 1 and field_labels_in_sig >= 3):
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'F',
-                            'location': 'crawl_desy_simple.py:2063',
-                            'message': 'Table filtered: signature check failed',
-                            'data': {'num_columns': num_columns, 'field_labels_in_sig': field_labels_in_sig},
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     continue
             
             if table_sig and table_sig in seen_table_signatures:
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'G',
-                        'location': 'crawl_desy_simple.py:2066',
-                        'message': 'Table filtered: duplicate signature',
-                        'data': {'table_sig_preview': table_sig[:100]},
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 continue  # Skip duplicate
             
             if table_sig:
                 seen_table_signatures.add(table_sig)
             
-            # #region agent log
-            if any('siemens' in str(h).lower() or 'panchwanee' in str(h).lower() for h in headers[:2] if h):
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'T',
-                        'location': 'crawl_desy_simple.py:2630',
-                        'message': 'Table passed all filters, starting to format',
-                        'data': {
-                            'num_rows': len(rows),
-                            'num_cols': len(rows[0]) if rows else 0,
-                            'has_headers': bool(headers),
-                            'headers': [str(h)[:30] for h in headers[:3]] if headers else [],
-                            'table_sig': table_sig[:100] if table_sig else None
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-            # #endregion
+            
             
             # Format as markdown table
             if headers:
@@ -3486,46 +3080,13 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     if second_header and re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad|Hz|V|A|W|J|kg|g|s|min|h|d|y|°C|K|Pa|bar|atm|psi|N|kgf|lbf|m/s|km/h|mph|rpm|rad/s|deg/s)?\s*$', second_header, re.I):
                         is_label_value_headers = True
                     
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'H',
-                            'location': 'crawl_desy_simple.py:2289',
-                            'message': 'Checking if headers are label-value pairs',
-                            'data': {
-                                'first_header': first_header[:50],
-                                'second_header': second_header[:50],
-                                'is_label_value_headers': is_label_value_headers,
-                                'has_label_word': any(word in first_header.lower() for word in label_words),
-                                'second_is_value': bool(second_header and re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad|Hz|V|A|W|J|kg|g|s|min|h|d|y|°C|K|Pa|bar|atm|psi|N|kgf|lbf|m/s|km/h|mph|rpm|rad/s|deg/s)?\s*$', second_header, re.I))
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                 
                 if is_label_value_headers:
                     # Headers are actually label-value pairs - treat as data rows (no separate header row)
                     # GENERAL: When headers are label-value pairs, they should be treated as data, not headers
                     # Do NOT add a separator row - that would make them look like headers in markdown
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'H',
-                            'location': 'crawl_desy_simple.py:2318',
-                            'message': 'Detected label-value headers, treating as data (no separator)',
-                            'data': {
-                                'first_header': str(headers[0])[:50] if headers else None,
-                                'is_label_value_headers': is_label_value_headers
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     # Add headers as first data row (no separator - they're data, not headers)
                     if headers:
                         # GENERAL: Normalize header content - replace newlines with spaces
@@ -3540,44 +3101,12 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                         if rows and len(rows) > 0:
                             first_row_str = "|".join(str(c).strip().lower() for c in rows[0][:len(headers)])
                             headers_str = "|".join(str(h).strip().lower() for h in headers)
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'R',
-                                'location': 'crawl_desy_simple.py:2350',
-                                'message': 'Checking for duplicate first row',
-                                'data': {
-                                    'first_row_str': first_row_str[:100],
-                                    'headers_str': headers_str[:100],
-                                    'matches': first_row_str == headers_str,
-                                    'num_rows_before': len(rows)
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         if first_row_str == headers_str:
                             rows = rows[1:]  # Skip duplicate first row
                 else:
                     # Normal headers - NOT label-value pairs
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'J',
-                            'location': 'crawl_desy_simple.py:2374',
-                            'message': 'Using normal headers (not label-value)',
-                            'data': {
-                                'first_header': str(headers[0])[:50] if headers else None,
-                                'is_label_value_headers': is_label_value_headers
-                            },
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     if headers:
                         # GENERAL: Normalize header content - replace newlines with spaces
                         # Use unicode-aware regex to handle umlauts and special characters correctly
@@ -3641,27 +3170,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                 first_row_length = sum(len(str(cell)) for cell in first_row)
                 is_likely_data = has_data_patterns or is_label_value_pair or is_timeline_entry or first_row_length > 100
                 
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'M',
-                        'location': 'crawl_desy_simple.py:2226',
-                        'message': 'Checking if first row should be header',
-                        'data': {
-                            'has_data_patterns': has_data_patterns,
-                            'is_label_value_pair': is_label_value_pair,
-                            'is_timeline_entry': is_timeline_entry,
-                            'first_row_length': first_row_length,
-                            'is_likely_data': is_likely_data,
-                            'will_use_as_header': not is_likely_data,
-                            'first_row_preview': first_row_text[:100]
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 
                 if not is_likely_data:
                     # Use first row as header if no headers
@@ -3691,19 +3200,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                 # Pattern: Row with 10+ columns is likely malformed (concatenated data)
                 num_cols = len(row_data)
                 if num_cols > 10:
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'H',
-                            'location': 'crawl_desy_simple.py:2095',
-                            'message': 'Row filtered: too many columns',
-                            'data': {'num_cols': num_cols},
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     continue
                 
                 # Pattern: Only filter single-column rows with field labels, or rows where ALL cells have labels
@@ -3714,19 +3211,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                     if first_cell:
                         field_label_count = len(re.findall(r'\b(E-Mail|Phone|Location|Email|Tel|Telephone):', first_cell, re.I))
                         if field_label_count >= 3:
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'I',
-                                    'location': 'crawl_desy_simple.py:2105',
-                                    'message': 'Row filtered: single column with 3+ field labels',
-                                    'data': {'field_label_count': field_label_count},
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
+                            
                             continue
                 elif num_cols >= 2:
                     # Multi-column: only filter if ALL cells have field labels AND many columns (indicates concatenation)
@@ -3742,19 +3227,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                                 break
                     if all_cells_have_labels and num_cols >= 5:
                         # All cells have labels and 5+ columns = likely concatenated
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'J',
-                                'location': 'crawl_desy_simple.py:2117',
-                                'message': 'Row filtered: all cells have labels and 5+ columns',
-                                'data': {'num_cols': num_cols},
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         continue
                 
                 # GENERAL: Normalize cell content - replace newlines with spaces to prevent broken table rows
@@ -3774,23 +3247,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                         # Check if cell ends with umlaut (likely truncated name)
                         cell_str_stripped = cell_str.strip()
                         if cell_str_stripped and cell_str_stripped[-1] in ['ö', 'ü', 'ä', 'Ö', 'Ü', 'Ä']:
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'O',
-                                    'location': 'crawl_desy_simple.py:3079',
-                                    'message': 'Found first cell ending with umlaut',
-                                    'data': {
-                                        'first_cell': cell_str,
-                                        'row_length': len(row_data),
-                                        'next_cells': [str(row_data[j])[:50] for j in range(1, min(4, len(row_data)))]
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
+                            
                             
                             # Look for a link in the next few cells that might contain the full name
                             for j in range(1, min(4, len(row_data))):
@@ -3799,24 +3256,7 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                                 link_match = re.search(r'\[([^\]]+)\]\(mailto:', next_cell)
                                 if link_match:
                                     full_name = link_match.group(1).strip()
-                                    # #region agent log
-                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                        import json
-                                        f.write(json.dumps({
-                                            'sessionId': 'debug-session',
-                                            'runId': 'run1',
-                                            'hypothesisId': 'P',
-                                            'location': 'crawl_desy_simple.py:3095',
-                                            'message': 'Checking link name match',
-                                            'data': {
-                                                'partial_name': cell_str_stripped,
-                                                'full_name': full_name,
-                                                'starts_with': full_name.lower().startswith(cell_str_stripped.lower()),
-                                                'contains_at_start': cell_str_stripped.lower() in full_name.lower() and full_name.lower().index(cell_str_stripped.lower()) == 0 if cell_str_stripped.lower() in full_name.lower() else False
-                                            },
-                                            'timestamp': int(__import__('time').time() * 1000)
-                                        }) + '\n')
-                                    # #endregion
+                                    
                                     
                                     # Check if full_name starts with the partial name
                                     # Also check if they're similar (partial name is a prefix of full name)
@@ -3825,50 +3265,38 @@ def format_tables_with_headings_as_markdown(dom_ordered_content):
                                          full_name.lower().index(cell_str_stripped.lower()) == 0)):
                                         # Use the full name instead
                                         cell_str = full_name
-                                        # #region agent log
-                                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                            import json
-                                            f.write(json.dumps({
-                                                'sessionId': 'debug-session',
-                                                'runId': 'run1',
-                                                'hypothesisId': 'N',
-                                                'location': 'crawl_desy_simple.py:3115',
-                                                'message': 'Fixed truncated name with umlaut',
-                                                'data': {
-                                                    'original': str(cell),
-                                                    'fixed': cell_str,
-                                                    'source_cell': j
-                                                },
-                                                'timestamp': int(__import__('time').time() * 1000)
-                                            }) + '\n')
-                                        # #endregion
+                                        
                                         break
                     
                     normalized_cells.append(cell_str)
                 markdown_output += "| " + " | ".join(normalized_cells) + " |\n"
                 rows_added += 1
             
-            # #region agent log
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'K',
-                    'location': 'crawl_desy_simple.py:2122',
-                    'message': 'Table formatted successfully',
-                    'data': {'rows_added': rows_added, 'total_rows': len(rows)},
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-            # #endregion
+            
             
             markdown_output += "\n"
         
         elif item['type'] == 'paragraph':
             # Add paragraph text with preserved links
             para_text = item.get('text', '')
-            if para_text and len(para_text.strip()) >= 30:
+            # FIX: Allow shorter paragraphs (15+ chars) - they may be questions or descriptive text after headings
+            if para_text and len(para_text.strip()) >= 15:
                 markdown_output += para_text + "\n\n"
+        
+        elif item['type'] == 'list':
+            # Add list items with preserved links
+            list_items = item.get('items', [])
+            is_ordered = item.get('ordered', False)
+            
+            if list_items:
+                for i, list_item in enumerate(list_items):
+                    if is_ordered:
+                        # Ordered list (1., 2., 3., ...)
+                        markdown_output += f"{i + 1}. {list_item}\n"
+                    else:
+                        # Unordered list (*)
+                        markdown_output += f"  * {list_item}\n"
+                markdown_output += "\n"
         
         elif item['type'] == 'text':
             # Generic text content
@@ -5416,82 +4844,14 @@ async def crawl_site():
                     # Continue with next URL - don't let one failure stop the entire crawl
                     continue
                 
-                # #region agent log
-                result_count = len(results) if isinstance(results, list) else 1
-                result_list = results if isinstance(results, list) else [results]
-                result_urls = [r.url for r in result_list if r and hasattr(r, 'url') and r.url]
                 
-                # Check first result for links extracted
-                first_result = result_list[0] if result_list and result_list[0] else None
-                internal_links = []
-                external_links = []
-                html_links = []
-                links_structure = "unknown"
-                
-                if first_result and hasattr(first_result, 'links') and first_result.links:
-                    # crawl4ai returns links as dict: {"internal": [...], "external": [...]}
-                    if isinstance(first_result.links, dict):
-                        links_structure = "dict"
-                        internal_links = first_result.links.get('internal', [])[:20]
-                        external_links = first_result.links.get('external', [])[:10]
-                    elif isinstance(first_result.links, list):
-                        links_structure = "list"
-                        internal_links = first_result.links[:20]
-                
-                # Also extract links directly from HTML for comparison
-                if first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
-                    try:
-                        soup = BeautifulSoup(first_result.html, 'html.parser')
-                        html_links = [a.get('href', '') for a in soup.find_all('a', href=True) if a.get('href', '').startswith('https://desy.de/')][:30]
-                    except:
-                        pass
-                
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    from urllib.parse import urlparse
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'LINKS',
-                        'location': 'crawl_desy_all_urls.py:4881',
-                        'message': 'Crawl completed - link analysis',
-                        'data': {
-                            'normalized_url': normalized_url,
-                            'result_count': result_count,
-                            'urls_crawled': result_urls[:20],
-                            'links_structure': links_structure,
-                            'internal_links_count': len(internal_links) if internal_links else 0,
-                            'internal_links_sample': internal_links[:10] if internal_links else [],
-                            'external_links_count': len(external_links) if external_links else 0,
-                            'html_links_desy_de': html_links[:15],
-                            'unique_domains': list(set([urlparse(url).netloc for url in result_urls if url]))[:10]
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
                 
                 # FIX: Extract links from full HTML (including nav/footer/header) and crawl them
                 # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
                 # This ensures links like "desy.de/desy_in_leichter_sprache/index_ger.html" are crawled
                 # CRITICAL: Only extract additional URLs if MAX_DEPTH > 0 (depth 0 = seed pages only)
                 additional_urls_to_crawl = []
-                # #region agent log
-                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        'sessionId': 'debug-session',
-                        'runId': 'run1',
-                        'hypothesisId': 'DEPTH_FIX_1',
-                        'location': 'crawl_desy_all_urls.py:5432',
-                        'message': 'First additional URL extraction check',
-                        'data': {
-                            'MAX_DEPTH': MAX_DEPTH,
-                            'will_extract': MAX_DEPTH > 0,
-                            'seed_url': normalized_url
-                        },
-                        'timestamp': int(__import__('time').time() * 1000)
-                    }) + '\n')
-                # #endregion
+                
                 if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
                     try:
                         from urllib.parse import urljoin, urlparse
@@ -5530,22 +4890,7 @@ async def crawl_site():
                         
                         # Crawl additional URLs found in HTML but missed by crawl4ai's link extraction
                         if additional_urls_to_crawl:
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'FIX',
-                                    'location': 'crawl_desy_all_urls.py:4930',
-                                    'message': 'Found additional URLs in HTML (nav/footer/header)',
-                                    'data': {
-                                        'additional_urls_count': len(additional_urls_to_crawl),
-                                        'additional_urls_sample': additional_urls_to_crawl[:10]
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
+                            
                             
                             # Crawl each additional URL individually (they'll be at depth 1)
                             # Limit to reasonable number to avoid excessive crawling
@@ -5693,39 +5038,11 @@ async def crawl_site():
             # IMPORTANT: Only assign depth to URLs that are NOT already in seen_crawled_urls
             # If a URL was already crawled by BFSDeepCrawlStrategy, it already has correct depth
             # CRITICAL: Skip link extraction when MAX_DEPTH == 0 (only seed pages should be crawled)
-            # #region agent log
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'DEPTH_FIX_2',
-                    'location': 'crawl_desy_all_urls.py:5650',
-                    'message': 'Second link extraction loop - checking MAX_DEPTH',
-                    'data': {
-                        'MAX_DEPTH': MAX_DEPTH,
-                        'will_skip': MAX_DEPTH == 0,
-                        'all_results_count': len(all_results)
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-            # #endregion
+            
             for result in all_results:
                 # Guard: Skip link extraction if MAX_DEPTH == 0
                 if MAX_DEPTH == 0:
-                    # #region agent log
-                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            'sessionId': 'debug-session',
-                            'runId': 'run1',
-                            'hypothesisId': 'DEPTH_FIX_2',
-                            'location': 'crawl_desy_all_urls.py:5653',
-                            'message': 'Breaking out of link extraction loop - MAX_DEPTH is 0',
-                            'data': {'MAX_DEPTH': MAX_DEPTH},
-                            'timestamp': int(__import__('time').time() * 1000)
-                        }) + '\n')
-                    # #endregion
+                    
                     break  # Exit loop entirely for depth 0
                 if not result or not hasattr(result, 'html') or not result.html or not BEAUTIFULSOUP_AVAILABLE:
                     continue
@@ -5953,25 +5270,7 @@ async def crawl_site():
             print(f"[INFO] Crawling complete! Found {len(results)} pages")
             print("-" * 60)
             
-            # #region agent log
-            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    'sessionId': 'debug-session',
-                    'runId': 'run1',
-                    'hypothesisId': 'DEPTH_FIX_RESULT',
-                    'location': 'crawl_desy_all_urls.py:5907',
-                    'message': 'Final crawl count',
-                    'data': {
-                        'MAX_DEPTH': MAX_DEPTH,
-                        'total_results': len(results),
-                        'seed_url_count': len(ROOT_URLS),
-                        'expected_for_depth_0': len(ROOT_URLS) if MAX_DEPTH == 0 else 'N/A',
-                        'depth_fix_working': len(results) <= len(ROOT_URLS) * 2 if MAX_DEPTH == 0 else 'N/A'
-                    },
-                    'timestamp': int(__import__('time').time() * 1000)
-                }) + '\n')
-            # #endregion
+            
             
             # ====================================================================
             # STEP 8: Process and Save Each Page
@@ -7088,25 +6387,7 @@ async def crawl_site():
                             # Create header with URL information
                             # This helps identify the source of the content when reading the markdown file
                             url_header = f"# Source URL\n\n{result.url}\n\n"
-                            # #region agent log
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'SOURCEURL_CREATE',
-                                    'location': 'crawl_desy_all_urls.py:7044',
-                                    'message': 'url_header created',
-                                    'data': {
-                                        'url': result.url,
-                                        'url_header_len': len(url_header),
-                                        'has_markdown': bool(markdown_content),
-                                        'has_tables': bool(tables_markdown),
-                                        'tables_first_100': tables_markdown[:100] if tables_markdown else ''
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                            # #endregion
+                            
                         
                         # Remove any existing URL header from markdown_content to avoid duplication
                         if markdown_content:
@@ -7320,25 +6601,7 @@ async def crawl_site():
                         # to preserve DOM order. Remove headings and tables from markdown_content to avoid duplicates.
                         content_to_save = url_header
                         
-                        # #region agent log
-                        if 'heuser' in result.url.lower():
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'H2',
-                                    'location': 'crawl_desy_simple.py:5893',
-                                    'message': 'Content assembly start',
-                                    'data': {
-                                        'has_tables_markdown': bool(tables_markdown),
-                                        'tables_markdown_preview': (tables_markdown or '')[:200],
-                                        'has_markdown_content': bool(markdown_content),
-                                        'markdown_content_preview': (markdown_content or '')[:200]
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                        # #endregion
+                        
                         
                         if tables_markdown:
                             # tables_markdown contains headings and tables in correct DOM order
@@ -7364,24 +6627,7 @@ async def crawl_site():
                                     line = lines[i]
                                     stripped = line.strip()
                                     
-                                    # #region agent log
-                                    if i < 50 and ('|' in stripped or ':' in stripped):  # Log first 50 lines with pipes/colons
-                                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                            import json
-                                            f.write(json.dumps({
-                                                'sessionId': 'debug-session',
-                                                'runId': 'run1',
-                                                'hypothesisId': 'T',
-                                                'location': 'crawl_desy_simple.py:5013',
-                                                'message': 'Processing markdown_content line',
-                                                'data': {
-                                                    'line_num': i,
-                                                    'stripped': stripped[:60],
-                                                    'has_colon_pipe': ':' in stripped and '|' in stripped and not stripped.startswith('|')
-                                                },
-                                                'timestamp': int(__import__('time').time() * 1000)
-                                            }) + '\n')
-                                    # #endregion
+                                    
                                     
                                     # Remove headings that are already in tables_markdown
                                     if stripped.startswith('#'):
@@ -7419,19 +6665,7 @@ async def crawl_site():
                                             re.match(r'^[^|]+:\s*\|', stripped)  # "Label:| Value"
                                         )
                                         if is_broken_fragment:
-                                            # #region agent log
-                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                                import json
-                                                f.write(json.dumps({
-                                                    'sessionId': 'debug-session',
-                                                    'runId': 'run1',
-                                                    'hypothesisId': 'S',
-                                                    'location': 'crawl_desy_simple.py:5031',
-                                                    'message': 'Removed broken label-value fragment',
-                                                    'data': {'fragment': stripped[:80]},
-                                                    'timestamp': int(__import__('time').time() * 1000)
-                                                }) + '\n')
-                                            # #endregion
+                                            
                                             # This is a broken fragment - skip it and any following separator lines
                                             i += 1
                                             # Skip following separator lines (---|---)
@@ -7492,48 +6726,14 @@ async def crawl_site():
                                             table_content = ' '.join(table_lines_to_check[:5]).lower()
                                             
                                             if is_pubdb_ui_table(table_content):
-                                                # #region agent log
-                                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                                    import json
-                                                    f.write(json.dumps({
-                                                        'sessionId': 'debug-session',
-                                                        'runId': 'run1',
-                                                        'hypothesisId': 'PUBDB',
-                                                        'location': 'crawl_desy_simple.py:6195',
-                                                        'message': 'Removed PUBDB UI table from markdown_content',
-                                                        'data': {
-                                                            'table_preview': ' '.join(table_lines_to_check[:2])[:100],
-                                                            'url': result.url if hasattr(result, 'url') else None,
-                                                            'is_pubdb_url': is_pubdb_url(result.url) if hasattr(result, 'url') and result.url else False,
-                                                            'is_pubdb_content': is_pubdb_content(html_content) if html_content else False
-                                                        },
-                                                        'timestamp': int(__import__('time').time() * 1000)
-                                                    }) + '\n')
-                                                # #endregion
+                                                
                                                 # Skip this PUBDB UI table
                                                 i = table_end
                                                 continue
                                         
                                         # For non-PUBDB pages or non-UI tables on PUBDB pages:
                                         # Remove table sections from markdown_content (they're already in tables_markdown)
-                                        # #region agent log
-                                        if hasattr(result, 'url') and result.url and ('pubdb' in result.url.lower() or 'publications' in result.url.lower()):
-                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                                import json
-                                                f.write(json.dumps({
-                                                    'sessionId': 'debug-session',
-                                                    'runId': 'run1',
-                                                    'hypothesisId': 'PUBDB',
-                                                    'location': 'crawl_desy_simple.py:6241',
-                                                    'message': 'Removing table from markdown_content (not UI table, will be in tables_markdown)',
-                                                    'data': {
-                                                        'table_preview': stripped[:100],
-                                                        'is_pubdb_page': _is_pubdb_page(result.url if hasattr(result, 'url') else None, html_content),
-                                                        'is_pubdb_ui_table': False  # This path is for non-UI tables
-                                                    },
-                                                    'timestamp': int(__import__('time').time() * 1000)
-                                                }) + '\n')
-                                        # #endregion
+                                        
                                         
                                         # Find the end of this table section
                                         table_end = i
@@ -7608,43 +6808,13 @@ async def crawl_site():
                             
                             # Add tables_markdown FIRST (contains headings and tables in DOM order)
                             # This preserves the correct DOM order where tables come before other content
-                            # #region agent log
-                            if 'heuser' in result.url.lower():
-                                with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                    import json
-                                    f.write(json.dumps({
-                                        'sessionId': 'debug-session',
-                                        'runId': 'run1',
-                                        'hypothesisId': 'H2',
-                                        'location': 'crawl_desy_simple.py:6095',
-                                        'message': 'Adding tables_markdown FIRST to preserve DOM order',
-                                        'data': {
-                                            'tables_markdown_preview': tables_markdown[:200] if tables_markdown else ''
-                                        },
-                                        'timestamp': int(__import__('time').time() * 1000)
-                                    }) + '\n')
-                            # #endregion
+                            
+                            
                             content_to_save += tables_markdown
                             
                             # Add text_only_content AFTER tables_markdown (for any remaining content not in tables_markdown)
                             if text_only_content:
-                                # #region agent log
-                                if 'heuser' in result.url.lower():
-                                    with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                        import json
-                                        f.write(json.dumps({
-                                            'sessionId': 'debug-session',
-                                            'runId': 'run1',
-                                            'hypothesisId': 'H2',
-                                            'location': 'crawl_desy_simple.py:6092',
-                                            'message': 'Adding text_only_content AFTER tables_markdown',
-                                            'data': {
-                                                'text_only_content_preview': text_only_content[:200],
-                                                'tables_markdown_preview': tables_markdown[:200] if tables_markdown else ''
-                                            },
-                                            'timestamp': int(__import__('time').time() * 1000)
-                                        }) + '\n')
-                                # #endregion
+                                
                                 content_to_save += "\n\n" + text_only_content
                         else:
                             # No DOM-order extraction, use markdown_content as-is
@@ -7689,24 +6859,7 @@ async def crawl_site():
                                     cols = [c.strip() for c in stripped.split('|') if c.strip()]
                                     if len(cols) >= 2:
                                         in_any_table = True
-                                        # #region agent log
-                                        if 'E-Mail' in stripped or 'Phone' in stripped:
-                                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                                import json
-                                                f.write(json.dumps({
-                                                    'sessionId': 'debug-session',
-                                                    'runId': 'run1',
-                                                    'hypothesisId': 'TABLE_DETECT',
-                                                    'location': 'crawl_desy_simple.py:6060',
-                                                    'message': 'Detected table header',
-                                                    'data': {
-                                                        'header': stripped[:100],
-                                                        'cols_count': len(cols),
-                                                        'in_any_table': in_any_table
-                                                    },
-                                                    'timestamp': int(__import__('time').time() * 1000)
-                                                }) + '\n')
-                                        # #endregion
+                                        
                                 
                                 # Reset when we leave the table (empty line or non-table line)
                                 if not stripped or not stripped.startswith('|'):
@@ -7729,28 +6882,7 @@ async def crawl_site():
                                     # Also handle case where it's just || with no space
                                     first_cell_empty = re.match(r'^\|\s*\|', stripped) or stripped.startswith('||')
                                     
-                                    # #region agent log
-                                    if 'andrey' in stripped.lower() or 'anjali' in stripped.lower():
-                                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                            import json
-                                            f.write(json.dumps({
-                                                'sessionId': 'debug-session',
-                                                'runId': 'run1',
-                                                'hypothesisId': 'EMPTY_CELL',
-                                                'location': 'crawl_desy_simple.py:6105',
-                                                'message': 'Checking row for empty first cell',
-                                                'data': {
-                                                    'line': stripped[:150],
-                                                    'line_first_10_chars': stripped[:10],
-                                                    'in_name_table': in_name_table,
-                                                    'in_any_table': in_any_table,
-                                                    'first_cell_empty': bool(first_cell_empty),
-                                                    'regex_match': bool(re.match(r'^\|\s*\|', stripped)),
-                                                    'starts_with_double_pipe': stripped.startswith('||')
-                                                },
-                                                'timestamp': int(__import__('time').time() * 1000)
-                                            }) + '\n')
-                                    # #endregion
+                                    
                                     
                                     if first_cell_empty:
                                         # Look for email link in the row
@@ -7775,28 +6907,7 @@ async def crawl_site():
                                                 
                                                 # Fill if: (1) in table with Name column OR (2) in any table with empty first cell
                                                 if is_name and not has_phone and not name_already_exists and (in_name_table or in_any_table):
-                                                    # #region agent log
-                                                    if 'andrey' in link_text.lower() or 'anjali' in link_text.lower():
-                                                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                                            import json
-                                                            f.write(json.dumps({
-                                                                'sessionId': 'debug-session',
-                                                                'runId': 'run1',
-                                                                'hypothesisId': 'NAME_FILL',
-                                                                'location': 'crawl_desy_simple.py:6103',
-                                                                'message': 'Filling empty name cell',
-                                                                'data': {
-                                                                    'link_text': link_text,
-                                                                    'in_name_table': in_name_table,
-                                                                    'in_any_table': in_any_table,
-                                                                    'is_name': is_name,
-                                                                    'has_phone': has_phone,
-                                                                    'name_already_exists': name_already_exists,
-                                                                    'original_line': stripped[:150]
-                                                                },
-                                                                'timestamp': int(__import__('time').time() * 1000)
-                                                            }) + '\n')
-                                                    # #endregion
+                                                    
                                                     # Replace the empty first cell with the name
                                                     # |  | -> | Name |
                                                     empty_cell_match = first_cell_empty.group(0)
@@ -7807,25 +6918,7 @@ async def crawl_site():
                             return '\n'.join(result_lines)
                         
                         # Apply the fix
-                        # #region agent log
-                        if 'magnetism' in str(result.url).lower():
-                            # Check what content_to_save looks like BEFORE fill_empty_name_columns
-                            lines_preview = content_to_save.split('\n')
-                            andrey_lines = [l for l in lines_preview if 'andrey' in l.lower()]
-                            with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                                import json
-                                f.write(json.dumps({
-                                    'sessionId': 'debug-session',
-                                    'runId': 'run1',
-                                    'hypothesisId': 'BEFORE_FILL',
-                                    'location': 'crawl_desy_simple.py:6109',
-                                    'message': 'Content BEFORE fill_empty_name_columns',
-                                    'data': {
-                                        'andrey_lines': andrey_lines[:2] if andrey_lines else ['Not found']
-                                    },
-                                    'timestamp': int(__import__('time').time() * 1000)
-                                }) + '\n')
-                        # #endregion
+                        
                         content_to_save = fill_empty_name_columns(content_to_save)
                         
                         # FINAL CLEANUP: Remove artifacts and clean up content
@@ -7834,6 +6927,13 @@ async def crawl_site():
                         seen_headings = {}
                         consecutive_empty = 0
                         EARLY_LINE_THRESHOLD = 30  # Lines in first N are likely artifacts
+                        
+                        # FIX: Track which lines came from tables_markdown to avoid filtering them as duplicates
+                        # url_header is 4 lines: "# Source URL", "", URL, ""
+                        url_header_lines = 4
+                        tables_markdown_lines_count = len(tables_markdown.split('\n')) if tables_markdown else 0
+                        tables_markdown_start = url_header_lines
+                        tables_markdown_end = url_header_lines + tables_markdown_lines_count
                         
                         # Common navigation/footer patterns to filter out
                         nav_patterns = [
@@ -7915,10 +7015,13 @@ async def crawl_site():
                                 section_end_idx = len(lines)  # Default to end of file
                                 
                                 # Find next heading or end of file
+                                next_heading_level = None
                                 for j in range(i + 1, len(lines)):
                                     next_stripped = lines[j].strip()
                                     if next_stripped.startswith('#'):
                                         section_end_idx = j
+                                        # Calculate next heading level (number of #)
+                                        next_heading_level = len(next_stripped) - len(next_stripped.lstrip('#'))
                                         break
                                 
                                 # Check if section has any content (not just whitespace, separators, or empty lines)
@@ -7941,7 +7044,23 @@ async def crawl_site():
                                     has_content = True
                                     break
                                 
-                                if not has_content:
+                                # FIX: Don't remove heading if next heading is a subheading (higher level number)
+                                # A heading with only subheadings below it is NOT empty - it's a section container
+                                current_heading_level = len(stripped) - len(stripped.lstrip('#'))
+                                is_subheading = (next_heading_level is not None and next_heading_level > current_heading_level)
+                                
+                                # FIX: Don't remove heading if next heading is at same level (sibling) or parent level
+                                # Sibling/parent headings indicate structure, so content might appear later
+                                is_sibling = (next_heading_level is not None and next_heading_level == current_heading_level)
+                                is_parent = (next_heading_level is not None and next_heading_level < current_heading_level)
+                                has_any_next = (next_heading_level is not None)
+                                
+                                # Only remove if clearly empty with no next heading, or if next is subheading with no content
+                                should_remove = (not has_content and 
+                                               ((not has_any_next) or 
+                                                (has_any_next and is_subheading and not is_sibling and not is_parent)))
+                                
+                                if should_remove:
                                     # Empty section - skip the heading and continue to next iteration
                                     # Don't add this line to cleaned_lines
                                     continue
@@ -8006,7 +7125,10 @@ async def crawl_site():
                             
                             # FIX: Remove text lines that are substrings of table content
                             # This catches role descriptions that appear both as standalone text AND in tables
-                            if tables_markdown and not stripped.startswith(('#', '|', '-', '*')):
+                            # EXCEPTION: Don't filter lines that came FROM tables_markdown (they're legitimate content)
+                            is_from_tables_markdown = tables_markdown_start <= i < tables_markdown_end
+                            
+                            if tables_markdown and not is_from_tables_markdown and not stripped.startswith(('#', '|', '-', '*')):
                                 # Normalize whitespace for comparison (collapse multiple spaces to single)
                                 stripped_normalized = re.sub(r'\s+', ' ', stripped.lower().strip())
                                 # Check if this line appears inside any table cell
@@ -8107,10 +7229,14 @@ async def crawl_site():
                                     # Check if section is empty
                                     section_start = i
                                     section_end = len(cleaned_lines)
-                                    # Find next heading
+                                    next_heading_level_final = None
+                                    # Find next heading and calculate its level
                                     for j in range(i + 1, len(cleaned_lines)):
-                                        if cleaned_lines[j].strip().startswith('#'):
+                                        next_line_stripped = cleaned_lines[j].strip()
+                                        if next_line_stripped.startswith('#'):
                                             section_end = j
+                                            # Calculate next heading level (number of #)
+                                            next_heading_level_final = len(next_line_stripped) - len(next_line_stripped.lstrip('#'))
                                             break
                                     # Check for content
                                     has_content = False
@@ -8118,16 +7244,43 @@ async def crawl_site():
                                         content_line = cleaned_lines[j].strip()
                                         if not content_line:
                                             continue
-                                        if (content_line.startswith('#') or
-                                            content_line == '---' or
+                                        if content_line.startswith('#'):
+                                            continue
+                                        if (content_line == '---' or
                                             re.match(r'^\|[\s\-:]+\|$', content_line) or
                                             content_line == '|---|---' or
                                             re.match(r'^\|[\s\-]+\|$', content_line) or
                                             re.match(r'^[\|\s\-]+$', content_line)):
                                             continue
+                                        # Found actual content (text, table, list, link, etc.)
                                         has_content = True
                                         break
-                                    if not has_content:
+                                    
+                                    # FIX: Don't remove heading if next heading is a subheading (higher level number = lower heading level)
+                                    # A heading with only subheadings below it is NOT empty - it's a section container
+                                    current_heading_level_final = len(stripped) - len(stripped.lstrip('#'))
+                                    is_subheading_final = (next_heading_level_final is not None and next_heading_level_final > current_heading_level_final)
+                                    
+                                    # FIX: Don't remove heading if next heading is at same level (sibling headings)
+                                    # Sibling headings often share content that appears after all of them (e.g., list items from markdown_content)
+                                    # This is common on profile pages where multiple h3 headings are followed by list items
+                                    is_sibling_heading = (next_heading_level_final is not None and next_heading_level_final == current_heading_level_final)
+                                    
+                                    # FIX: Don't remove heading if next heading is at parent level (lower level number = higher heading level)
+                                    # Parent-level headings indicate a section boundary, so content might appear before the parent heading
+                                    is_parent_heading = (next_heading_level_final is not None and next_heading_level_final < current_heading_level_final)
+                                    
+                                    # FIX: If there's any next heading at all, be very lenient - only remove if clearly empty with no content anywhere
+                                    # This handles cases where content from markdown_content appears after all headings
+                                    has_any_next_heading = (next_heading_level_final is not None)
+                                    
+                                    # Only remove heading if it has no content AND no next heading (truly orphaned)
+                                    # OR if it has next heading but no content AND next heading is a subheading (container with subheadings only)
+                                    should_remove = (not has_content and 
+                                                   ((not has_any_next_heading) or 
+                                                    (has_any_next_heading and is_subheading_final and not is_sibling_heading and not is_parent_heading)))
+                                    
+                                    if should_remove:
                                         # Skip empty section
                                         i = section_end
                                         continue
@@ -8166,26 +7319,7 @@ async def crawl_site():
                             print(f"[SKIP] Empty/minimal content page: {final_url or original_url}")
                             continue  # Skip saving this page
                         
-                        # #region agent log
-                        with open('/home/taheri/crawl4ai/.cursor/debug.log', 'a') as f:
-                            import json
-                            first_100 = content_to_save[:100] if content_to_save else ''
-                            has_source_url = '# Source URL' in content_to_save if content_to_save else False
-                            f.write(json.dumps({
-                                'sessionId': 'debug-session',
-                                'runId': 'run1',
-                                'hypothesisId': 'SOURCEURL_FINAL',
-                                'location': 'crawl_desy_all_urls.py:8123',
-                                'message': 'Just before writing file',
-                                'data': {
-                                    'url': result.url,
-                                    'has_source_url_header': has_source_url,
-                                    'first_100_chars': first_100,
-                                    'content_len': len(content_to_save) if content_to_save else 0
-                                },
-                                'timestamp': int(__import__('time').time() * 1000)
-                            }) + '\n')
-                        # #endregion
+                        
                         filename.write_text(content_to_save, encoding="utf-8")
                         
                         # Log extraction results
