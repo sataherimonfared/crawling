@@ -157,6 +157,7 @@ ROOT_URLS = [
     "https://indico.desy.de/event/51547/",
 ]
 
+
 # Directory where crawled pages will be saved as markdown files
 OUTPUT_DIR = Path("desy_crawled")
 OUTPUT_DIR.mkdir(exist_ok=True)  # Create directory if it doesn't exist
