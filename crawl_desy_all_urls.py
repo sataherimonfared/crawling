@@ -995,6 +995,21 @@ def extract_indico_event(html_content, url=None):
     return None
 
 
+def _normalize_url(url):
+    """
+    Normalize URL by removing www. prefix for consistent comparison.
+    
+    Args:
+        url: URL string (may be None)
+        
+    Returns:
+        Normalized URL string or None
+    """
+    if not url:
+        return None
+    return url.replace('://www.', '://')
+
+
 def _normalize_text_spacing(line):
     """
     Normalize text spacing to fix concatenation issues.
@@ -5286,7 +5301,7 @@ async def crawl_site():
             # Track seed URLs (normalized) to ensure they get depth 0
             seed_urls_normalized = set()
             for root_url in ROOT_URLS:
-                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                normalized_seed = _normalize_url(root_url) or root_url
                 seed_urls_normalized.add(normalized_seed)
             
             # PHASE 1 FIX: Load seen_final_urls from checkpoint for crash recovery
@@ -5314,8 +5329,8 @@ async def crawl_site():
             results_processed_in_batch = 0
             
             for result in results:
-                # Skip if result is invalid
-                if not result or not result.url:
+                # Skip if result is invalid or URL is empty/whitespace
+                if not result or not result.url or not str(result.url).strip():
                     continue
                 
                 try:
@@ -5333,8 +5348,8 @@ async def crawl_site():
                         final_url = original_url
                     
                     # Normalize URLs for comparison (remove www)
-                    normalized_original = original_url.replace('://www.', '://') if original_url else None
-                    normalized_final = final_url.replace('://www.', '://') if final_url else None
+                    normalized_original = _normalize_url(original_url)
+                    normalized_final = _normalize_url(final_url)
                     
                     # Skip 404 pages: Check URL pattern and HTTP status code
                     # Don't track or save 404/empty pages
@@ -6388,218 +6403,248 @@ async def crawl_site():
                     # Save to File
                     # ============================================================
                     try:
-                        if markdown_content or tables_markdown or image_refs_markdown:
-                            # Create header with URL information
-                            # This helps identify the source of the content when reading the markdown file
-                            url_header = f"# Source URL\n\n{result.url}\n\n"
-                            
+                        # BUG FIX: Create header unconditionally using final_url (actual URL after redirects)
+                        # Always include source URL header, even if content is empty
+                        # Use final_url if available (actual URL after redirects), otherwise fallback to result.url
+                        # Note: final_url and original_url are defined earlier in this try block (lines 5339-5348)
+                        # We know result.url exists due to check at line 5333
+                        source_url_for_header = None
                         
-                        # Remove any existing URL header from markdown_content to avoid duplication
-                        if markdown_content:
-                            # Remove URL header pattern if it exists
-                            markdown_content = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
-                            # Also remove "URL: <url>" patterns and breadcrumb navigation
-                            markdown_content = re.sub(r'^URL:\s*https?://[^\s]+\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
-                            markdown_content = re.sub(r'^Breadcrumb\s+Navigation\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
-                            # Remove lines that are just the current page URL
-                            markdown_content = re.sub(r'^' + re.escape(result.url) + r'\s*\n?', '', markdown_content, flags=re.MULTILINE)
-                            
-                            # Apply enhanced duplication detection to final markdown
-                            markdown_lines = markdown_content.split('\n')
-                            duplicates = detect_enhanced_repetition(markdown_lines)
-                            
-                            # Remove duplicate lines (keep first occurrence)
-                            deduplicated_lines = []
-                            for i, line in enumerate(markdown_lines):
-                                if i not in duplicates:
-                                    deduplicated_lines.append(line)
-                            
-                            markdown_content = '\n'.join(deduplicated_lines)
-                            
-                            # Clean markdown link syntax (remove whitespace from links)
-                            markdown_content = clean_markdown_links_post_process(markdown_content)
-
-                            # Issue #1/#9: remove empty-text markdown links like [](...)
-                            # Keep images ![](...)
-                            markdown_content = re.sub(r'(?<!\!)\[\]\([^)]+\)', '', markdown_content)
-                            
-                            # GENERAL: Remove navigation patterns (lines with spacer images, navigation links, header images)
-                            # Pattern: Lines containing spacer images, header images, or navigation menu patterns
-                            lines = markdown_content.split('\n')
-                            cleaned_lines = []
-                            for line in lines:
-                                # Skip lines with spacer images (common in navigation)
-                                if re.search(r'spacer\.(gif|png|jpg)', line, re.I):
-                                    continue
-                                # Skip lines with header images (header.jpg, desy.jpg, etc.)
-                                if re.search(r'(header|desy|logo|banner)\.(jpg|png|gif)', line, re.I):
-                                    continue
-                                # Skip lines that are just navigation links with images
-                                if re.search(r'!\[\]\([^)]+(spacer|header|desy|logo|banner)[^)]+\)', line, re.I):
-                                    continue
-                                # Skip navigation text patterns (common UI text)
-                                if re.search(r'(To sort click|navigation|menu|breadcrumb)', line, re.I):
-                                    continue
-                                # Skip lines that are navigation menu items (many links, short text)
-                                link_count = len(re.findall(r'\[([^\]]+)\]\([^)]+\)', line))
-                                if link_count > 3 and len(line.strip()) < 150:
-                                    continue
-                                # Skip lines that are just image markdown with no text (header images)
-                                if re.match(r'^!\[.*?\]\([^)]+\)\s*\|?\s*$', line.strip()):
-                                    continue
-                                cleaned_lines.append(line)
-                            markdown_content = '\n'.join(cleaned_lines)
-                            
-                            # GENERAL: Remove broken table fragments (rows that look like table fragments but aren't part of proper tables)
-                            # Pattern: Lines like "| Name |" or multi-line fragments like "Name\n| Value |" that are not part of proper tables
-                            lines = markdown_content.split('\n')
-                            cleaned_lines = []
-                            i = 0
-                            in_proper_table = False
-                            fragment_start = -1
-                            
-                            while i < len(lines):
-                                line = lines[i]
-                                stripped = line.strip() if line else ""
+                        # Try to use final_url (the actual URL that was crawled, after redirects)
+                        # This is defined earlier in the same try block
+                        try:
+                            # final_url is set at line 5345 or 5348, should be in scope here
+                            if final_url and isinstance(final_url, str) and final_url.strip():
+                                source_url_for_header = final_url.strip()
+                        except NameError:
+                            # final_url not in scope (shouldn't happen, but handle gracefully)
+                            pass
+                        
+                        # Fallback: use result.url (we know this exists and is non-empty due to check at line 5333)
+                        if not source_url_for_header:
+                            if hasattr(result, 'url') and result.url:
+                                url_val = result.url
+                                if isinstance(url_val, str) and url_val.strip():
+                                    source_url_for_header = url_val.strip()
+                                else:
+                                    # Non-string or empty - convert to string
+                                    source_url_for_header = str(url_val) if url_val else "Unknown URL"
+                            else:
+                                source_url_for_header = "Unknown URL"
+                        
+                        # Ensure we never have an empty header
+                        if not source_url_for_header or not source_url_for_header.strip():
+                            source_url_for_header = "Unknown URL"
+                        
+                        url_header = f"# Source URL\n\n{source_url_for_header}\n\n"
+                        
+                        if markdown_content or tables_markdown or image_refs_markdown:
+                            # Remove any existing URL header from markdown_content to avoid duplication
+                            if markdown_content:
+                                # Remove URL header pattern if it exists
+                                markdown_content = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+                                # Also remove "URL: <url>" patterns and breadcrumb navigation
+                                markdown_content = re.sub(r'^URL:\s*https?://[^\s]+\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
+                                markdown_content = re.sub(r'^Breadcrumb\s+Navigation\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
+                                # Remove lines that are just the current page URL
+                                markdown_content = re.sub(r'^' + re.escape(result.url) + r'\s*\n?', '', markdown_content, flags=re.MULTILINE)
                                 
-                                # Detect proper table start (header row with separator)
-                                # Also handle case where separator comes first (missing header)
-                                if re.match(r'^\|[\s\-:]+\|', stripped):
-                                    # Separator without header - check if previous line was a header or if next line has data
-                                    # If previous line is NOT a header, skip this orphaned separator
-                                    prev_is_header = False
-                                    if i > 0:
-                                        prev_stripped = lines[i - 1].strip()
-                                        if prev_stripped and re.match(r'^\|\s*[^|]+\s*\|', prev_stripped):
-                                            prev_is_header = True
+                                # Apply enhanced duplication detection to final markdown
+                                markdown_lines = markdown_content.split('\n')
+                                duplicates = detect_enhanced_repetition(markdown_lines)
+                                
+                                # Remove duplicate lines (keep first occurrence)
+                                deduplicated_lines = []
+                                for i, line in enumerate(markdown_lines):
+                                    if i not in duplicates:
+                                        deduplicated_lines.append(line)
+                                
+                                markdown_content = '\n'.join(deduplicated_lines)
+                                
+                                # Clean markdown link syntax (remove whitespace from links)
+                                markdown_content = clean_markdown_links_post_process(markdown_content)
+
+                                # Issue #1/#9: remove empty-text markdown links like [](...)
+                                # Keep images ![](...)
+                                markdown_content = re.sub(r'(?<!\!)\[\]\([^)]+\)', '', markdown_content)
+                                
+                                # GENERAL: Remove navigation patterns (lines with spacer images, navigation links, header images)
+                                # Pattern: Lines containing spacer images, header images, or navigation menu patterns
+                                lines = markdown_content.split('\n')
+                                cleaned_lines = []
+                                for line in lines:
+                                    # Skip lines with spacer images (common in navigation)
+                                    if re.search(r'spacer\.(gif|png|jpg)', line, re.I):
+                                        continue
+                                    # Skip lines with header images (header.jpg, desy.jpg, etc.)
+                                    if re.search(r'(header|desy|logo|banner)\.(jpg|png|gif)', line, re.I):
+                                        continue
+                                    # Skip lines that are just navigation links with images
+                                    if re.search(r'!\[\]\([^)]+(spacer|header|desy|logo|banner)[^)]+\)', line, re.I):
+                                        continue
+                                    # Skip navigation text patterns (common UI text)
+                                    if re.search(r'(To sort click|navigation|menu|breadcrumb)', line, re.I):
+                                        continue
+                                    # Skip lines that are navigation menu items (many links, short text)
+                                    link_count = len(re.findall(r'\[([^\]]+)\]\([^)]+\)', line))
+                                    if link_count > 3 and len(line.strip()) < 150:
+                                        continue
+                                    # Skip lines that are just image markdown with no text (header images)
+                                    if re.match(r'^!\[.*?\]\([^)]+\)\s*\|?\s*$', line.strip()):
+                                        continue
+                                    cleaned_lines.append(line)
+                                markdown_content = '\n'.join(cleaned_lines)
+                                
+                                # GENERAL: Remove broken table fragments (rows that look like table fragments but aren't part of proper tables)
+                                # Pattern: Lines like "| Name |" or multi-line fragments like "Name\n| Value |" that are not part of proper tables
+                                lines = markdown_content.split('\n')
+                                cleaned_lines = []
+                                i = 0
+                                in_proper_table = False
+                                fragment_start = -1
+                                
+                                while i < len(lines):
+                                    line = lines[i]
+                                    stripped = line.strip() if line else ""
                                     
-                                    if not prev_is_header:
-                                        # Orphaned separator without header - skip it
+                                    # Detect proper table start (header row with separator)
+                                    # Also handle case where separator comes first (missing header)
+                                    if re.match(r'^\|[\s\-:]+\|', stripped):
+                                        # Separator without header - check if previous line was a header or if next line has data
+                                        # If previous line is NOT a header, skip this orphaned separator
+                                        prev_is_header = False
+                                        if i > 0:
+                                            prev_stripped = lines[i - 1].strip()
+                                            if prev_stripped and re.match(r'^\|\s*[^|]+\s*\|', prev_stripped):
+                                                prev_is_header = True
+                                        
+                                        if not prev_is_header:
+                                            # Orphaned separator without header - skip it
+                                            i += 1
+                                            continue
+                                        
+                                        if i + 1 < len(lines):
+                                            next_line = lines[i + 1].strip()
+                                            if re.match(r'^\|\s*[^|]+\s*\|', next_line):
+                                                # This is a separator followed by data - treat as proper table
+                                                in_proper_table = True
+                                                fragment_start = -1
+                                                # Add the separator (it's part of a proper table)
+                                                cleaned_lines.append(line)
+                                                i += 1
+                                                continue
+                                    
+                                    if re.match(r'^\|\s*[^|]+\s*\|', stripped):
+                                        # Check if this is followed by a separator (proper table)
+                                        if i + 1 < len(lines):
+                                            next_line = lines[i + 1].strip()
+                                            if re.match(r'^\|[\s\-:]+\|', next_line):
+                                                in_proper_table = True
+                                                fragment_start = -1
+                                                cleaned_lines.append(line)
+                                                i += 1
+                                                continue
+                                    
+                                    # If we're in a proper table, keep all rows
+                                    if in_proper_table:
+                                        # Check if table ends (empty line or non-table line)
+                                        if not stripped or not re.match(r'^\|', stripped):
+                                            in_proper_table = False
+                                        cleaned_lines.append(line)
                                         i += 1
                                         continue
                                     
-                                    if i + 1 < len(lines):
-                                        next_line = lines[i + 1].strip()
-                                        if re.match(r'^\|\s*[^|]+\s*\|', next_line):
-                                            # This is a separator followed by data - treat as proper table
-                                            in_proper_table = True
-                                            fragment_start = -1
-                                            # Add the separator (it's part of a proper table)
-                                            cleaned_lines.append(line)
-                                            i += 1
+                                    # Detect broken fragment pattern: Name on one line, then table cells on next lines
+                                    # Pattern: "Name\n| Value |\n| Value |" where Name is not a table row
+                                    # Also handles: "Name\n\n|  Value |\n|  Value |" (with empty lines)
+                                    if not re.match(r'^\|', stripped) and stripped and not stripped.startswith('#'):
+                                        # Check if next few lines are table-like rows (single-cell or multi-cell)
+                                        fragment_lines = []
+                                        j = i + 1
+                                        consecutive_empty = 0
+                                        while j < len(lines) and j < i + 15:  # Check up to 15 lines ahead
+                                            next_stripped = lines[j].strip()
+                                            # Match single-cell rows (with or without closing |) or multi-cell table rows
+                                            # Pattern: "|  text  " or "|  text  |" or "| text | text |"
+                                            # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
+                                            if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped) or re.match(r'^\|\s*[^|]+\s*\|', next_stripped):
+                                                fragment_lines.append(j)
+                                                consecutive_empty = 0
+                                                j += 1
+                                            elif not next_stripped:
+                                                consecutive_empty += 1
+                                                # Allow up to 2 empty lines between fragments
+                                                if consecutive_empty <= 2:
+                                                    j += 1
+                                                else:
+                                                    break
+                                            else:
+                                                # Non-table line - check if we have enough fragments to consider this a pattern
+                                                if fragment_lines and len(fragment_lines) >= 2:
+                                                    # This is a name followed by fragments - skip them all
+                                                    break
+                                                else:
+                                                    # Not enough fragments, not a pattern
+                                                    break
+                                        
+                                        # If we found fragment pattern (name + 2+ table rows but no separator), skip them
+                                        if fragment_lines and len(fragment_lines) >= 2:
+                                            # Skip the name line and all fragment lines
+                                            i = fragment_lines[-1] + 1
                                             continue
-                                
-                                if re.match(r'^\|\s*[^|]+\s*\|', stripped):
-                                    # Check if this is followed by a separator (proper table)
-                                    if i + 1 < len(lines):
-                                        next_line = lines[i + 1].strip()
-                                        if re.match(r'^\|[\s\-:]+\|', next_line):
-                                            in_proper_table = True
-                                            fragment_start = -1
-                                            cleaned_lines.append(line)
-                                            i += 1
-                                            continue
-                                
-                                # If we're in a proper table, keep all rows
-                                if in_proper_table:
-                                    # Check if table ends (empty line or non-table line)
-                                    if not stripped or not re.match(r'^\|', stripped):
-                                        in_proper_table = False
-                                    cleaned_lines.append(line)
-                                    i += 1
-                                    continue
-                                
-                                # Detect broken fragment pattern: Name on one line, then table cells on next lines
-                                # Pattern: "Name\n| Value |\n| Value |" where Name is not a table row
-                                # Also handles: "Name\n\n|  Value |\n|  Value |" (with empty lines)
-                                if not re.match(r'^\|', stripped) and stripped and not stripped.startswith('#'):
-                                    # Check if next few lines are table-like rows (single-cell or multi-cell)
-                                    fragment_lines = []
-                                    j = i + 1
-                                    consecutive_empty = 0
-                                    while j < len(lines) and j < i + 15:  # Check up to 15 lines ahead
-                                        next_stripped = lines[j].strip()
-                                        # Match single-cell rows (with or without closing |) or multi-cell table rows
-                                        # Pattern: "|  text  " or "|  text  |" or "| text | text |"
-                                        # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
-                                        if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped) or re.match(r'^\|\s*[^|]+\s*\|', next_stripped):
-                                            fragment_lines.append(j)
-                                            consecutive_empty = 0
-                                            j += 1
-                                        elif not next_stripped:
-                                            consecutive_empty += 1
-                                            # Allow up to 2 empty lines between fragments
-                                            if consecutive_empty <= 2:
+                                    
+                                    # Check if this looks like a broken table fragment (table-like row but not in proper table)
+                                    # Single-cell rows (like "|  Value |" or "|  Krisztian  " or "|  Krisztian  |") are likely fragments
+                                    # Pattern: "|  text  " or "|  text  |" (single cell with spaces, may or may not end with |)
+                                    # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
+                                    # Match: starts with |, has spaces, text, optionally has closing | and spaces
+                                    if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', stripped):
+                                        # Single-cell row - check if it's part of a fragment pattern
+                                        # Look ahead to see if there are more single-cell rows or if previous line was a name
+                                        fragment_count = 0
+                                        j = i + 1
+                                        while j < len(lines) and j < i + 10:
+                                            next_stripped = lines[j].strip()
+                                            if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped):
+                                                fragment_count += 1
+                                                j += 1
+                                            elif not next_stripped:
                                                 j += 1
                                             else:
                                                 break
-                                        else:
-                                            # Non-table line - check if we have enough fragments to consider this a pattern
-                                            if fragment_lines and len(fragment_lines) >= 2:
-                                                # This is a name followed by fragments - skip them all
-                                                break
-                                            else:
-                                                # Not enough fragments, not a pattern
-                                                break
-                                    
-                                    # If we found fragment pattern (name + 2+ table rows but no separator), skip them
-                                    if fragment_lines and len(fragment_lines) >= 2:
-                                        # Skip the name line and all fragment lines
-                                        i = fragment_lines[-1] + 1
-                                        continue
-                                
-                                # Check if this looks like a broken table fragment (table-like row but not in proper table)
-                                # Single-cell rows (like "|  Value |" or "|  Krisztian  " or "|  Krisztian  |") are likely fragments
-                                # Pattern: "|  text  " or "|  text  |" (single cell with spaces, may or may not end with |)
-                                # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
-                                # Match: starts with |, has spaces, text, optionally has closing | and spaces
-                                if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', stripped):
-                                    # Single-cell row - check if it's part of a fragment pattern
-                                    # Look ahead to see if there are more single-cell rows or if previous line was a name
-                                    fragment_count = 0
-                                    j = i + 1
-                                    while j < len(lines) and j < i + 10:
-                                        next_stripped = lines[j].strip()
-                                        if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped):
-                                            fragment_count += 1
-                                            j += 1
-                                        elif not next_stripped:
-                                            j += 1
-                                        else:
-                                            break
-                                    
-                                    # Check if previous line was a name (not a table row, not empty, not a heading)
-                                    # Also check 2 lines back in case there's an empty line
-                                    prev_is_name = False
-                                    for check_idx in [i - 1, i - 2]:
-                                        if check_idx >= 0:
-                                            prev_stripped = lines[check_idx].strip()
-                                            if prev_stripped and not re.match(r'^\|', prev_stripped) and not prev_stripped.startswith('#'):
-                                                prev_is_name = True
-                                                break
-                                    
-                                    # If we have multiple single-cell rows in sequence OR previous line was a name, they're fragments
-                                    if fragment_count >= 1 or prev_is_name:
-                                        # Skip this fragment line
-                                        i += 1
-                                        continue
-                                
-                                # Multi-cell rows that aren't in proper tables
-                                if re.match(r'^\|\s*[^|]+\s*\|', stripped):
-                                    # Check if next line is also a fragment (not a separator or proper table row)
-                                    if i + 1 < len(lines):
-                                        next_line = lines[i + 1].strip()
-                                        # If next line is not a separator (---) and not a proper table row, this is likely a fragment
-                                        if not re.match(r'^\|[\s\-:]+\|', next_line) and not re.match(r'^\|\s*[^|]+\s*\|', next_line):
+                                        
+                                        # Check if previous line was a name (not a table row, not empty, not a heading)
+                                        # Also check 2 lines back in case there's an empty line
+                                        prev_is_name = False
+                                        for check_idx in [i - 1, i - 2]:
+                                            if check_idx >= 0:
+                                                prev_stripped = lines[check_idx].strip()
+                                                if prev_stripped and not re.match(r'^\|', prev_stripped) and not prev_stripped.startswith('#'):
+                                                    prev_is_name = True
+                                                    break
+                                        
+                                        # If we have multiple single-cell rows in sequence OR previous line was a name, they're fragments
+                                        if fragment_count >= 1 or prev_is_name:
                                             # Skip this fragment line
                                             i += 1
                                             continue
+                                    
+                                    # Multi-cell rows that aren't in proper tables
+                                    if re.match(r'^\|\s*[^|]+\s*\|', stripped):
+                                        # Check if next line is also a fragment (not a separator or proper table row)
+                                        if i + 1 < len(lines):
+                                            next_line = lines[i + 1].strip()
+                                            # If next line is not a separator (---) and not a proper table row, this is likely a fragment
+                                            if not re.match(r'^\|[\s\-:]+\|', next_line) and not re.match(r'^\|\s*[^|]+\s*\|', next_line):
+                                                # Skip this fragment line
+                                                i += 1
+                                                continue
+                                    
+                                    cleaned_lines.append(line)
+                                    i += 1
+                                markdown_content = '\n'.join(cleaned_lines)
                                 
-                                cleaned_lines.append(line)
-                                i += 1
-                            markdown_content = '\n'.join(cleaned_lines)
-                            
-                            markdown_content = markdown_content.strip()
+                                markdown_content = markdown_content.strip()
                         
                         # Combine header, markdown content, extracted tables, and images
                         # GENERAL: If we have tables_markdown from DOM-order extraction, use it as primary source
@@ -6940,6 +6985,11 @@ async def crawl_site():
                         tables_markdown_start = url_header_lines
                         tables_markdown_end = url_header_lines + tables_markdown_lines_count
                         
+                        # BUG FIX: Protect URL header from being removed by cleanup logic
+                        # The URL header should always be preserved at the start of the file
+                        url_header_start_idx = 0
+                        url_header_end_idx = url_header_lines
+                        
                         # Common navigation/footer patterns to filter out
                         nav_patterns = [
                             r'data privacy policy', r'declaration of accessibility', r'impressum', r'datenschutz',
@@ -6952,6 +7002,17 @@ async def crawl_site():
                         
                         for i, line in enumerate(lines):
                             stripped = line.strip()
+                            
+                            # BUG FIX: Always preserve URL header lines (first 4 lines: "# Source URL", "", URL, "")
+                            # These lines should never be filtered or removed
+                            if url_header_start_idx <= i < url_header_end_idx:
+                                cleaned_lines.append(line)
+                                # Reset consecutive empty counter when we're in the header
+                                if not stripped:
+                                    consecutive_empty = 1
+                                else:
+                                    consecutive_empty = 0
+                                continue
                             
                             # Remove excessive empty lines (max 2 consecutive)
                             if not stripped:
@@ -7008,7 +7069,12 @@ async def crawl_site():
                             
                             # GENERAL: Remove empty headings (just ## with spaces, no text)
                             # Pattern: "##    " or "##" - headings with no actual text
+                            # BUG FIX: Never remove "# Source URL" heading (it's part of the protected header)
                             if stripped.startswith('#'):
+                                # Protect "# Source URL" heading from removal
+                                if stripped.lower() == '# source url':
+                                    cleaned_lines.append(line)
+                                    continue
                                 heading_text = stripped.lstrip('#').strip()
                                 if not heading_text:
                                     # Empty heading - skip it
@@ -7152,6 +7218,14 @@ async def crawl_site():
                         
                         # Remove leading empty lines and orphaned separators
                         # GENERAL: Remove ALL leading separators until non-separator content is found
+                        # BUG FIX: Never remove the URL header (first 4 lines should always be preserved)
+                        # Skip the first url_header_lines when removing leading content
+                        header_preserved = []
+                        if len(cleaned_lines) >= url_header_lines:
+                            # Preserve URL header
+                            header_preserved = cleaned_lines[:url_header_lines]
+                            cleaned_lines = cleaned_lines[url_header_lines:]
+                        
                         while cleaned_lines:
                             first_stripped = cleaned_lines[0].strip()
                             if not first_stripped:
@@ -7165,6 +7239,9 @@ async def crawl_site():
                                 cleaned_lines.pop(0)
                             else:
                                 break
+                        
+                        # Restore URL header at the beginning
+                        cleaned_lines = header_preserved + cleaned_lines
                         
                         # GENERAL: Ensure "External Links" section has proper header and remove duplicates
                         # Scan for external link pattern (markdown links to external URLs)
