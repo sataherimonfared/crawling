@@ -52,21 +52,13 @@ import asyncio
 import json
 import re
 import logging
+import json
+import time
 from pathlib import Path
 from datetime import datetime
 from html import unescape
 from urllib.parse import urlparse, urljoin
 
-# Ensure the debug-log directory exists.
-# This script contains debug instrumentation that writes to
-# `/home/taheri/crawl4ai/.cursor/debug.log`. On batch nodes / fresh clones,
-# the `.cursor/` folder may not exist, which would raise FileNotFoundError and
-# abort the crawl early (leading to "Files saved: 0 pages").
-try:
-    Path("/home/taheri/crawl4ai/.cursor").mkdir(parents=True, exist_ok=True)
-except Exception:
-    # Debug logging is non-critical; never fail the crawl due to logging setup.
-    pass
 
 # Crawl4AI is a required runtime dependency for this script.
 # Keep the failure mode explicit and actionable (no URL-specific behavior).
@@ -130,12 +122,15 @@ except ImportError:
 
 # List of URLs to crawl
 ROOT_URLS = [
-    "https://www.desy.de",
+    "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+    "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+    "https://www.desy.de/career/contact/index_eng.html",
+    # "https://www.desy.de",
     "https://desy.de/index_ger.html",
     "https://desy.de/index_eng.html",
     "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
     # Events page (should extract events)
-    "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+
     # Member tables
     "https://atlas.desy.de/members/",
     "https://cms.desy.de/cms_members/",
@@ -148,9 +143,8 @@ ROOT_URLS = [
     # publications page
     "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
     # researchers page        
-    "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+    
     "https://ai.desy.de/people/heuser.html",
-    "https://www.desy.de/career/contact/index_eng.html",
     "https://belle2.desy.de/",
     "https://indico.desy.de/event/52144/",
     "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
@@ -1008,6 +1002,53 @@ def _normalize_url(url):
     if not url:
         return None
     return url.replace('://www.', '://')
+
+
+def _is_empty_or_whitespace(text):
+    """
+    Check if text is None, empty, or contains only whitespace.
+    
+    Args:
+        text: Text to check (may be None)
+        
+    Returns:
+        True if text is None, empty, or whitespace-only
+    """
+    return not text or not text.strip()
+
+
+def _is_in_navigation(elem):
+    """
+    Check if a BeautifulSoup element is inside navigation/header/footer/aside containers.
+    
+    Args:
+        elem: BeautifulSoup element to check
+        
+    Returns:
+        True if element is inside nav, header, footer, or aside
+    """
+    if not elem:
+        return False
+    return elem.find_parent(['nav', 'header', 'footer', 'aside']) is not None
+
+
+def _is_separator_line(line):
+    """
+    Check if a line is a markdown separator (---, |---|---, table separators, etc.).
+    
+    Args:
+        line: Line string to check (should be stripped)
+        
+    Returns:
+        True if line is a separator
+    """
+    if not line:
+        return False
+    return (line == '---' or 
+            re.match(r'^\|[\s\-:]+\|$', line) or 
+            line == '|---|---' or
+            re.match(r'^\|[\s\-]+\|$', line) or
+            re.match(r'^[\|\s\-]+$', line))
 
 
 def _normalize_text_spacing(line):
@@ -1968,7 +2009,7 @@ def parse_single_column_table_content(cell_html):
     parsed = parse_single_column_cell_html(cell_html)
     cell_text = parsed['text']
     
-    if not cell_text.strip():
+    if _is_empty_or_whitespace(cell_text):
         return []
     
     # Pattern definitions (universal, not hardcoded keywords)
@@ -2479,8 +2520,7 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
             # Skip paragraphs in navigation areas
             if elem.name == 'p':
                 # Skip if inside nav/header/footer/aside
-                in_nav = elem.find_parent(['nav', 'header', 'footer', 'aside'])
-                if in_nav:
+                if _is_in_navigation(elem):
                     
                     continue
                 # Skip very short paragraphs (likely navigation/labels)
@@ -2519,11 +2559,11 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                 elif prev_elem.name == 'p':
                     # Only count substantial paragraphs
                     text = prev_elem.get_text(strip=True)
-                    if len(text) >= 30 and not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                    if len(text) >= 30 and not _is_in_navigation(prev_elem):
                         position += 1
                 elif prev_elem.name in ['ul', 'ol']:
                     # Count lists (but skip if in navigation areas)
-                    if not prev_elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                    if not _is_in_navigation(prev_elem):
                         position += 1
             
             
@@ -2678,7 +2718,7 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
                 is_ordered = elem.name == 'ol'
                 
                 # Skip lists in navigation areas
-                if elem.find_parent(['nav', 'header', 'footer', 'aside']):
+                if _is_in_navigation(elem):
                     continue
                 
                 for li in elem.find_all('li', recursive=False):  # Only direct children
@@ -3756,7 +3796,7 @@ def get_table_header_normalized(formatted_table):
     Extract and normalize the header from a formatted markdown table.
     Returns normalized header string, or None if no header found.
     """
-    if not formatted_table or not formatted_table.strip():
+    if _is_empty_or_whitespace(formatted_table):
         return None
     lines = formatted_table.split('\n')
     for line in lines:
@@ -4376,6 +4416,7 @@ def clean_markdown_links_post_process(markdown_text):
     return markdown_text
 
 
+
 async def crawl_site():
     """
     Main crawling function that orchestrates the entire crawling process.
@@ -4700,16 +4741,18 @@ async def crawl_site():
             print(f"[CONFIG] Max depth: {MAX_DEPTH}, Concurrent tasks: {CONCURRENT_TASKS}")
             print("-" * 60)
             
+            
             for url_idx, root_url in enumerate(ROOT_URLS, 1):
                 print(f"\n{'='*60}")
                 print(f"[URL {url_idx}/{len(ROOT_URLS)}] Processing: {root_url}")
                 print(f"{'='*60}")
                 
+                
                 # ====================================================================
                 # PHASE 1 FIX: Skip seed URLs already in checkpoint (with depth check)
                 # ====================================================================
                 # Check if this seed URL was already crawled in a previous run
-                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                normalized_seed = _normalize_url(root_url) or root_url
                 checkpoint_seen_urls = checkpoint.get('seen_final_urls', set())
                 checkpoint_seed_urls = checkpoint.get('seed_urls_processed', set())
                 checkpoint_max_depth = checkpoint.get('max_depth_crawled', 0)
@@ -4827,27 +4870,26 @@ async def crawl_site():
                 # - Extracts all links from the page
                 # - Follows those links (up to max_depth)
                 # - Returns a list of all crawled pages
-                # CRITICAL: Normalize URL to remove www. prefix for proper domain matching
-                # crawl4ai treats www.desy.de and desy.de as different domains with include_external=False
-                # Removing www. ensures links to desy.de are followed when starting from www.desy.de
-                normalized_url = root_url.replace('://www.', '://') if root_url else root_url
-                if normalized_url != root_url:
-                    print(f"[INFO] Normalized URL for domain matching: {root_url} -> {normalized_url}")
-
-
-
+                # 
+                # CRITICAL FIX: Use original URL (with www.) for crawling to avoid 404 redirects
+                # The server at desy.de (without www) has bot detection that redirects specific URLs to 404
+                # The server at www.desy.de (with www) works correctly
+                # 
+                # Note: Normalization is still used for domain matching and deduplication in post-processing,
+                # but we must use the original URL for the actual crawl to avoid triggering bot detection
+                crawl_url = root_url  # Use original URL, don't normalize before crawling
                 
                 # First, crawl the page to get initial results
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
                 try:
-                    results = await crawler.arun(normalized_url, config=config)
+                    results = await crawler.arun(crawl_url, config=config)
                 except Exception as e:
                     # Log timeout and other errors for future retries
                     error_msg = str(e)
                     is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                     
                     error_entry = {
-                        'url': normalized_url,
+                        'url': crawl_url,  # Use original crawl URL, not normalized
                         'error': error_msg,
                         'error_type': type(e).__name__,
                         'is_timeout': is_timeout,
@@ -4857,14 +4899,14 @@ async def crawl_site():
                     all_errors.append(error_entry)
                     
                     if is_timeout:
-                        print(f"[TIMEOUT] {normalized_url}: {error_msg[:100]}")
+                        print(f"[TIMEOUT] {crawl_url}: {error_msg[:100]}")
                     else:
-                        print(f"[ERROR] {normalized_url}: {error_msg[:100]}")
+                        print(f"[ERROR] {crawl_url}: {error_msg[:100]}")
                     
                     # Continue with next URL - don't let one failure stop the entire crawl
                     continue
                 
-                
+                first_result = results[0] if results and len(results) > 0 else None
                 
                 # FIX: Extract links from full HTML (including nav/footer/header) and crawl them
                 # crawl4ai's excluded_tags filters links in nav/footer/header, so we manually extract them
@@ -4876,14 +4918,14 @@ async def crawl_site():
                     try:
                         from urllib.parse import urljoin, urlparse
                         soup = BeautifulSoup(first_result.html, 'html.parser')
-                        base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else normalized_url
+                        base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else crawl_url
                         base_domain = urlparse(base_url).netloc.replace('www.', '')
                         
                         # Get URLs already crawled (normalized)
                         seen_urls = set()
                         for url in result_urls:
                             if url:
-                                normalized_seen = url.replace('://www.', '://')
+                                normalized_seen = _normalize_url(url)
                                 seen_urls.add(normalized_seen)
                         
                         # Extract ALL links from HTML (including nav/footer/header)
@@ -4901,12 +4943,15 @@ async def crawl_site():
                             # Only include internal links (same domain, no www mismatch)
                             link_domain = parsed.netloc.replace('www.', '')
                             if link_domain == base_domain:
-                                # Normalize URL (remove www)
-                                normalized_link = absolute_url.replace('://www.', '://')
-                                # Only add if not already crawled
+                                # CRITICAL FIX: Keep original URL for crawling (don't normalize)
+                                # Normalization causes 404 redirects on desy.de (without www)
+                                # Store original URL for crawling, but use normalized for deduplication
+                                normalized_link = _normalize_url(absolute_url)
+                                # Only add if not already crawled (check normalized version for deduplication)
                                 if normalized_link not in seen_urls:
-                                    additional_urls_to_crawl.append(normalized_link)
-                                    seen_urls.add(normalized_link)
+                                    # Store original URL (with www if present) for actual crawling
+                                    additional_urls_to_crawl.append(absolute_url)
+                                    seen_urls.add(normalized_link)  # Use normalized for deduplication
                         
                         # Crawl additional URLs found in HTML but missed by crawl4ai's link extraction
                         if additional_urls_to_crawl:
@@ -5024,9 +5069,9 @@ async def crawl_site():
                     # Check if it's a seed URL
                     source_url = result.url if hasattr(result, 'url') and result.url else None
                     if source_url:
-                        normalized_source = source_url.replace('://www.', '://')
+                        normalized_source = _normalize_url(source_url)
                         for root_url in ROOT_URLS:
-                            normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                            normalized_seed = _normalize_url(root_url) or root_url
                             if normalized_source == normalized_seed:
                                 result_depth = 0
                                 break
@@ -5034,9 +5079,9 @@ async def crawl_site():
                     # If depth is 0 and not seed, default to 1
                     if result_depth == 0 and source_url:
                         is_seed = False
-                        normalized_source = source_url.replace('://www.', '://')
+                        normalized_source = _normalize_url(source_url)
                         for root_url in ROOT_URLS:
-                            normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                            normalized_seed = _normalize_url(root_url) or root_url
                             if normalized_source == normalized_seed:
                                 is_seed = True
                                 break
@@ -5045,11 +5090,11 @@ async def crawl_site():
                     
                     # Store URL and depth
                     if hasattr(result, 'url') and result.url:
-                        normalized = result.url.replace('://www.', '://')
+                        normalized = _normalize_url(result.url)
                         seen_crawled_urls.add(normalized)
                         crawled_urls_with_depth[normalized] = result_depth
                     if hasattr(result, 'redirected_url') and result.redirected_url:
-                        normalized = result.redirected_url.replace('://www.', '://')
+                        normalized = _normalize_url(result.redirected_url)
                         seen_crawled_urls.add(normalized)
                         crawled_urls_with_depth[normalized] = result_depth
             
@@ -5078,9 +5123,9 @@ async def crawl_site():
                     
                     # Check if this is a seed URL
                     if source_url:
-                        normalized_source = source_url.replace('://www.', '://')
+                        normalized_source = _normalize_url(source_url)
                         for root_url in ROOT_URLS:
-                            normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                            normalized_seed = _normalize_url(root_url) or root_url
                             if normalized_source == normalized_seed:
                                 source_depth = 0
                                 break
@@ -5088,12 +5133,12 @@ async def crawl_site():
                     # If source_depth is still 0 and it's not a seed URL, it's likely from a single-page crawl
                     # In that case, we need to determine depth from the result's final URL
                     if source_depth == 0 and source_url:
-                        normalized_source = source_url.replace('://www.', '://')
+                        normalized_source = _normalize_url(source_url)
                         # Check if redirected URL is different
                         if hasattr(result, 'redirected_url') and result.redirected_url:
-                            normalized_final = result.redirected_url.replace('://www.', '://')
+                            normalized_final = _normalize_url(result.redirected_url)
                             for root_url in ROOT_URLS:
-                                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                normalized_seed = _normalize_url(root_url) or root_url
                                 if normalized_final == normalized_seed:
                                     source_depth = 0
                                     break
@@ -5101,7 +5146,7 @@ async def crawl_site():
                         if source_depth == 0:
                             is_seed = False
                             for root_url in ROOT_URLS:
-                                normalized_seed = root_url.replace('://www.', '://') if root_url else root_url
+                                normalized_seed = _normalize_url(root_url) or root_url
                                 if normalized_source == normalized_seed:
                                     is_seed = True
                                     break
@@ -5242,20 +5287,20 @@ async def crawl_site():
                                 if res:
                                     # Store depth mapping for this result
                                     if res.url:
-                                        normalized = res.url.replace('://www.', '://')
+                                        normalized = _normalize_url(res.url)
                                         additional_urls_with_depth[normalized] = assigned_depth
                                     if hasattr(res, 'redirected_url') and res.redirected_url:
-                                        normalized = res.redirected_url.replace('://www.', '://')
+                                        normalized = _normalize_url(res.redirected_url)
                                         additional_urls_with_depth[normalized] = assigned_depth
                             all_results.extend(additional_result)
                         else:
                             if additional_result:
                                 # Store depth mapping for this result
                                 if additional_result.url:
-                                    normalized = additional_result.url.replace('://www.', '://')
+                                    normalized = _normalize_url(additional_result.url)
                                     additional_urls_with_depth[normalized] = assigned_depth
                                 if hasattr(additional_result, 'redirected_url') and additional_result.redirected_url:
-                                    normalized = additional_result.redirected_url.replace('://www.', '://')
+                                    normalized = _normalize_url(additional_result.redirected_url)
                                     additional_urls_with_depth[normalized] = assigned_depth
                             all_results.append(additional_result)
                         additional_count += 1
@@ -5330,7 +5375,7 @@ async def crawl_site():
             
             for result in results:
                 # Skip if result is invalid or URL is empty/whitespace
-                if not result or not result.url or not str(result.url).strip():
+                if not result or not result.url or _is_empty_or_whitespace(str(result.url)):
                     continue
                 
                 try:
@@ -5351,16 +5396,37 @@ async def crawl_site():
                     normalized_original = _normalize_url(original_url)
                     normalized_final = _normalize_url(final_url)
                     
-                    # Skip 404 pages: Check URL pattern and HTTP status code
-                    # Don't track or save 404/empty pages
+                    # Skip 404 pages ONLY if they have no meaningful content
+                    # If Playwright successfully extracted content, use it regardless of redirect URL
+                    # This ensures we don't skip successfully crawled pages just because they redirected
                     is_404_page = False
-                    if normalized_final and '/404/' in normalized_final:
-                        is_404_page = True
-                    elif hasattr(result, 'status_code') and result.status_code == 404:
-                        is_404_page = True
+                    has_content = False
+                    
+                    # Check if result has meaningful content (HTML or markdown)
+                    if hasattr(result, 'html') and result.html and len(result.html.strip()) > 100:
+                        has_content = True
+                    elif hasattr(result, 'markdown'):
+                        markdown_content = None
+                        if hasattr(result.markdown, 'fit_markdown') and result.markdown.fit_markdown:
+                            markdown_content = result.markdown.fit_markdown
+                        elif hasattr(result.markdown, 'raw_markdown') and result.markdown.raw_markdown:
+                            markdown_content = result.markdown.raw_markdown
+                        elif isinstance(result.markdown, str):
+                            markdown_content = result.markdown
+                        
+                        if markdown_content and len(markdown_content.strip()) > 100:
+                            has_content = True
+                    
+                    # Only skip if it's a 404 AND has no content
+                    # If Playwright successfully extracted content, save it regardless of redirect
+                    if not has_content:
+                        if normalized_final and '/404/' in normalized_final:
+                            is_404_page = True
+                        elif hasattr(result, 'status_code') and result.status_code == 404:
+                            is_404_page = True
                     
                     if is_404_page:
-                        continue  # Skip 404 pages - don't track or save them
+                        continue  # Skip 404 pages with no content - don't track or save them
                     
                     # Skip if we've already seen this final URL (deduplication)
                     if normalized_final and normalized_final in seen_final_urls:
@@ -6294,6 +6360,7 @@ async def crawl_site():
                             'error': error_msg,
                             'timestamp': datetime.now().isoformat()
                         })
+                        
                         print(f"[ERROR] {result.url}")
                         print(f"        Reason: {error_msg}")
                         continue
@@ -6402,6 +6469,7 @@ async def crawl_site():
                     # ============================================================
                     # Save to File
                     # ============================================================
+                    
                     try:
                         # BUG FIX: Create header unconditionally using final_url (actual URL after redirects)
                         # Always include source URL header, even if content is empty
@@ -6653,6 +6721,8 @@ async def crawl_site():
                         
                         
                         
+                        
+                        
                         if tables_markdown:
                             # tables_markdown contains headings and tables in correct DOM order
                             # Remove headings and tables from markdown_content to avoid duplicates
@@ -6729,7 +6799,7 @@ async def crawl_site():
                                                         if ':' in lines[i].strip() and '|' in lines[i].strip() and not lines[i].strip().startswith('|'):
                                                             continue  # Continue skipping
                                                     break
-                                                elif next_stripped == '---' or re.match(r'^\|[\s\-:]+\|$', next_stripped):
+                                                elif _is_separator_line(next_stripped):
                                                     i += 1
                                                 elif next_stripped and ':' in next_stripped and '|' in next_stripped and not next_stripped.startswith('|'):
                                                     # Another broken fragment - continue skipping
@@ -6740,7 +6810,7 @@ async def crawl_site():
                                     
                                     # Remove orphaned separator lines (---|---) that aren't part of proper tables
                                     # GENERAL: These appear when broken fragments are removed, leaving orphaned separators
-                                    if stripped == '---' or re.match(r'^\|[\s\-:]+\|$', stripped) or stripped == '|---|---':
+                                    if _is_separator_line(stripped):
                                         # Check if this separator is part of a proper table (has table row before and after)
                                         # Look further back/forward to catch separators that are far from tables
                                         has_table_before = any(re.match(r'^\|', lines[j].strip()) for j in range(max(0, i - 10), i) if lines[j].strip() and not lines[j].strip().startswith('#'))
@@ -6872,6 +6942,8 @@ async def crawl_site():
                                 content_to_save += markdown_content
                         if image_refs_markdown:
                             content_to_save += image_refs_markdown
+                        
+                        
                         
                         # Extract and add external links
                         if not result_is_pdf and hasattr(result, 'html') and result.html:
@@ -7102,11 +7174,7 @@ async def crawl_site():
                                     if not content_line:
                                         continue  # Skip empty lines
                                     # Skip separators (already handled)
-                                    if (content_line == '---' or 
-                                        re.match(r'^\|[\s\-:]+\|$', content_line) or 
-                                        content_line == '|---|---' or
-                                        re.match(r'^\|[\s\-]+\|$', content_line) or
-                                        re.match(r'^[\|\s\-]+$', content_line)):
+                                    if _is_separator_line(content_line):
                                         continue
                                     # Skip if it's another heading (shouldn't happen, but safety check)
                                     if content_line.startswith('#'):
@@ -7140,20 +7208,12 @@ async def crawl_site():
                             # GENERAL: Aggressively remove separators in the first N lines (they're likely artifacts)
                             if i < EARLY_LINE_THRESHOLD:
                                 # Match all separator variants: ---, |---|---, | --- |, |---|, etc.
-                                if (stripped == '---' or 
-                                    re.match(r'^\|[\s\-:]+\|$', stripped) or 
-                                    stripped == '|---|---' or
-                                    re.match(r'^\|[\s\-]+\|$', stripped) or
-                                    re.match(r'^[\|\s\-]+$', stripped)):
+                                if _is_separator_line(stripped):
                                     continue
                             
                             # Remove orphaned table separators without proper table context
                             # GENERAL: These appear when broken fragments are removed, leaving orphaned separators
-                            if (stripped == '---' or 
-                                re.match(r'^\|[\s\-:]+\|$', stripped) or 
-                                stripped == '|---|---' or
-                                re.match(r'^\|[\s\-]+\|$', stripped) or
-                                re.match(r'^[\|\s\-]+$', stripped)):
+                            if _is_separator_line(stripped):
                                 # Check for table header before and row after (skip empty lines and headings)
                                 # Look further back/forward to catch separators that are far from tables
                                 # Require BOTH header row (with at least 2 columns) AND data row (with at least 2 columns)
@@ -7230,11 +7290,7 @@ async def crawl_site():
                             first_stripped = cleaned_lines[0].strip()
                             if not first_stripped:
                                 cleaned_lines.pop(0)
-                            elif (first_stripped == '---' or 
-                                  re.match(r'^\|[\s\-:]+\|$', first_stripped) or 
-                                  first_stripped == '|---|---' or
-                                  re.match(r'^\|[\s\-]+\|$', first_stripped) or
-                                  re.match(r'^[\|\s\-]+$', first_stripped)):
+                            elif _is_separator_line(first_stripped):
                                 # Remove leading orphaned separators
                                 cleaned_lines.pop(0)
                             else:
@@ -7328,11 +7384,7 @@ async def crawl_site():
                                             continue
                                         if content_line.startswith('#'):
                                             continue
-                                        if (content_line == '---' or
-                                            re.match(r'^\|[\s\-:]+\|$', content_line) or
-                                            content_line == '|---|---' or
-                                            re.match(r'^\|[\s\-]+\|$', content_line) or
-                                            re.match(r'^[\|\s\-]+$', content_line)):
+                                        if _is_separator_line(content_line):
                                             continue
                                         # Found actual content (text, table, list, link, etc.)
                                         has_content = True
@@ -7377,10 +7429,13 @@ async def crawl_site():
                         content_without_header = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', content_to_save, flags=re.IGNORECASE | re.MULTILINE)
                         content_meaningful = content_without_header.strip()
                         
+                        
+                        
                         # Skip if content is too short or only contains error messages
                         is_empty_page = False
                         if len(content_meaningful) < 50:  # Very short content
                             is_empty_page = True
+                            
                         elif len(content_meaningful) < 200:
                             # Check if it's just error messages or minimal content
                             error_patterns = [
@@ -7396,10 +7451,14 @@ async def crawl_site():
                                 words = [w for w in content_meaningful.split() if len(w) > 2 and not w.startswith('http') and not w.startswith('#')]
                                 if len(words) < 10:  # Less than 10 meaningful words
                                     is_empty_page = True
+                                    
                         
                         if is_empty_page:
+                            
                             print(f"[SKIP] Empty/minimal content page: {final_url or original_url}")
                             continue  # Skip saving this page
+                        
+                        
                         
                         
                         filename.write_text(content_to_save, encoding="utf-8")
