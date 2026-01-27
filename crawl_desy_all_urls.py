@@ -122,33 +122,33 @@ except ImportError:
 
 # List of URLs to crawl
 ROOT_URLS = [
-    "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
-    "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
-    "https://www.desy.de/career/contact/index_eng.html",
-    # "https://www.desy.de",
+    # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+    # "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
+    # "https://www.desy.de/career/contact/index_eng.html",
+    # # "https://www.desy.de",
     "https://desy.de/index_ger.html",
     "https://desy.de/index_eng.html",
-    "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
-    # Events page (should extract events)
+    # "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
+    # # Events page (should extract events)
 
-    # Member tables
-    "https://atlas.desy.de/members/",
-    "https://cms.desy.de/cms_members/",
-    "https://pitz.desy.de/group_members/",
-    "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
-    "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
-    "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
-    "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
-    "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
-    # publications page
-    "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
-    # researchers page        
+    # # Member tables
+    # "https://atlas.desy.de/members/",
+    # "https://cms.desy.de/cms_members/",
+    # "https://pitz.desy.de/group_members/",
+    # "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
+    # "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
+    # "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
+    # "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
+    # "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
+    # # publications page
+    # "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
+    # # researchers page        
     
-    "https://ai.desy.de/people/heuser.html",
-    "https://belle2.desy.de/",
-    "https://indico.desy.de/event/52144/",
-    "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
-    "https://indico.desy.de/event/51547/",
+    # "https://ai.desy.de/people/heuser.html",
+    # "https://belle2.desy.de/",
+    # "https://indico.desy.de/event/52144/",
+    # "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
+    # "https://indico.desy.de/event/51547/",
 ]
 
 
@@ -193,7 +193,7 @@ CHECKPOINT_FILE = LOG_DIR / "crawl_checkpoint.json"
 USE_CHECKPOINT = False # Change to True to resume from checkpoint
 
 # Checkpoint frequency: save checkpoint every N pages
-CHECKPOINT_FREQUENCY = 100  # Save progress every 100 pages
+CHECKPOINT_FREQUENCY = 1000  # Save progress every 1000 pages (reduces I/O)
 
 # ============================================================================
 # PHASE 1 FIX: Checkpointing Functions for Crash Recovery
@@ -273,13 +273,14 @@ def load_checkpoint() -> dict:
 # Higher = faster but uses more resources
 # Recommended: 3-5 for stable crawling, 10+ for faster (may trigger rate limits)
 # PERFORMANCE: Increased from 15 to 30 to accelerate crawling
-CONCURRENT_TASKS = 30
+# I checked this: python -c "import os; print(os.cpu_count())" 96
+CONCURRENT_TASKS = 60 # 30
 
 # Maximum depth to crawl (how many link levels to follow)
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 0
+MAX_DEPTH = 5
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -300,7 +301,7 @@ HEADLESS = True  # Run browser in headless mode (no visible window)
 # PERFORMANCE: Reduced default timeout to 60s for faster crawling
 # URLs that timeout will be logged in crawl_errors.json with timeout category
 # Future runs can apply extended timeouts only to those specific URLs
-PAGE_TIMEOUT = 60000  # 60 seconds (60000ms) - default timeout for most pages
+PAGE_TIMEOUT = 45000 #(45 seconds) #60000  # 60 seconds (60000ms) - default timeout for most pages
 PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previously timed out
 
 
@@ -372,7 +373,7 @@ class LinkPreservingTableExtraction(TableExtractionStrategy):
         
         # Parse HTML to extract link information
         try:
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, 'lxml')
             html_tables = soup.find_all('table')
             
             # Process each extracted table
@@ -553,7 +554,7 @@ def format_cell_with_links(cell_content, cell_html=None):
     # If HTML is available, extract links and emails from it
     if cell_html and BEAUTIFULSOUP_AVAILABLE:
         try:
-            soup = BeautifulSoup(cell_html, 'html.parser')
+            soup = BeautifulSoup(cell_html, 'lxml')
             cell_text = soup.get_text(strip=True)
             
             # Extract all links (both <a> tags and mailto: links)
@@ -769,7 +770,7 @@ def extract_indico_event(html_content, url=None):
         return None
     
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         lines = []
         
         # === EVENT TITLE ===
@@ -1118,7 +1119,7 @@ def extract_external_links(html_content, current_url):
         return ""
     
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         current_domain = urlparse(current_url).netloc.lower()
         
         # Find all links
@@ -1273,7 +1274,7 @@ def extract_cell_links(cell_element):
     try:
         # Create a working copy to avoid modifying the original
         cell_html = str(cell_element)
-        cell_copy = BeautifulSoup(cell_html, 'html.parser')
+        cell_copy = BeautifulSoup(cell_html, 'lxml')
         cell = cell_copy
         
         # Step 1: Remove all images (decorative, not content)
@@ -1414,7 +1415,7 @@ def enrich_crawl4ai_tables_with_links(result, is_pdf=False):
         html_tables = []
         if not is_pdf and hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
             try:
-                soup = BeautifulSoup(result.html, 'html.parser')
+                soup = BeautifulSoup(result.html, 'lxml')
                 html_tables = soup.find_all('table', recursive=True)
             except Exception:
                 pass
@@ -1827,7 +1828,7 @@ def parse_single_column_cell_html(cell_element):
     try:
         # Create working copy
         cell_html = str(cell_element)
-        cell_copy = BeautifulSoup(cell_html, 'html.parser')
+        cell_copy = BeautifulSoup(cell_html, 'lxml')
         cell = cell_copy
         
         # Remove images (decorative)
@@ -2470,7 +2471,7 @@ def extract_headings_and_tables_in_dom_order(html_content, url=None):
     
     try:
         
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         
         # Find main content area
         main_content_area = (soup.find('main') or 
@@ -3391,7 +3392,7 @@ def inject_links_into_markdown_tables(markdown_content, html_content):
         return markdown_content
     
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        soup = BeautifulSoup(html_content, 'lxml')
         # Only get top-level tables to avoid nested table confusion
         html_tables = [t for t in soup.find_all('table', recursive=True) if t.find_parent('table') is None]
         
@@ -3603,7 +3604,7 @@ def inject_links_into_markdown_tables(markdown_content, html_content):
                     # This handles cases where table structure differs but emails are present
                     if BEAUTIFULSOUP_AVAILABLE:
                         try:
-                            soup = BeautifulSoup(html_content, 'html.parser')
+                            soup = BeautifulSoup(html_content, 'lxml')
                             html_tables_fallback = soup.find_all('table', recursive=True)
                             
                             # Try to find emails in cells that match the markdown table content
@@ -4429,6 +4430,8 @@ async def crawl_site():
     5. Process and save all crawled pages
     6. Log all errors to a JSON file
     """
+    import time
+    start_time = time.time()  # Track start time for elapsed time calculation
     
     # ========================================================================
     # STEP 1: Initialize Error Tracking and Load Checkpoint
@@ -4700,7 +4703,7 @@ async def crawl_site():
             table_score_threshold=1,  # Very low threshold to catch all tables (default is 7, lower = more tables)
             min_rows=1,                # Minimum rows (allow single-row tables)
             min_cols=1,                # Minimum columns (allow single-column tables like card layouts)
-            verbose=True               # Enable logging for debugging
+            verbose=False #True               # Enable logging for debugging
         )
         print(f"[INFO] Link-preserving table extraction enabled for HTML and PDF pages")
     elif TABLE_EXTRACTION_AVAILABLE:
@@ -4709,7 +4712,7 @@ async def crawl_site():
             table_score_threshold=1,  # Very low threshold to catch all tables (default is 7, lower = more tables)
             min_rows=1,                # Minimum rows (allow single-row tables)
             min_cols=1,                # Minimum columns (allow single-column tables like card layouts)
-            verbose=True               # Enable logging for debugging
+            verbose=False #True               # Enable logging for debugging
         )
         print(f"[INFO] Table extraction enabled (links may not be preserved)")
     
@@ -4858,7 +4861,7 @@ async def crawl_site():
                     remove_forms=True if not is_pdf else None,
                     
                     # verbose: Print progress information while crawling
-                    verbose=True
+                    verbose=False  # Disable verbose mode - reduces log by ~33%
                 )
                 
                 # Update crawler's strategy for this URL (if PDF)
@@ -4883,6 +4886,11 @@ async def crawl_site():
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
                 try:
                     results = await crawler.arun(crawl_url, config=config)
+                    
+                    # Track progress (replaces verbose output)
+                    total_urls_crawled = len(results) if isinstance(results, list) else (1 if results else 0)
+                    print(f"[PROGRESS] Crawled {total_urls_crawled} URL(s) from {root_url}")
+                    
                 except Exception as e:
                     # Log timeout and other errors for future retries
                     error_msg = str(e)
@@ -4899,9 +4907,9 @@ async def crawl_site():
                     all_errors.append(error_entry)
                     
                     if is_timeout:
-                        print(f"[TIMEOUT] {crawl_url}: {error_msg[:100]}")
+                        print(f"[TIMEOUT] {crawl_url}")  # Full details in all_errors JSON
                     else:
-                        print(f"[ERROR] {crawl_url}: {error_msg[:100]}")
+                        print(f"[ERROR] {crawl_url}: {error_msg[:50]}")  # Shorter message
                     
                     # Continue with next URL - don't let one failure stop the entire crawl
                     continue
@@ -4917,7 +4925,7 @@ async def crawl_site():
                 if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
                     try:
                         from urllib.parse import urljoin, urlparse
-                        soup = BeautifulSoup(first_result.html, 'html.parser')
+                        soup = BeautifulSoup(first_result.html, 'lxml')
                         base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else crawl_url
                         base_domain = urlparse(base_url).netloc.replace('www.', '')
                         
@@ -5154,7 +5162,7 @@ async def crawl_site():
                                 source_depth = 1
                     
                     from urllib.parse import urljoin, urlparse
-                    soup = BeautifulSoup(result.html, 'html.parser')
+                    soup = BeautifulSoup(result.html, 'lxml')
                     base_url = result.url if hasattr(result, 'url') and result.url else None
                     if not base_url:
                         continue
@@ -5478,7 +5486,7 @@ async def crawl_site():
                     if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
                         try:
                             from urllib.parse import urlparse
-                            soup = BeautifulSoup(result.html, 'html.parser')
+                            soup = BeautifulSoup(result.html, 'lxml')
                             base_url = final_url if final_url else original_url
                             base_domain = urlparse(base_url).netloc.replace('www.', '') if base_url else ''
                             
@@ -5603,7 +5611,7 @@ async def crawl_site():
                                 markdown_mailto_count = len(re.findall(r'\(mailto:[^)]+\)', markdown_content or '', flags=re.IGNORECASE))
                                 if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
                                     try:
-                                        soup_probe = BeautifulSoup(result.html, 'html.parser')
+                                        soup_probe = BeautifulSoup(result.html, 'lxml')
                                         probe_tables = soup_probe.find_all('table', recursive=True)
                                         html_total_table_count = len(probe_tables)
                                         for t in probe_tables:
@@ -5642,7 +5650,7 @@ async def crawl_site():
                                     print(f"[DEBUG] Will check HTML - markdown: {len(markdown_meaningful)} chars, html: {html_length} chars, has_tables: {has_tables_in_markdown}")
                                     if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
                                         try:
-                                            soup = BeautifulSoup(result.html, 'html.parser')
+                                            soup = BeautifulSoup(result.html, 'lxml')
                                             
                                             
                                             # SIMPLIFIED: Always extract from HTML if markdown is empty or too short
@@ -5788,7 +5796,7 @@ async def crawl_site():
                                                                 # Use paragraphs instead
                                                                 print(f"[DEBUG] Using {len(paragraph_texts)} paragraphs for extraction (total {len(para_joined)} chars)")
                                                             # Create a temporary soup with just these paragraphs
-                                                            para_soup = BeautifulSoup('', 'html.parser')
+                                                            para_soup = BeautifulSoup('', 'lxml')
                                                             for para in all_paragraphs:
                                                                 para_text = para.get_text(strip=True)
                                                                 if para_text and (len(para_text) > 20 or re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', para_text)):
@@ -5906,7 +5914,7 @@ async def crawl_site():
                                                     # IMPORTANT: We remove table elements before extracting paragraphs to
                                                     # avoid duplicating table content. BUT headings can sometimes live
                                                     # inside layout tables, so extract headings first, then drop tables.
-                                                    main_content_for_text = BeautifulSoup(str(main_content), 'html.parser')
+                                                    main_content_for_text = BeautifulSoup(str(main_content), 'lxml')
                                                     
                                                     # SIMPLIFIED: Extract all paragraphs and text, preserving structure
                                                     # No complex contact block extraction - just extract everything properly
@@ -7490,6 +7498,26 @@ async def crawl_site():
                         pages_processed_count += 1
                         results_processed_in_batch += 1
                         if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
+                            # 1. Ensure all markdown files are saved (flush file system buffers)
+                            import sys
+                            import os
+                            checkpoint_start_time = time.time()  # Track checkpoint duration
+                            sys.stdout.flush()  # Flush stdout to ensure logs are written
+                            
+                            # Ensure all file writes are committed to disk
+                            # This guarantees that all markdown files written so far are persisted
+                            try:
+                                # Force file system sync for the output directory
+                                if OUTPUT_DIR.exists():
+                                    # Open and sync the directory to ensure all file writes are committed
+                                    dir_fd = os.open(str(OUTPUT_DIR), os.O_RDONLY)
+                                    os.fsync(dir_fd)
+                                    os.close(dir_fd)
+                            except Exception as sync_error:
+                                # Non-critical - log but don't fail
+                                print(f"[WARNING] File sync warning: {sync_error}")
+                            
+                            # 2. Save checkpoint
                             checkpoint_data = {
                                 'seen_final_urls': seen_final_urls,
                                 'all_urls_by_depth': all_urls_by_depth,
@@ -7501,7 +7529,24 @@ async def crawl_site():
                                 'max_depth_crawled': max_depth_crawled,
                                 'seed_urls_processed': seed_urls_processed,
                             }
-                            if save_checkpoint(checkpoint_data):
+                            checkpoint_saved = save_checkpoint(checkpoint_data)
+                            checkpoint_duration = time.time() - checkpoint_start_time  # Calculate duration
+                            
+                            # 3. Log progress summary
+                            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+                            if elapsed_time > 0:
+                                rate = pages_processed_count / elapsed_time
+                                print(f"[SUMMARY] Progress: {pages_processed_count} pages processed, "
+                                      f"{len(all_errors)} errors, {len(seen_final_urls)} unique URLs, "
+                                      f"{rate:.1f} pages/sec, checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
+                                      f"checkpoint+flush: {checkpoint_duration:.2f}s")
+                            else:
+                                print(f"[SUMMARY] Progress: {pages_processed_count} pages processed, "
+                                      f"{len(all_errors)} errors, {len(seen_final_urls)} unique URLs, "
+                                      f"checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
+                                      f"checkpoint+flush: {checkpoint_duration:.2f}s")
+                            
+                            if checkpoint_saved:
                                 print(f"[CHECKPOINT] Saved progress: {pages_processed_count} pages processed")
                     except Exception as file_save_error:
                         # Error during file save - log but continue processing

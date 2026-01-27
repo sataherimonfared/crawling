@@ -3,9 +3,13 @@
 #SBATCH --output=crawler_%j.out
 #SBATCH --error=crawler_%j.err
 #SBATCH --time=24:00:00          # 24 hours max (adjust if needed)
-#SBATCH --mem=8G                 # 8GB RAM (adjust if needed)
-#SBATCH --cpus-per-task=4        # 4 CPUs (adjust if needed)
-#SBATCH --partition=allcpu       # Available: allcpu, allgpu, comcpu, comgpu, etc. (check with: sinfo)
+#SBATCH --mem=24G                 # 24GB RAM (60 tasks × ~300MB each + overhead)
+#SBATCH --cpus-per-task=60       # 60 CPUs to match CONCURRENT_TASKS=60 (one CPU per concurrent browser task)
+#SBATCH --partition=allcpu       # Use CPU partition (not GPU) - check available partitions with: sinfo
+# NOTE: If 60 CPUs not available, reduce both:
+#       - CONCURRENT_TASKS in crawl_desy_all_urls.py (e.g., to 30 or 40)
+#       - --cpus-per-task here to match (e.g., 30 or 40)
+#       - --mem can be reduced proportionally (e.g., 12G for 30 tasks, 16G for 40 tasks)
 
 # ============================================================================
 # SLURM Job Script for DESY Crawler
