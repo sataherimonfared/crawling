@@ -274,13 +274,13 @@ def load_checkpoint() -> dict:
 # Recommended: 3-5 for stable crawling, 10+ for faster (may trigger rate limits)
 # PERFORMANCE: Increased from 15 to 30 to accelerate crawling
 # I checked this: python -c "import os; print(os.cpu_count())" 96
-CONCURRENT_TASKS = 60 # 30
+CONCURRENT_TASKS = 30
 
 # Maximum depth to crawl (how many link levels to follow)
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 5
+MAX_DEPTH = 1
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -1003,6 +1003,40 @@ def _normalize_url(url):
     if not url:
         return None
     return url.replace('://www.', '://')
+
+
+def _is_valid_crawl_url(url):
+    """
+    Strict URL validation for crawl attempts.
+    Only allows HTTPS URLs with non-empty netloc.
+    
+    Args:
+        url: URL string to validate
+        
+    Returns:
+        tuple: (is_valid: bool, skip_reason: str or None)
+    """
+    if not url or not isinstance(url, str):
+        return False, "empty_or_not_string"
+    
+    parsed = urlparse(url)
+    
+    # Only allow HTTPS scheme
+    if parsed.scheme not in ('https',):
+        if parsed.scheme in ('mailto', 'tel', 'javascript', 'data'):
+            return False, f"protocol_{parsed.scheme}"
+        return False, "invalid_scheme"
+    
+    # Require non-empty netloc
+    if not parsed.netloc:
+        # Check if it's a relative URL or fragment
+        if url.startswith('#'):
+            return False, "fragment_only"
+        if not url.startswith('http'):
+            return False, "relative_url"
+        return False, "missing_netloc"
+    
+    return True, None
 
 
 def _is_empty_or_whitespace(text):
@@ -4541,6 +4575,26 @@ async def crawl_site():
             r'.*\.mp4(\?.*)?$',  # MP4 videos
             r'.*\.avi(\?.*)?$',  # AVI videos
             r'.*\.xlsx?(\?.*)?$', # Excel files
+            # SOLUTION 2: Add binary file filters
+            r'.*\.ps(\?.*)?$',   # PostScript files
+            r'.*\.ps\.gz(\?.*)?$', # Compressed PostScript files
+            r'.*\.mov(\?.*)?$',  # QuickTime video files
+            r'.*\.pptx?(\?.*)?$', # PowerPoint presentations (.ppt and .pptx)
+            r'.*\.dotx(\?.*)?$', # Word templates
+            r'.*\.wmv(\?.*)?$',  # Windows Media Video
+            r'.*\.tar\.gz(\?.*)?$', # Compressed tar archives
+            r'.*\.gz(\?.*)?$',   # Generic compressed files (if not already covered)
+            # Filter non-HTTP protocols to prevent "Invalid URL" errors from crawl4ai
+            r'^callto:.*',       # Phone number links (callto:)
+            r'^davs?:.*',        # WebDAV links (davs:://, dav:://)
+            r'^mattermost:.*',   # Mattermost chat links
+            r'^file:.*',         # File protocol
+            r'^ftp:.*',          # FTP protocol
+            r'^tel:.*',          # Telephone protocol
+            r'^mailto:.*',       # Email links (already handled, but filter from crawling)
+            r'^javascript:.*',   # JavaScript pseudo-protocol
+            r'^data:.*',         # Data URIs
+            r'^(?!https?://).*://.*',  # Any protocol that's not http:// or https://
         ]
         
         # Create filter list first
@@ -4882,6 +4936,30 @@ async def crawl_site():
                 # but we must use the original URL for the actual crawl to avoid triggering bot detection
                 crawl_url = root_url  # Use original URL, don't normalize before crawling
                 
+                # Strict URL validation before crawl attempt
+                is_valid, skip_reason = _is_valid_crawl_url(crawl_url)
+                if not is_valid:
+                    # Log skip reason once per type (tracked globally)
+                    if not hasattr(crawl_site, '_logged_skip_reasons'):
+                        crawl_site._logged_skip_reasons = set()
+                    if skip_reason not in crawl_site._logged_skip_reasons:
+                        example_url = crawl_url if crawl_url else "N/A"
+                        reason_map = {
+                            "empty_or_not_string": "Empty or non-string URL",
+                            "protocol_mailto": "mailto: protocol",
+                            "protocol_tel": "tel: protocol",
+                            "protocol_javascript": "javascript: protocol",
+                            "protocol_data": "data: protocol",
+                            "invalid_scheme": "Non-HTTPS scheme",
+                            "fragment_only": "Fragment-only URL (#...)",
+                            "relative_url": "Relative URL",
+                            "missing_netloc": "Missing netloc"
+                        }
+                        reason_msg = reason_map.get(skip_reason, skip_reason)
+                        print(f"[SKIP] Skipping invalid URL (reason: {reason_msg}): {example_url}")
+                        crawl_site._logged_skip_reasons.add(skip_reason)
+                    continue
+                
                 # First, crawl the page to get initial results
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
                 try:
@@ -4946,6 +5024,30 @@ async def crawl_site():
                             
                             # Resolve relative URLs
                             absolute_url = urljoin(base_url, href)
+                            
+                            # Strict URL validation before adding to crawl queue
+                            is_valid, skip_reason = _is_valid_crawl_url(absolute_url)
+                            if not is_valid:
+                                # Log skip reason once per type (tracked globally)
+                                if not hasattr(crawl_site, '_logged_skip_reasons'):
+                                    crawl_site._logged_skip_reasons = set()
+                                if skip_reason not in crawl_site._logged_skip_reasons:
+                                    reason_map = {
+                                        "empty_or_not_string": "Empty or non-string URL",
+                                        "protocol_mailto": "mailto: protocol",
+                                        "protocol_tel": "tel: protocol",
+                                        "protocol_javascript": "javascript: protocol",
+                                        "protocol_data": "data: protocol",
+                                        "invalid_scheme": "Non-HTTPS scheme",
+                                        "fragment_only": "Fragment-only URL (#...)",
+                                        "relative_url": "Relative URL",
+                                        "missing_netloc": "Missing netloc"
+                                    }
+                                    reason_msg = reason_map.get(skip_reason, skip_reason)
+                                    print(f"[SKIP] Skipping invalid URL (reason: {reason_msg}): {absolute_url}")
+                                    crawl_site._logged_skip_reasons.add(skip_reason)
+                                continue
+                            
                             parsed = urlparse(absolute_url)
                             
                             # Only include internal links (same domain, no www mismatch)
