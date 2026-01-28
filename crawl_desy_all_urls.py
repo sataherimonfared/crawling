@@ -301,10 +301,11 @@ HEADLESS = True  # Run browser in headless mode (no visible window)
 # PERFORMANCE: Reduced default timeout to 60s for faster crawling
 # URLs that timeout will be logged in crawl_errors.json with timeout category
 # Future runs can apply extended timeouts only to those specific URLs
-PAGE_TIMEOUT = 45000 #(45 seconds) #60000  # 60 seconds (60000ms) - default timeout for most pages
+PAGE_TIMEOUT = 180000 #60000  # 60 seconds (60000ms) - default timeout for most pages #45000 #(45 seconds) 
 PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previously timed out
 
-
+#6000=>148 errors
+#45000=> 176 errors
 # ============================================================================
 # Custom Table Extraction Strategy that Preserves Links
 # ============================================================================
@@ -5086,41 +5087,23 @@ async def crawl_site():
                             )
                             
                             # ========================================================
-                            # PHASE 1 FIX: Parallel single-page URL crawling
+                            # Single-page URL crawling - let Crawl4AI handle concurrency
                             # ========================================================
                             urls_to_crawl_batch = additional_urls_to_crawl[:100]
-                            print(f"[INFO] Parallel crawling {len(urls_to_crawl_batch)} single-page URLs")
+                            print(f"[INFO] Crawling {len(urls_to_crawl_batch)} single-page URLs (concurrency controlled by Crawl4AI)")
                             
-                            single_page_semaphore = asyncio.Semaphore(CONCURRENT_TASKS)
-                            
-                            async def crawl_single_page_url(url):
-                                """Crawl a single page URL with semaphore-limited concurrency."""
-                                async with single_page_semaphore:
-                                    try:
-                                        result = await crawler.arun(url, config=single_page_config)
-                                        return ('success', url, result)
-                                    except Exception as e:
-                                        return ('error', url, e)
-                            
-                            single_page_results = await asyncio.gather(
-                                *[crawl_single_page_url(url) for url in urls_to_crawl_batch],
-                                return_exceptions=True
-                            )
-                            
-                            for sp_result in single_page_results:
-                                if isinstance(sp_result, Exception):
-                                    continue
-                                
-                                status, additional_url, result_or_error = sp_result
-                                
-                                if status == 'success':
-                                    additional_result = result_or_error
+                            # Process URLs sequentially - Crawl4AI's max_tasks handles internal concurrency
+                            for additional_url in urls_to_crawl_batch:
+                                try:
+                                    additional_result = await crawler.arun(additional_url, config=single_page_config)
+                                    
+                                    # Process successful result
                                     if isinstance(additional_result, list):
                                         all_results.extend(additional_result)
                                     else:
                                         all_results.append(additional_result)
-                                else:
-                                    e = result_or_error
+                                except Exception as e:
+                                    # Log error and continue
                                     error_msg = str(e)
                                     is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                                     
@@ -5353,45 +5336,18 @@ async def crawl_site():
                 )
                 
                 # ================================================================
-                # PHASE 1 FIX: Parallel Additional URL Crawling
+                # Additional URL Crawling - let Crawl4AI handle concurrency
                 # ================================================================
-                # Previously crawled URLs sequentially (one at a time) which was slow.
-                # Now uses asyncio.gather with semaphore for parallel execution.
-                # This reduces crawl time significantly for large URL sets.
-                
+                # Process URLs sequentially - Crawl4AI's max_tasks handles internal concurrency
                 additional_urls_list = list(all_additional_urls.items())[:10000]  # Limit to 10,000
-                print(f"[INFO] Starting parallel crawl of {len(additional_urls_list)} additional URLs (concurrency: {CONCURRENT_TASKS})")
+                print(f"[INFO] Starting crawl of {len(additional_urls_list)} additional URLs (concurrency controlled by Crawl4AI)")
                 
-                # Semaphore limits concurrent tasks to CONCURRENT_TASKS
-                crawl_semaphore = asyncio.Semaphore(CONCURRENT_TASKS)
-                
-                async def crawl_single_additional_url(url_depth_tuple):
-                    """Crawl a single additional URL with semaphore-limited concurrency."""
-                    additional_url, assigned_depth = url_depth_tuple
-                    async with crawl_semaphore:
-                        try:
-                            result = await crawler.arun(additional_url, config=additional_urls_config)
-                            return ('success', additional_url, assigned_depth, result)
-                        except Exception as e:
-                            return ('error', additional_url, assigned_depth, e)
-                
-                # Execute all crawls in parallel (limited by semaphore)
-                parallel_results = await asyncio.gather(
-                    *[crawl_single_additional_url(item) for item in additional_urls_list],
-                    return_exceptions=True
-                )
-                
-                # Process results
                 additional_count = 0
-                for parallel_result in parallel_results:
-                    # Handle exceptions from gather
-                    if isinstance(parallel_result, Exception):
-                        continue
-                    
-                    status, additional_url, assigned_depth, result_or_error = parallel_result
-                    
-                    if status == 'success':
-                        additional_result = result_or_error
+                for additional_url, assigned_depth in additional_urls_list:
+                    try:
+                        additional_result = await crawler.arun(additional_url, config=additional_urls_config)
+                        
+                        # Process successful result
                         if isinstance(additional_result, list):
                             for res in additional_result:
                                 if res:
@@ -5414,9 +5370,8 @@ async def crawl_site():
                                     additional_urls_with_depth[normalized] = assigned_depth
                             all_results.append(additional_result)
                         additional_count += 1
-                    else:
-                        # Error case
-                        e = result_or_error
+                    except Exception as e:
+                        # Log error and continue
                         error_msg = str(e)
                         is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                         
