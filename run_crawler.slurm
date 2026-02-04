@@ -4,7 +4,7 @@
 #SBATCH --error=crawler_%j.err
 #SBATCH --time=24:00:00          # 24 hours max (adjust if needed)
 #SBATCH --mem=24G                 # 24GB RAM (60 tasks × ~300MB each + overhead)
-#SBATCH --cpus-per-task=60       # 60 CPUs to match CONCURRENT_TASKS=60 (one CPU per concurrent browser task)
+#SBATCH --cpus-per-task=20      # 60 CPUs to match CONCURRENT_TASKS=60 (one CPU per concurrent browser task)python -c "import os; print(os.cpu_count())"
 #SBATCH --partition=allcpu       # Use CPU partition (not GPU) - check available partitions with: sinfo
 # NOTE: If 60 CPUs not available, reduce both:
 #       - CONCURRENT_TASKS in crawl_desy_all_urls.py (e.g., to 30 or 40)
@@ -22,10 +22,12 @@
 # - Saves errors to crawler_<jobid>.err
 #
 # HOW TO USE:
-#   1. Submit job: sbatch run_crawler.slurm
-#   2. Check status: squeue -u $USER
-#   3. Monitor output: tail -f crawler_<jobid>.out
-#   4. Cancel if needed: scancel <jobid>
+#   0. squeue -u $USER ==> check if you have any jobs running
+#   1. salloc -p maxgpu --time=10:00:00 ==> ssh ...
+#   2. Submit job: sbatch run_crawler.slurm
+#   3. Check status: squeue -u $USER
+#   4. Monitor output: tail -f crawler_<jobid>.out
+#   5. Cancel if needed: scancel <jobid>
 #
 # ============================================================================
 
