@@ -280,7 +280,7 @@ CONCURRENT_TASKS = 30
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 5
+MAX_DEPTH = 3
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -4495,6 +4495,11 @@ async def crawl_site():
     seed_urls_processed = checkpoint.get('seed_urls_processed', set())  # Track which seed URLs were processed
     max_depth_crawled = checkpoint.get('max_depth_crawled', 0)  # Track the deepest level crawled
     
+    # C1: Initialize so they exist in finally (checkpoint on interrupt/time limit)
+    seen_final_urls = checkpoint.get('seen_final_urls', set())
+    additional_urls_with_depth = checkpoint.get('additional_urls_with_depth', {})
+    crawled_urls_with_depth = checkpoint.get('crawled_urls_with_depth', {})
+    
     # ========================================================================
     # STEP 2: Configure Browser with Anti-Bot and JavaScript Support
     # ========================================================================
@@ -7852,6 +7857,24 @@ async def crawl_site():
                 print(f"\n[ERROR LOG] Saved {len(all_errors)} errors to {ERROR_LOG_FILE}")
         except Exception as log_error:
             print(f"\n[WARNING] Failed to save error log: {log_error}")
+        
+        # C1: Save checkpoint on exit (interrupt/time limit) so a new job can resume
+        try:
+            checkpoint_data = {
+                'seen_final_urls': seen_final_urls,
+                'all_urls_by_depth': all_urls_by_depth,
+                'all_successful_urls': all_successful_urls,
+                'all_errors': all_errors,
+                'additional_urls_with_depth': additional_urls_with_depth,
+                'crawled_urls_with_depth': crawled_urls_with_depth,
+                'pages_processed': pages_processed_count,
+                'max_depth_crawled': max_depth_crawled,
+                'seed_urls_processed': seed_urls_processed,
+            }
+            if save_checkpoint(checkpoint_data):
+                print(f"[CHECKPOINT] Checkpoint saved on exit (interrupt/time limit)")
+        except Exception as cp_error:
+            print(f"\n[WARNING] Failed to save checkpoint on exit: {cp_error}")
 
 
 # ============================================================================
