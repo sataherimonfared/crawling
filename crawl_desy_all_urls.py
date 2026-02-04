@@ -280,7 +280,7 @@ CONCURRENT_TASKS = 30
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 1
+MAX_DEPTH = 5
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -4596,6 +4596,11 @@ async def crawl_site():
             r'^javascript:.*',   # JavaScript pseudo-protocol
             r'^data:.*',         # Data URIs
             r'^(?!https?://).*://.*',  # Any protocol that's not http:// or https://
+            # Malformed / non-HTTP schemes (crawler_19813672.err)
+            r'^https?://\s*$',   # Empty http(s) (http:// with no host)
+            r'^doi:.*',          # DOI links
+            r'^ttps://.*',       # Typo: ttps instead of https
+            r'^urn:.*',          # URN (not HTTP URL)
         ]
         
         # Create filter list first
@@ -4744,6 +4749,14 @@ async def crawl_site():
         
         # Skip links and accessibility (often off-screen)
         '.skip-link', '.sprungnavigation', '[class*="skip"]',
+
+        # Non-HTTP / malformed links (avoid crawl4ai "Invalid URL" warnings; crawler_19813672.err)
+        'a[href^="callto:"]', 'a[href^="tel:"]',
+        'a[href^="davs:"]', 'a[href^="dav:"]',   # WebDAV
+        'a[href^="mattermost:"]',                 # Mattermost chat
+        'a[href^="doi:"]',                        # DOI
+        'a[href^="ttps://"]',                     # Typo: ttps instead of https
+        'a[href^="urn:"]',                        # URN
     ]
     excluded_selector_str = ', '.join(excluded_selectors)
     
