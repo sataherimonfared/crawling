@@ -2,9 +2,9 @@
 #SBATCH --job-name=desy_crawler
 #SBATCH --output=crawler_%j.out
 #SBATCH --error=crawler_%j.err
-#SBATCH --time=24:00:00          # 24 hours max (adjust if needed)
+#SBATCH --time=72:00:00          # 24 hours max (adjust if needed)
 #SBATCH --mem=24G                 # 24GB RAM (60 tasks × ~300MB each + overhead)
-#SBATCH --cpus-per-task=20      # 60 CPUs to match CONCURRENT_TASKS=60 (one CPU per concurrent browser task)python -c "import os; print(os.cpu_count())"
+#SBATCH --cpus-per-task=30      # 60 CPUs to match CONCURRENT_TASKS=60 (one CPU per concurrent browser task)python -c "import os; print(os.cpu_count())"
 #SBATCH --partition=allcpu       # Use CPU partition (not GPU) - check available partitions with: sinfo
 # NOTE: If 60 CPUs not available, reduce both:
 #       - CONCURRENT_TASKS in crawl_desy_all_urls.py (e.g., to 30 or 40)
