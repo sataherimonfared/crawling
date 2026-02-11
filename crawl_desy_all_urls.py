@@ -185,12 +185,18 @@ ERROR_LOG_FILE = LOG_DIR / "crawl_errors.json"
 # Checkpoint file - saves progress to resume crawling later
 CHECKPOINT_FILE = LOG_DIR / "crawl_checkpoint.json"
 
+# Domains to exclude from crawling and scraping at all depth levels (never queue, never fetch)
+# Links to these hosts are skipped; URLs that redirect to these hosts are also skipped (redirect resolved before queuing)
+EXCLUDED_DOMAINS = {'fater.desy.de', 'bib-pubdb1.desy.de'}
+# Resolve redirects before queuing so we never fetch excluded hosts (e.g. desy.de/some/path -> fater.desy.de)
+CHECK_REDIRECTS_TO_EXCLUDED = True
+
 # Debug log file removed - no longer needed
 
 # Checkpoint/Resume settings
 # Set to True to resume from previous checkpoint (skip already processed URLs)
 # Set to False to start fresh (ignore previous checkpoint)
-USE_CHECKPOINT = False # Change to True to resume from checkpoint
+USE_CHECKPOINT = True # False # Change to True to resume from checkpoint
 
 # Checkpoint frequency: save checkpoint every N pages
 CHECKPOINT_FREQUENCY = 1000  # Save progress every 1000 pages (reduces I/O)
@@ -279,8 +285,8 @@ CONCURRENT_TASKS = 30
 # Maximum depth to crawl (how many link levels to follow)
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
-# 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 862 URLs here)
-MAX_DEPTH = 3
+# 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
+MAX_DEPTH = 2
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -1038,6 +1044,34 @@ def _is_valid_crawl_url(url):
         return False, "missing_netloc"
     
     return True, None
+
+
+# Cache for redirect resolution (url -> final host) to avoid repeated HEAD requests; cleared at start of crawl_site
+_redirect_resolution_cache = {}
+
+
+def _resolve_redirect_final_host(url, timeout=5):
+    """
+    Resolve redirects and return the final URL's host (normalized: www. removed).
+    Used to skip queuing URLs that redirect to EXCLUDED_DOMAINS so we never fetch those hosts.
+    Returns None on error or if URL is not http(s); caller may then allow the URL.
+    """
+    if not url or not url.strip().lower().startswith(('http://', 'https://')):
+        return None
+    if url in _redirect_resolution_cache:
+        return _redirect_resolution_cache[url]
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'Mozilla/5.0 (compatible; Crawl4AI-redirect-check/1.0)'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            final = resp.geturl()
+        parsed = urlparse(final)
+        host = (parsed.netloc or '').replace('www.', '')
+        _redirect_resolution_cache[url] = host
+        return host
+    except Exception:
+        _redirect_resolution_cache[url] = None
+        return None
 
 
 def _is_empty_or_whitespace(text):
@@ -4499,6 +4533,14 @@ async def crawl_site():
     seen_final_urls = checkpoint.get('seen_final_urls', set())
     additional_urls_with_depth = checkpoint.get('additional_urls_with_depth', {})
     crawled_urls_with_depth = checkpoint.get('crawled_urls_with_depth', {})
+    # Solution 1 Option A: merged dict (current run overwrites checkpoint) for depth lookup and checkpoint save
+    additional_urls_with_depth_merged = None
+    # Section 4.2: merged "crawled URL -> depth" (current overwrites checkpoint) for depth precedence
+    crawled_urls_with_depth_merged = None
+    
+    # Clear redirect-resolution cache so we re-check redirects each run
+    global _redirect_resolution_cache
+    _redirect_resolution_cache.clear()
     
     # ========================================================================
     # STEP 2: Configure Browser with Anti-Bot and JavaScript Support
@@ -4606,6 +4648,9 @@ async def crawl_site():
             r'^doi:.*',          # DOI links
             r'^ttps://.*',       # Typo: ttps instead of https
             r'^urn:.*',          # URN (not HTTP URL)
+            # Exclude specific DESY subdomains from crawling at all depth levels
+            r'^https?://(www\.)?fater\.desy\.de/.*',
+            r'^https?://(www\.)?bib-pubdb1\.desy\.de/.*',
         ]
         
         # Create filter list first
@@ -4762,6 +4807,10 @@ async def crawl_site():
         'a[href^="doi:"]',                        # DOI
         'a[href^="ttps://"]',                     # Typo: ttps instead of https
         'a[href^="urn:"]',                        # URN
+        # Relative / malformed links (avoid "Invalid URL" / Missing scheme or netloc; crawler_19998527.err)
+        'a[href^="/item/"]',                      # Relative /item/... paths (no scheme/netloc)
+        'a[href^="/login"]',                      # Relative /login (and /login/...)
+        'a[href="http:///"]', 'a[href^="http:///"]',  # Malformed http:/// (empty host)
     ]
     excluded_selector_str = ', '.join(excluded_selectors)
     
@@ -5026,7 +5075,14 @@ async def crawl_site():
                         base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else crawl_url
                         base_domain = urlparse(base_url).netloc.replace('www.', '')
                         
-                        # Get URLs already crawled (normalized)
+                        # Get URLs already crawled in this batch (Section 4.3: fix undefined result_urls)
+                        result_urls = []
+                        for r in (results if isinstance(results, list) else [results]):
+                            if r:
+                                if getattr(r, 'url', None):
+                                    result_urls.append(r.url)
+                                if getattr(r, 'redirected_url', None):
+                                    result_urls.append(r.redirected_url)
                         seen_urls = set()
                         for url in result_urls:
                             if url:
@@ -5072,12 +5128,17 @@ async def crawl_site():
                             # Only include internal links (same domain, no www mismatch)
                             link_domain = parsed.netloc.replace('www.', '')
                             if link_domain == base_domain:
+                                # Never queue links to excluded domains (fater.desy.de, bib-pubdb1.desy.de)
+                                if link_domain in EXCLUDED_DOMAINS:
+                                    continue
                                 # CRITICAL FIX: Keep original URL for crawling (don't normalize)
-                                # Normalization causes 404 redirects on desy.de (without www)
-                                # Store original URL for crawling, but use normalized for deduplication
                                 normalized_link = _normalize_url(absolute_url)
-                                # Only add if not already crawled (check normalized version for deduplication)
                                 if normalized_link not in seen_urls:
+                                    # Resolve redirect: do not queue if URL redirects to excluded host (avoid fetching them)
+                                    if CHECK_REDIRECTS_TO_EXCLUDED:
+                                        final_host = _resolve_redirect_final_host(absolute_url)
+                                        if final_host is not None and final_host in EXCLUDED_DOMAINS:
+                                            continue
                                     # Store original URL (with www if present) for actual crawling
                                     additional_urls_to_crawl.append(absolute_url)
                                     seen_urls.add(normalized_link)  # Use normalized for deduplication
@@ -5285,19 +5346,21 @@ async def crawl_site():
                         parsed = urlparse(absolute_url)
                         
                         # DOMAIN RESTRICTION: Only include *.desy.de subdomains
-                        # Allow all DESY subdomains (www.desy.de, photon-science.desy.de, etc.)
-                        # Exclude external domains (facebook.com, instagram.com, etc.)
+                        # Exclude EXCLUDED_DOMAINS (fater.desy.de, bib-pubdb1.desy.de) at all depth levels
                         link_domain = parsed.netloc.replace('www.', '')
+                        if link_domain in EXCLUDED_DOMAINS:
+                            continue
                         is_desy_domain = link_domain.endswith('.desy.de') or link_domain == 'desy.de'
                         if is_desy_domain:
                             # Normalize URL (remove www)
                             normalized_link = absolute_url.replace('://www.', '://')
-                            # Only add if not already crawled by BFSDeepCrawlStrategy
-                            # URLs already crawled have correct depth from BFS, don't reassign
                             if normalized_link not in seen_crawled_urls:
+                                # Do not queue if this URL redirects to an excluded host (avoid fetching them)
+                                if CHECK_REDIRECTS_TO_EXCLUDED:
+                                    final_host = _resolve_redirect_final_host(absolute_url)
+                                    if final_host is not None and final_host in EXCLUDED_DOMAINS:
+                                        continue
                                 # Track source depth: additional URL should be at source_depth + 1
-                                # But keep minimum depth if URL was found from multiple pages
-                                # Also ensure we don't exceed MAX_DEPTH
                                 assigned_depth = source_depth + 1
                                 if assigned_depth > MAX_DEPTH:
                                     continue  # Skip URLs that would exceed max depth
@@ -5440,11 +5503,13 @@ async def crawl_site():
             
             # additional_urls_with_depth is defined in the link extraction section above
             # It maps normalized URLs to their assigned depths
-            # PHASE 1 FIX: Also load from checkpoint if available
-            if checkpoint.get('additional_urls_with_depth'):
-                additional_urls_with_depth.update(checkpoint.get('additional_urls_with_depth', {}))
-            if checkpoint.get('crawled_urls_with_depth'):
-                crawled_urls_with_depth.update(checkpoint.get('crawled_urls_with_depth', {}))
+            # Solution 1 Option A: Build merged dict so CURRENT RUN overwrites checkpoint (correct merge direction)
+            # This ensures when resuming with higher MAX_DEPTH, re-crawled URLs keep their new depth (e.g. depth 2)
+            additional_urls_with_depth_merged = dict(checkpoint.get('additional_urls_with_depth', {}))
+            additional_urls_with_depth_merged.update(additional_urls_with_depth)
+            # Section 4.1/4.2: Build crawled_urls_with_depth_merged so CURRENT RUN overwrites checkpoint (correct merge direction)
+            crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
+            crawled_urls_with_depth_merged.update(crawled_urls_with_depth)
             
             # Track links found vs URLs crawled for analysis
             links_found_vs_crawled = {
@@ -5516,30 +5581,32 @@ async def crawl_site():
                         continue
                     seen_final_urls.add(normalized_final)
                     
-                    # Determine depth: seed URLs always get depth 0
-                    # Otherwise use depth from result metadata or from additional_urls_with_depth mapping
-                    # IMPORTANT: URLs already crawled by BFSDeepCrawlStrategy should use their original depth
+                    # Determine depth: seed=0; then crawled map; then additional map; then metadata; then fallback 1; cap at MAX_DEPTH (Section 4.1)
                     if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
                         depth = 0  # Seed URL - always depth 0
                     else:
                         depth = 0  # Default
-                        # First check if this is an additional URL with assigned depth (from manual link extraction)
-                        # These are URLs that were NOT crawled by BFSDeepCrawlStrategy
-                        if normalized_final in additional_urls_with_depth:
-                            depth = additional_urls_with_depth[normalized_final]
-                        elif normalized_original in additional_urls_with_depth:
-                            depth = additional_urls_with_depth[normalized_original]
-                        # Otherwise use depth from result metadata (from BFSDeepCrawlStrategy)
-                        # This is the original depth assigned by BFSDeepCrawlStrategy
-                        elif hasattr(result, 'metadata') and result.metadata:
+                        # 1) Already-crawled URL -> depth from merged map (BFS + single-page + additional crawl)
+                        if crawled_urls_with_depth_merged is not None:
+                            if normalized_final in crawled_urls_with_depth_merged:
+                                depth = crawled_urls_with_depth_merged[normalized_final]
+                            elif normalized_original in crawled_urls_with_depth_merged:
+                                depth = crawled_urls_with_depth_merged[normalized_original]
+                        # 2) Additional URL with assigned depth (from manual link extraction)
+                        if depth == 0 and additional_urls_with_depth_merged is not None:
+                            if normalized_final in additional_urls_with_depth_merged:
+                                depth = additional_urls_with_depth_merged[normalized_final]
+                            elif normalized_original in additional_urls_with_depth_merged:
+                                depth = additional_urls_with_depth_merged[normalized_original]
+                        # 3) Result metadata (from BFSDeepCrawlStrategy)
+                        if depth == 0 and hasattr(result, 'metadata') and result.metadata:
                             depth = result.metadata.get('depth', 0)
-                        elif hasattr(result, 'depth'):
+                        elif depth == 0 and hasattr(result, 'depth'):
                             depth = result.depth
-                        # Ensure depth is at least 1 for non-seed URLs
+                        # 4) Fallback: non-seed with no map/metadata -> treat as depth 1 (last resort)
                         if depth == 0:
                             depth = 1
-                        
-                        # Cap depth at MAX_DEPTH (don't exceed configured max depth)
+                        # Cap depth at MAX_DEPTH
                         if depth > MAX_DEPTH:
                             depth = MAX_DEPTH
                     
@@ -5548,13 +5615,13 @@ async def crawl_site():
                     if depth_str not in all_urls_by_depth:
                         all_urls_by_depth[depth_str] = []
                     
-                    # Store URL entry with redirect information
+                    # Store URL entry with redirect information (append only after successful file write - Fix #2)
                     url_entry = {
                         'original_url': original_url,
                         'final_url': final_url,
                         'is_redirect': is_redirect
                     }
-                    all_urls_by_depth[depth_str].append(url_entry)
+                    # Do NOT append here - append only after filename.write_text() so count matches files
                     
                     # Track links found in HTML vs URLs crawled (for analysis)
                     links_in_html = 0
@@ -5965,13 +6032,15 @@ async def crawl_site():
                                                                 link_content = link_full_text
                                                                 # Replace email with markdown link
                                                                 link_content = re.sub(f'\\b{email_pattern}\\b', f'[{email}](mailto:{email})', link_content)
-                                                                # Create a new paragraph element with the contact info
-                                                                # Use the same soup instance to ensure proper integration
-                                                                new_para = main_content.new_tag('p')
-                                                                new_para['class'] = 'contact-block-extracted'
-                                                                new_para.string = link_content
-                                                                # Replace the entire link with the new paragraph
-                                                                link.replace_with(new_para)
+                                                                # Create a new paragraph element (Fix #1: guard main_content.new_tag - can be None after aggressive decomposition)
+                                                                tag_parent = main_content if main_content is not None else soup
+                                                                if tag_parent is not None and hasattr(tag_parent, 'new_tag'):
+                                                                    new_para = tag_parent.new_tag('p')
+                                                                    new_para['class'] = 'contact-block-extracted'
+                                                                    new_para.string = link_content
+                                                                    link.replace_with(new_para)
+                                                                else:
+                                                                    link.replace_with(NavigableString(link_content))
                                                                 continue  # Skip the rest of link processing since we replaced it
                                                             else:
                                                                 # Simple email link - use email as link text if link text is generic
@@ -7546,6 +7615,11 @@ async def crawl_site():
                         
                         filename.write_text(content_to_save, encoding="utf-8")
                         
+                        # Append to all_urls_by_depth only when file was actually written (Fix #2: count matches files)
+                        if depth_str not in all_urls_by_depth:
+                            all_urls_by_depth[depth_str] = []
+                        all_urls_by_depth[depth_str].append(url_entry)
+                        
                         # Log extraction results
                         if hasattr(result, 'tables') and result.tables:
                             page_type = "PDF" if result_is_pdf else "HTML"
@@ -7592,14 +7666,14 @@ async def crawl_site():
                                 # Non-critical - log but don't fail
                                 print(f"[WARNING] File sync warning: {sync_error}")
                             
-                            # 2. Save checkpoint
+                            # 2. Save checkpoint (use merged dict so next resume has correct depths)
                             checkpoint_data = {
                                 'seen_final_urls': seen_final_urls,
                                 'all_urls_by_depth': all_urls_by_depth,
                                 'all_successful_urls': all_successful_urls,
                                 'all_errors': all_errors,
-                                'additional_urls_with_depth': additional_urls_with_depth,
-                                'crawled_urls_with_depth': crawled_urls_with_depth,
+                                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
+                                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
                                 'pages_processed': pages_processed_count,
                                 'max_depth_crawled': max_depth_crawled,
                                 'seed_urls_processed': seed_urls_processed,
@@ -7650,14 +7724,14 @@ async def crawl_site():
             # ====================================================================
             # PHASE 1 FIX: Final checkpoint save and memory cleanup
             # ====================================================================
-            # Save final checkpoint after all results are processed
+            # Save final checkpoint after all results are processed (use merged dict so next resume has correct depths)
             final_checkpoint_data = {
                 'seen_final_urls': seen_final_urls,
                 'all_urls_by_depth': all_urls_by_depth,
                 'all_successful_urls': all_successful_urls,
                 'all_errors': all_errors,
-                'additional_urls_with_depth': additional_urls_with_depth,
-                'crawled_urls_with_depth': crawled_urls_with_depth,
+                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
+                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
                 'pages_processed': pages_processed_count,
                 'max_depth_crawled': max_depth_crawled,
                 'seed_urls_processed': seed_urls_processed,
@@ -7858,15 +7932,15 @@ async def crawl_site():
         except Exception as log_error:
             print(f"\n[WARNING] Failed to save error log: {log_error}")
         
-        # C1: Save checkpoint on exit (interrupt/time limit) so a new job can resume
+        # C1: Save checkpoint on exit (interrupt/time limit) so a new job can resume (use merged dict when available)
         try:
             checkpoint_data = {
                 'seen_final_urls': seen_final_urls,
                 'all_urls_by_depth': all_urls_by_depth,
                 'all_successful_urls': all_successful_urls,
                 'all_errors': all_errors,
-                'additional_urls_with_depth': additional_urls_with_depth,
-                'crawled_urls_with_depth': crawled_urls_with_depth,
+                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
+                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
                 'pages_processed': pages_processed_count,
                 'max_depth_crawled': max_depth_crawled,
                 'seed_urls_processed': seed_urls_processed,
