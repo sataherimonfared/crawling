@@ -286,7 +286,7 @@ CONCURRENT_TASKS = 30
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 2
+MAX_DEPTH = 3
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
