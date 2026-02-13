@@ -999,7 +999,11 @@ def extract_indico_event(html_content, url=None):
 
 def _normalize_url(url):
     """
-    Normalize URL by removing www. prefix for consistent comparison.
+    Normalize URL for consistent comparison and deduplication.
+    - Removes www. prefix
+    - Strips fragment (# and everything after)
+    - Strips trailing slash from path (treats /page and /page/ as same)
+    Query string is preserved.
     
     Args:
         url: URL string (may be None)
@@ -1009,7 +1013,16 @@ def _normalize_url(url):
     """
     if not url:
         return None
-    return url.replace('://www.', '://')
+    s = url.split('#', 1)[0]  # remove fragment
+    s = s.replace('://www.', '://')  # remove www
+    # strip trailing slash from path (before query)
+    if '?' in s:
+        path_part, query_part = s.split('?', 1)
+        path_part = path_part.rstrip('/') or '/'
+        s = path_part + '?' + query_part
+    else:
+        s = s.rstrip('/') or s
+    return s
 
 
 def _is_valid_crawl_url(url):
