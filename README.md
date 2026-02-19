@@ -3,6 +3,11 @@
 A production-grade web crawler for DESY (*.desy.de) built with [Crawl4AI](https://github.com/unclecode/crawl4ai). It uses **async Python**, **BFS crawling**, **checkpoint/resume**, **custom content extraction**, and **SLURM** for long runs. Built to handle 100k+ URLs with controlled memory use and resume after crashes or time limits.
 
 ---
+## to get CRAWL4AI version
+
+python -c "import crawl4ai.__version__ as v; print(v.__version__)"
+
+---
 
 ## Technical Overview
 

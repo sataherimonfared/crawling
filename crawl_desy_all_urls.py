@@ -310,6 +310,10 @@ HEADLESS = True  # Run browser in headless mode (no visible window)
 PAGE_TIMEOUT = 180000 #60000  # 60 seconds (60000ms) - default timeout for most pages #45000 #(45 seconds) 
 PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previously timed out
 
+# Force consistent language for UI strings (prevents Indico language drift)
+FORCE_LOCALE = "en-US"
+ACCEPT_LANGUAGE_HEADER = "en-US,en;q=0.9"
+
 #6000=>148 errors
 #45000=> 176 errors
 # ============================================================================
@@ -1087,6 +1091,22 @@ def _resolve_redirect_final_host(url, timeout=5):
         return None
 
 
+def _normalize_domain(netloc):
+    """Return the host portion normalized (lowercased, no www., no port)."""
+    if not netloc:
+        return ""
+    host = netloc.lower().split(':', 1)[0].strip()
+    if host.startswith('www.'):
+        host = host[4:]
+    return host
+
+
+def _is_desy_domain(netloc):
+    """Return True if the normalized host is desy.de or a subdomain thereof."""
+    host = _normalize_domain(netloc)
+    return host == 'desy.de' or host.endswith('.desy.de')
+
+
 def _is_empty_or_whitespace(text):
     """
     Check if text is None, empty, or contains only whitespace.
@@ -1202,7 +1222,7 @@ def extract_external_links(html_content, current_url):
     
     try:
         soup = BeautifulSoup(html_content, 'lxml')
-        current_domain = urlparse(current_url).netloc.lower()
+        current_domain = _normalize_domain(urlparse(current_url).netloc)
         
         # Find all links
         links = soup.find_all('a', href=True)
@@ -1226,7 +1246,7 @@ def extract_external_links(html_content, current_url):
             # Make absolute URL
             absolute_url = urljoin(current_url, href)
             parsed = urlparse(absolute_url)
-            link_domain = parsed.netloc.lower()
+            link_domain = _normalize_domain(parsed.netloc)
             
             # Check if external (different domain)
             if link_domain and link_domain != current_domain:
@@ -4994,6 +5014,9 @@ async def crawl_site():
                     # remove_forms: Remove all form elements (cookie consent, search forms)
                     # Cookie consent forms are common noise in web scraping
                     remove_forms=True if not is_pdf else None,
+
+                    # Force language/locale for consistent UI strings
+                    locale=FORCE_LOCALE,
                     
                     # verbose: Print progress information while crawling
                     verbose=False  # Disable verbose mode - reduces log by ~33%
@@ -5086,7 +5109,7 @@ async def crawl_site():
                         from urllib.parse import urljoin, urlparse
                         soup = BeautifulSoup(first_result.html, 'lxml')
                         base_url = first_result.url if hasattr(first_result, 'url') and first_result.url else crawl_url
-                        base_domain = urlparse(base_url).netloc.replace('www.', '')
+                        base_domain = _normalize_domain(urlparse(base_url).netloc)
                         
                         # Get URLs already crawled in this batch (Section 4.3: fix undefined result_urls)
                         result_urls = []
@@ -5139,7 +5162,7 @@ async def crawl_site():
                             parsed = urlparse(absolute_url)
                             
                             # Only include internal links (same domain, no www mismatch)
-                            link_domain = parsed.netloc.replace('www.', '')
+                            link_domain = _normalize_domain(parsed.netloc)
                             if link_domain == base_domain:
                                 # Never queue links to excluded domains (fater.desy.de, bib-pubdb1.desy.de)
                                 if link_domain in EXCLUDED_DOMAINS:
@@ -5174,6 +5197,7 @@ async def crawl_site():
                                 excluded_selector=excluded_selector_str if not is_pdf else None,
                                 word_count_threshold=5 if not is_pdf else None,
                                 remove_forms=True if not is_pdf else None,
+                                locale=FORCE_LOCALE,
                                 verbose=True
                                 # NOTE: No deep_crawl_strategy - this ensures single page crawl only
                             )
@@ -5344,7 +5368,7 @@ async def crawl_site():
                     if not base_url:
                         continue
                     
-                    base_domain = urlparse(base_url).netloc.replace('www.', '')
+                    base_domain = _normalize_domain(urlparse(base_url).netloc)
                     
                     # Extract ALL links from HTML (including nav/footer/header)
                     all_links = soup.find_all('a', href=True)
@@ -5360,33 +5384,33 @@ async def crawl_site():
                         
                         # DOMAIN RESTRICTION: Only include *.desy.de subdomains
                         # Exclude EXCLUDED_DOMAINS (fater.desy.de, bib-pubdb1.desy.de) at all depth levels
-                        link_domain = parsed.netloc.replace('www.', '')
+                        link_domain = _normalize_domain(parsed.netloc)
                         if link_domain in EXCLUDED_DOMAINS:
                             continue
-                        is_desy_domain = link_domain.endswith('.desy.de') or link_domain == 'desy.de'
-                        if is_desy_domain:
-                            # Normalize URL (remove www)
-                            normalized_link = absolute_url.replace('://www.', '://')
-                            if normalized_link not in seen_crawled_urls:
-                                # Do not queue if this URL redirects to an excluded host (avoid fetching them)
-                                if CHECK_REDIRECTS_TO_EXCLUDED:
-                                    final_host = _resolve_redirect_final_host(absolute_url)
-                                    if final_host is not None and final_host in EXCLUDED_DOMAINS:
-                                        continue
-                                # Track source depth: additional URL should be at source_depth + 1
-                                assigned_depth = source_depth + 1
-                                if assigned_depth > MAX_DEPTH:
-                                    continue  # Skip URLs that would exceed max depth
-                                
-                                if normalized_link not in all_additional_urls:
-                                    all_additional_urls[normalized_link] = assigned_depth
-                                else:
-                                    # Keep minimum depth (closest to seed) - but don't go below source_depth + 1
-                                    all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
+                        if not _is_desy_domain(link_domain):
+                            continue
+                        # Normalize URL (remove www)
+                        normalized_link = absolute_url.replace('://www.', '://')
+                        if normalized_link not in seen_crawled_urls:
+                            # Do not queue if this URL redirects to an excluded host (avoid fetching them)
+                            if CHECK_REDIRECTS_TO_EXCLUDED:
+                                final_host = _resolve_redirect_final_host(absolute_url)
+                                if final_host is not None and final_host in EXCLUDED_DOMAINS:
+                                    continue
+                            # Track source depth: additional URL should be at source_depth + 1
+                            assigned_depth = source_depth + 1
+                            if assigned_depth > MAX_DEPTH:
+                                continue  # Skip URLs that would exceed max depth
+                            
+                            if normalized_link not in all_additional_urls:
+                                all_additional_urls[normalized_link] = assigned_depth
                             else:
-                                # URL was already crawled - use its original depth from BFSDeepCrawlStrategy
-                                # Don't add to all_additional_urls, it will use its original depth
-                                pass
+                                # Keep minimum depth (closest to seed) - but don't go below source_depth + 1
+                                all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
+                        else:
+                            # URL was already crawled - use its original depth from BFSDeepCrawlStrategy
+                            # Don't add to all_additional_urls, it will use its original depth
+                            pass
                 except Exception as e:
                     # Log but continue
                     pass
@@ -5426,6 +5450,7 @@ async def crawl_site():
                     excluded_selector=excluded_selector_str,
                     word_count_threshold=5,
                     remove_forms=True,
+                    locale=FORCE_LOCALE,
                     verbose=True
                 )
                 
@@ -5643,7 +5668,7 @@ async def crawl_site():
                             from urllib.parse import urlparse
                             soup = BeautifulSoup(result.html, 'lxml')
                             base_url = final_url if final_url else original_url
-                            base_domain = urlparse(base_url).netloc.replace('www.', '') if base_url else ''
+                            base_domain = _normalize_domain(urlparse(base_url).netloc) if base_url else ''
                             
                             # Count all internal links in HTML
                             all_links = soup.find_all('a', href=True)
@@ -5655,7 +5680,7 @@ async def crawl_site():
                                 from urllib.parse import urljoin
                                 absolute_url = urljoin(base_url, href) if base_url else href
                                 parsed = urlparse(absolute_url)
-                                link_domain = parsed.netloc.replace('www.', '')
+                                link_domain = _normalize_domain(parsed.netloc)
                                 
                                 # Count internal links only
                                 if link_domain == base_domain:
