@@ -6011,7 +6011,13 @@ async def crawl_site():
                 
                 # GROUP 4 FILTER: Check if URL is a duplicate due to query parameter variations
                 # This checks BEFORE crawling to prevent wasted bandwidth (unlike ContentHash post-crawl)
-                if should_skip_query_param_duplicate(crawl_url, seen_normalized_urls):
+                # FIX 6.5.1 (Run 18 regression): Exempt seed URLs from GROUP 4 filter.
+                # Seed URLs must ALWAYS get full BFS traversal, even if they were seen as
+                # navigation links during an earlier seed's crawl. Without this exemption,
+                # the English homepage (index_eng.html) was skipped because it was discovered
+                # as a nav link from index_ger.html and added to seen_normalized_urls.
+                is_seed_url = crawl_url in ROOT_URLS or any(_normalize_url(crawl_url) == _normalize_url(seed) for seed in ROOT_URLS)
+                if not is_seed_url and should_skip_query_param_duplicate(crawl_url, seen_normalized_urls):
                     print(f'[GROUP 4 FILTER] Skipping query-param duplicate URL: {crawl_url}')
                     group4_skipped_count += 1
                     duplicate_urls.add(crawl_url)
@@ -6428,42 +6434,40 @@ async def crawl_site():
                 )
                 
                 # ================================================================
-                # Additional URL Crawling - PARALLEL with arun_many
+                # Additional URL Crawling - SEQUENTIAL with arun() for BFS results
                 # ================================================================
+                # REVERTED from arun_many (Run 19 regression fix):
+                # arun_many() does NOT return BFS sub-results - only top-level pages.
+                # With deep_crawl_strategy, arun() returns ALL pages discovered via BFS
+                # (could be hundreds per URL), but arun_many() loses these results.
+                # Evidence: Run 19 had 34,900 COMPLETE operations but only 769 in all_results.
                 additional_urls_list = list(all_additional_urls.items())[:10000]  # Limit to 10,000
-                print(f"[INFO] Starting crawl of {len(additional_urls_list)} additional URLs with arun_many (parallel)")
+                print(f"[INFO] Starting crawl of {len(additional_urls_list)} additional URLs (sequential with BFS)")
                 
-                if additional_urls_list:
-                    # Build url->depth mapping for post-crawl depth assignment
-                    url_to_depth_map = {url: depth for url, depth in additional_urls_list}
-                    urls_only = [url for url, _ in additional_urls_list]
-                    
+                additional_count = 0
+                for additional_url, assigned_depth in additional_urls_list:
                     try:
-                        # PERFORMANCE FIX: Use arun_many for parallel batch crawling
-                        batch_results = await crawler.arun_many(urls_only, config=additional_urls_config)
+                        # Use sequential arun() to capture ALL BFS-discovered pages
+                        additional_result = await crawler.arun(additional_url, config=additional_urls_config)
                         
-                        additional_count = 0
-                        for additional_result in batch_results:
-                            if isinstance(additional_result, list):
-                                for res in additional_result:
-                                    if res:
-                                        # Look up depth from original URL or result URL
-                                        result_url = getattr(res, 'url', None)
-                                        normalized_result = _normalize_url(result_url) if result_url else None
-                                        assigned_depth = url_to_depth_map.get(normalized_result, url_to_depth_map.get(result_url, 1))
-                                        
-                                        # Store depth mapping for this result
-                                        if normalized_result:
-                                            additional_urls_with_depth[normalized_result] = assigned_depth
-                                        if hasattr(res, 'redirected_url') and res.redirected_url:
-                                            normalized = _normalize_url(res.redirected_url)
-                                            additional_urls_with_depth[normalized] = assigned_depth
-                                all_results.extend(additional_result)
-                                additional_count += 1
-                            elif additional_result:
+                        if isinstance(additional_result, list):
+                            for res in additional_result:
+                                if res:
+                                    # Look up depth from original URL or result URL
+                                    result_url = getattr(res, 'url', None)
+                                    normalized_result = _normalize_url(result_url) if result_url else None
+                                    
+                                    # Store depth mapping for this result
+                                    if normalized_result:
+                                        additional_urls_with_depth[normalized_result] = assigned_depth
+                                    if hasattr(res, 'redirected_url') and res.redirected_url:
+                                        normalized = _normalize_url(res.redirected_url)
+                                        additional_urls_with_depth[normalized] = assigned_depth
+                            all_results.extend(additional_result)
+                        else:
+                            if additional_result:
                                 result_url = getattr(additional_result, 'url', None)
                                 normalized_result = _normalize_url(result_url) if result_url else None
-                                assigned_depth = url_to_depth_map.get(normalized_result, url_to_depth_map.get(result_url, 1))
                                 
                                 # Store depth mapping for this result
                                 if normalized_result:
@@ -6471,25 +6475,27 @@ async def crawl_site():
                                 if hasattr(additional_result, 'redirected_url') and additional_result.redirected_url:
                                     normalized = _normalize_url(additional_result.redirected_url)
                                     additional_urls_with_depth[normalized] = assigned_depth
-                                all_results.append(additional_result)
-                                additional_count += 1
-                        
-                        print(f"[INFO] Crawled {additional_count} additional URLs from HTML links (parallel with arun_many)")
+                            all_results.append(additional_result)
+                        additional_count += 1
                     except Exception as e:
-                        # Fallback: log batch error
+                        # Log error and continue to next URL
                         error_msg = str(e)
                         is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
                         
                         error_entry = {
-                            'url': 'batch_crawl_all_additional_urls',
+                            'url': additional_url,
                             'error': error_msg,
                             'error_type': type(e).__name__,
                             'is_timeout': is_timeout,
                             'timestamp': datetime.now().isoformat(),
-                            'note': 'Batch crawl of additional URLs failed'
+                            'note': 'Error during additional URL crawl'
                         }
                         all_errors.append(error_entry)
-                        print(f"[ERROR] Batch crawl failed: {error_msg[:200]}")
+                        
+                        if is_timeout:
+                            print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
+                
+                print(f"[INFO] Crawled {additional_count} additional URLs from HTML links (sequential with BFS)")
             
             # ====================================================================
             # STEP 8: Process All Results
