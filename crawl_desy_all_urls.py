@@ -224,12 +224,12 @@ ROOT_URLS = [
 
 
 # Directory where crawled pages will be saved as markdown files
-OUTPUT_DIR = Path("desy_crawled")
-OUTPUT_DIR.mkdir(exist_ok=True)  # Create directory if it doesn't exist
+OUTPUT_DIR = Path("desy_crawled/23")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
 #LOG_DIR = Path("/data/dust/group/it/ReferenceData/log")
-LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/log")
+LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/23/log")
 
 
 try:
@@ -488,7 +488,7 @@ CONCURRENT_TASKS = 10
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 2
+MAX_DEPTH = 3
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -5291,6 +5291,29 @@ async def crawl_site():
             # Error-prone domains
             r'^https?://(www\.)?old\.desy\.de/.*',
             r'^https?://(www\.)?legacy\.desy\.de/.*',
+
+            # ====================================================================
+            # FIX (Problem 6 & 7): GROUP 3b — RSS/FEED PAGES AND LOGOFF URLS (PRE-CRAWL)
+            # ====================================================================
+            # RSS/Atom endpoint URLs and logoff action URLs produce no useful prose content.
+            # Block them at BFS link-queue stage so they are never fetched.
+            r'.*/rss(/|$|\?)',             # /rss, /rss/, /rss? — RSS feed endpoints
+            r'.*/feed(/|$|\?)',            # /feed, /feed/, /feed? — generic feed endpoints
+            r'.*[?&]logoff',               # ?logoff=t and similar session-termination params
+            r'.*/logout(/|$|\?)',          # /logout, /logout/, /logout? (belt+suspenders)
+
+            # ====================================================================
+            # FIX (Problem 1): GROUP 3 — PRINTVERSION / SITEVIEW DEDUPLICATION (PRE-CRAWL)
+            # ====================================================================
+            # Plone CMS exposes two URL surfaces for a print-optimised copy of every page:
+            #   1.  /@@siteview            — the Plone traversal view (any path segment)
+            #   2.  ?printversion=1        — legacy query-param variant
+            # Both surfaces render navigation menus only — zero unique body content.
+            # Adding these patterns here blocks them at the BFS link-queue stage so
+            # they are never fetched at all, complementing the post-crawl
+            # normalize_url_for_dedup() check which only deduplicates after fetching.
+            r'.*/@@siteview(\?.*)?$',      # Plone @@siteview traversal view
+            r'.*[?&]printversion=[^&]*',   # ?printversion=1 or &printversion=1
         ]
         
         # Create filter list first
@@ -5322,6 +5345,8 @@ async def crawl_site():
         print(f"[PATH A] ✅ Pre-crawl URL filtering ACTIVE: {len(exclusion_patterns)} patterns")
         print(f"[PATH A] GROUP 1 (login/auth): ~25 patterns will prevent crawling login pages")
         print(f"[PATH A] GROUP 2 (error pages): ~12 patterns will prevent crawling error pages")
+        print(f"[PATH A] GROUP 3 (printversion/siteview): 2 patterns will block @@siteview and ?printversion= URLs")
+        print(f"[PATH A] GROUP 3b (rss/feed/logoff): 4 patterns will block RSS, feed, and logoff URLs")
         print(f"[PATH A] BFSDeepCrawlStrategy will skip matching URLs BEFORE crawling them")
     
     # DOMAIN RESTRICTION: BFSDeepCrawlStrategy's include_external=False only allows exact domain match
@@ -6141,6 +6166,12 @@ async def crawl_site():
                                     # that BFS queues internally but should be deduplicated here before crawling.
                                     if should_skip_query_param_duplicate(absolute_url, seen_normalized_urls):
                                         continue
+                                    # FIX (Issues 6, 7, 8): Apply exclusion_patterns to additional_urls path.
+                                    # BFS filter_chain only guards the BFS-internal link queue; URLs queued
+                                    # via additional_urls_to_crawl bypass it entirely. Applying the same
+                                    # list here blocks printversion, RSS, logoff, and login URLs.
+                                    if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
+                                        continue
                                     additional_urls_to_crawl.append(absolute_url)
                                     seen_urls.add(normalized_link)  # Use normalized for deduplication
                         
@@ -6380,6 +6411,10 @@ async def crawl_site():
                             if assigned_depth > MAX_DEPTH:
                                 continue  # Skip URLs that would exceed max depth
                             
+                            # FIX (Issues 6, 7, 8): Apply exclusion_patterns to all_additional_urls path.
+                            # Same bypass as first batch — BFS filter_chain is not in scope here.
+                            if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
+                                continue
                             if normalized_link not in all_additional_urls:
                                 all_additional_urls[normalized_link] = assigned_depth
                             else:
@@ -6402,36 +6437,35 @@ async def crawl_site():
                 print(f"[INFO] Found {len(all_additional_urls)} additional URLs in HTML (nav/footer/header) from all pages")
                 print(f"[INFO] Additional URLs by assigned depth: {depth_counts}")
                 
-                # Create a config for additional URLs
-                # CRITICAL FIX: Use deep_crawl_strategy for additional URLs to enable recursive crawling
-                # This ensures links found in nav/footer/header are also followed recursively
-                # Limit depth to avoid excessive crawling (use remaining depth from MAX_DEPTH)
-                additional_deep_crawl_strategy = BFSDeepCrawlStrategy(
-                    max_depth=MAX_DEPTH,  # Use full depth to ensure comprehensive crawling
-                    include_external=False,
-                    max_pages=MAX_PAGES,
-                    filter_chain=filter_chain if 'filter_chain' in locals() else None
-                )
-                
-                # Config for additional URLs with deep crawl enabled
-                # Use variables defined outside the loop (excluded_selector_str, table_extraction_strategy, markdown_generator)
-                # CRITICAL: Use minimal excluded_tags here too to ensure links are found
-                # Full filtering is applied during markdown generation via markdown_generator
-                additional_urls_config = CrawlerRunConfig(
-                    deep_crawl_strategy=additional_deep_crawl_strategy,  # Enable deep crawl for additional URLs
-                    page_timeout=PAGE_TIMEOUT,
-                    wait_until='networkidle',
-                    scraping_strategy=None,  # Additional URLs are HTML, not PDF
-                    table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
-                    markdown_generator=markdown_generator if PRUNING_FILTER_AVAILABLE else None,
-                    excluded_tags=['script', 'style', 'noscript'],  # Minimal filtering for link extraction
-                    excluded_selector=excluded_selector_str,
-                    word_count_threshold=5,
-                    remove_forms=True,
-                    cache_mode='read_write',  # Enable caching for faster resumption
-                    locale=FORCE_LOCALE,
-                    verbose=True
-                )
+                # Build additional-url crawl configs by REMAINING depth budget.
+                # FIX (Issue 11.10.4): Remaining depth must be computed per additional URL as:
+                # remaining_depth = max(0, MAX_DEPTH - assigned_depth)
+                # This prevents over-expansion and keeps depth semantics stable.
+                # In MAX_DEPTH=1 canary mode this naturally enforces inner BFS depth 0
+                # (only the additional URL itself, no one-hop expansion).
+                additional_urls_config_by_remaining_depth = {}
+                for _remaining_depth in range(MAX_DEPTH + 1):
+                    _additional_deep_crawl_strategy = BFSDeepCrawlStrategy(
+                        max_depth=_remaining_depth,
+                        include_external=False,
+                        max_pages=MAX_PAGES,
+                        filter_chain=filter_chain if 'filter_chain' in locals() else None
+                    )
+                    additional_urls_config_by_remaining_depth[_remaining_depth] = CrawlerRunConfig(
+                        deep_crawl_strategy=_additional_deep_crawl_strategy,
+                        page_timeout=PAGE_TIMEOUT,
+                        wait_until='networkidle',
+                        scraping_strategy=None,  # Additional URLs are HTML, not PDF
+                        table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
+                        markdown_generator=markdown_generator if PRUNING_FILTER_AVAILABLE else None,
+                        excluded_tags=['script', 'style', 'noscript'],  # Minimal filtering for link extraction
+                        excluded_selector=excluded_selector_str,
+                        word_count_threshold=5,
+                        remove_forms=True,
+                        cache_mode='read_write',  # Enable caching for faster resumption
+                        locale=FORCE_LOCALE,
+                        verbose=True
+                    )
                 
                 # ================================================================
                 # Additional URL Crawling - SEQUENTIAL with arun() for BFS results
@@ -6445,8 +6479,19 @@ async def crawl_site():
                 print(f"[INFO] Starting crawl of {len(additional_urls_list)} additional URLs (sequential with BFS)")
                 
                 additional_count = 0
+                canary_depth1_mode_logged = False
                 for additional_url, assigned_depth in additional_urls_list:
                     try:
+                        remaining_depth = max(0, MAX_DEPTH - assigned_depth)
+                        additional_urls_config = additional_urls_config_by_remaining_depth.get(remaining_depth)
+                        if additional_urls_config is None:
+                            # Defensive fallback (should never happen)
+                            additional_urls_config = additional_urls_config_by_remaining_depth[0]
+
+                        if MAX_DEPTH == 1 and remaining_depth == 0 and not canary_depth1_mode_logged:
+                            print("[INFO] MAX_DEPTH=1 canary mode: additional URL inner BFS expansion disabled (effective max_depth=0)")
+                            canary_depth1_mode_logged = True
+
                         # Use sequential arun() to capture ALL BFS-discovered pages
                         additional_result = await crawler.arun(additional_url, config=additional_urls_config)
                         
@@ -6457,24 +6502,42 @@ async def crawl_site():
                                     result_url = getattr(res, 'url', None)
                                     normalized_result = _normalize_url(result_url) if result_url else None
                                     
+                                    # FIX (Issue 4): Calculate absolute depth = starting URL depth + BFS-relative depth
+                                    # BFS returns pages at relative depths 0, 1, 2, ... from the starting URL.
+                                    # Without this fix, ALL sub-pages get stamped with assigned_depth (flattening).
+                                    bfs_relative_depth = 0
+                                    if hasattr(res, 'metadata') and res.metadata:
+                                        bfs_relative_depth = res.metadata.get('depth', 0)
+                                    absolute_depth = min(assigned_depth + bfs_relative_depth, MAX_DEPTH)
+                                    
                                     # Store depth mapping for this result
                                     if normalized_result:
-                                        additional_urls_with_depth[normalized_result] = assigned_depth
+                                        existing_depth = additional_urls_with_depth.get(normalized_result)
+                                        additional_urls_with_depth[normalized_result] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
                                     if hasattr(res, 'redirected_url') and res.redirected_url:
                                         normalized = _normalize_url(res.redirected_url)
-                                        additional_urls_with_depth[normalized] = assigned_depth
+                                        existing_depth = additional_urls_with_depth.get(normalized)
+                                        additional_urls_with_depth[normalized] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
                             all_results.extend(additional_result)
                         else:
                             if additional_result:
                                 result_url = getattr(additional_result, 'url', None)
                                 normalized_result = _normalize_url(result_url) if result_url else None
                                 
+                                # FIX (Issue 4): Calculate absolute depth = starting URL depth + BFS-relative depth
+                                bfs_relative_depth = 0
+                                if hasattr(additional_result, 'metadata') and additional_result.metadata:
+                                    bfs_relative_depth = additional_result.metadata.get('depth', 0)
+                                absolute_depth = min(assigned_depth + bfs_relative_depth, MAX_DEPTH)
+                                
                                 # Store depth mapping for this result
                                 if normalized_result:
-                                    additional_urls_with_depth[normalized_result] = assigned_depth
+                                    existing_depth = additional_urls_with_depth.get(normalized_result)
+                                    additional_urls_with_depth[normalized_result] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
                                 if hasattr(additional_result, 'redirected_url') and additional_result.redirected_url:
                                     normalized = _normalize_url(additional_result.redirected_url)
-                                    additional_urls_with_depth[normalized] = assigned_depth
+                                    existing_depth = additional_urls_with_depth.get(normalized)
+                                    additional_urls_with_depth[normalized] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
                             all_results.append(additional_result)
                         additional_count += 1
                     except Exception as e:
@@ -6559,10 +6622,12 @@ async def crawl_site():
             
             # additional_urls_with_depth is defined in the link extraction section above
             # It maps normalized URLs to their assigned depths
-            # Solution 1 Option A: Build merged dict so CURRENT RUN overwrites checkpoint (correct merge direction)
-            # This ensures when resuming with higher MAX_DEPTH, re-crawled URLs keep their new depth (e.g. depth 2)
+            # Build merged dict using minimum depth per URL across checkpoint and current run.
+            # This preserves the shallowest known path from seed when duplicates are rediscovered.
             additional_urls_with_depth_merged = dict(checkpoint.get('additional_urls_with_depth', {}))
-            additional_urls_with_depth_merged.update(additional_urls_with_depth)
+            for url_key, depth_value in additional_urls_with_depth.items():
+                existing_depth = additional_urls_with_depth_merged.get(url_key)
+                additional_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
             # Section 4.1/4.2: Build crawled_urls_with_depth_merged so CURRENT RUN overwrites checkpoint (correct merge direction)
             crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
             crawled_urls_with_depth_merged.update(crawled_urls_with_depth)
@@ -6576,7 +6641,14 @@ async def crawl_site():
             
             # PHASE 1 FIX: Counter for checkpoint frequency
             results_processed_in_batch = 0
-            
+
+            # FIX B: Varnish 503 retry — detect transient backend-overload errors during
+            # the main pass and re-crawl them once after a 10-second backoff.
+            # "Varnish cache server" never appears in real DESY page content, so these
+            # markers are safe to use as a content-level filter.
+            _varnish_503_markers = ('Varnish cache server', 'Backend fetch failed', 'Guru Meditation')
+            _varnish_503_retry_queue = []  # URLs that returned a 503 Varnish page
+
             for result in results:
                 # Skip if result is invalid or URL is empty/whitespace
                 if not result or not result.url or _is_empty_or_whitespace(str(result.url)):
@@ -6599,6 +6671,11 @@ async def crawl_site():
                     '.gif', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.bmp', '.ico', '.tiff',
                     '.zip', '.tar', '.gz', '.rar', '.doc', '.docx', '.xls', '.xlsx',
                     '.ppt', '.pptx', '.mp4', '.mp3', '.avi', '.mov', '.wmv', '.flv',
+                    # FIX (Problem 3): Academic source files from www-zeus.desy.de (156 .tex + 17 .eps + 2 .tgz in run 20)
+                    '.tex', '.eps', '.ps', '.tgz', '.bib', '.f90', '.f77', '.f',
+                    '.bbl', '.blg', '.cls', '.sty', '.dtx', '.ins', '.aux',
+                    # FIX (Problem 6): RSS/Atom feed files — machine-readable XML, not prose
+                    '.atom',
                 )
                 if any(_url_path_lower.endswith(ext) for ext in _BINARY_EXTENSIONS_CHECK):
                     continue
@@ -6639,7 +6716,16 @@ async def crawl_site():
                 if len(_body_text) < 50:
                     print(f'[CONTENT FILTER] Skipping blank/empty page (<50 chars body): {result.url}')
                     continue
-                
+
+                # FIX B: Varnish 503 detection — queue for retry, skip saving now.
+                # These pages pass the 50-char blank filter but contain zero useful content.
+                # Crucially we do NOT call seen_final_urls.add() here, so the URL remains
+                # available for a clean re-crawl in the retry pass below.
+                if any(marker in _body_text for marker in _varnish_503_markers):
+                    _varnish_503_retry_queue.append(result.url)
+                    print(f'[503-RETRY] Queueing for retry (Varnish 503): {result.url}')
+                    continue
+
                 try:
                     # Track both original and final URLs to handle redirects
                     # crawl4ai provides: result.url (original) and result.redirected_url (final after redirects)
@@ -8906,8 +8992,119 @@ async def crawl_site():
                     print(f"[ERROR] {error_url}")
                     print(f"        Exception: {str(e)}")
                     print(f"        Traceback:\n{error_traceback}")
-            
-            
+
+            # ====================================================================
+            # FIX B: Retry Varnish 503 error pages with 10-second backoff
+            # URLs that returned "Backend fetch failed / Varnish cache server" during
+            # the main pass are re-crawled here after a brief delay so the Plone
+            # backend has time to recover from the concurrent-request overload.
+            # These URLs were NOT added to seen_final_urls in the main loop, so
+            # they will be written as fresh files if the retry succeeds.
+            # ====================================================================
+            if _varnish_503_retry_queue:
+                print(f"\n[503-RETRY] {len(_varnish_503_retry_queue)} URLs returned Varnish 503 during crawl.")
+                print(f"[503-RETRY] Waiting 10 seconds for Plone backends to recover...")
+                await asyncio.sleep(10)
+
+                _retry_config = CrawlerRunConfig(
+                    page_timeout=PAGE_TIMEOUT,
+                    wait_until='networkidle',
+                    scraping_strategy=scraping_strategy,
+                    markdown_generator=markdown_generator,
+                    excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'],
+                    excluded_selector=excluded_selector_str,
+                    word_count_threshold=5,
+                    remove_forms=True,
+                    cache_mode='bypass',  # Must bypass cache — cached 503 response must not be served
+                    locale=FORCE_LOCALE,
+                    verbose=True
+                    # No deep_crawl_strategy: single-page retry only
+                )
+
+                _retry_saved = 0
+                _retry_still_503 = 0
+                for _retry_url in _varnish_503_retry_queue:
+                    print(f'[503-RETRY] Retrying: {_retry_url}')
+                    try:
+                        _r = await crawler.arun(_retry_url, config=_retry_config)
+                        if not _r or not getattr(_r, 'url', None):
+                            continue
+
+                        # Extract markdown text
+                        _r_md = getattr(_r, 'markdown', None)
+                        if _r_md is not None:
+                            if hasattr(_r_md, 'raw_markdown'):
+                                _r_text = (_r_md.raw_markdown or '').strip()
+                            elif isinstance(_r_md, str):
+                                _r_text = _r_md.strip()
+                            else:
+                                _r_text = ''
+                        else:
+                            _r_text = ''
+
+                        # Strip Source URL header, then check for still-503 / blank
+                        _r_body = re.sub(r'^#\s*Source\s*URL\s*\n+\S+\s*\n*', '', _r_text, flags=re.IGNORECASE).strip()
+                        if len(_r_body) < 50 or any(m in _r_body for m in _varnish_503_markers):
+                            print(f'[503-RETRY] Still 503/blank after retry, discarding: {_retry_url}')
+                            _retry_still_503 += 1
+                            continue
+
+                        # FIX (Issue 9): Apply GROUP 1 login filter to the retry result.
+                        # When Plone recovers from overload it may redirect auth-required pages
+                        # to login_form — the retry code must not save those as content.
+                        _r_final_for_login_check = getattr(_r, 'redirected_url', None) or getattr(_r, 'url', _retry_url)
+                        if should_skip_login_auth_url(_r_final_for_login_check):
+                            print(f'[503-RETRY] Skipping login redirect: {_retry_url} → {_r_final_for_login_check}')
+                            continue
+
+                        # Determine depth from existing maps (URL was already BFS-discovered)
+                        _r_final_url = getattr(_r, 'redirected_url', None) or _r.url
+                        _r_norm_final = _normalize_url(_r_final_url)
+                        _r_norm_orig = _normalize_url(_retry_url)
+                        _r_depth = 2  # Conservative default for BFS-discovered retry pages
+                        if crawled_urls_with_depth_merged:
+                            _r_depth = (crawled_urls_with_depth_merged.get(_r_norm_final)
+                                        or crawled_urls_with_depth_merged.get(_r_norm_orig)
+                                        or _r_depth)
+                        if additional_urls_with_depth_merged:
+                            _r_depth = (additional_urls_with_depth_merged.get(_r_norm_final)
+                                        or additional_urls_with_depth_merged.get(_r_norm_orig)
+                                        or _r_depth)
+                        _r_depth = min(int(_r_depth), MAX_DEPTH)
+
+                        # Build filename (same logic as main save pipeline)
+                        _r_url_for_file = _r_final_url if _r_final_url else _retry_url
+                        _r_url_safe = (_r_url_for_file
+                                       .replace("https://", "").replace("http://", "")
+                                       .replace("/", "_").replace(":", "_"))
+                        if len(_r_url_safe) > 200:
+                            _r_url_safe = _r_url_safe[:200]
+                        _r_depth_dir = OUTPUT_DIR / f"depth_{_r_depth}"
+                        _r_depth_dir.mkdir(exist_ok=True)
+                        _r_filename = _r_depth_dir / f"{_r_url_safe}.md"
+
+                        # Write file and update tracking state
+                        _r_filename.write_text(_r_text, encoding="utf-8")
+                        seen_final_urls.add(_r_norm_final if _r_norm_final else _r_norm_orig)
+                        all_successful_urls.append(_retry_url)
+                        pages_processed_count += 1
+                        _depth_key = str(_r_depth)
+                        if _depth_key not in all_urls_by_depth:
+                            all_urls_by_depth[_depth_key] = []
+                        all_urls_by_depth[_depth_key].append({
+                            'original_url': _retry_url,
+                            'final_url': _r_final_url,
+                            'is_redirect': (_retry_url != _r_final_url)
+                        })
+                        _retry_saved += 1
+                        print(f'[503-RETRY] Saved: {_retry_url} → {_r_filename}')
+
+                    except Exception as _retry_err:
+                        print(f'[503-RETRY] Error retrying {_retry_url}: {_retry_err}')
+
+                print(f'[503-RETRY] Complete: {_retry_saved} saved, {_retry_still_503} still 503/blank (discarded).')
+
+
             # ====================================================================
             # PHASE 1 FIX: CRITICAL - Final checkpoint save and aggressive memory cleanup
             # ====================================================================
