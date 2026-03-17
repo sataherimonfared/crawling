@@ -488,7 +488,7 @@ CONCURRENT_TASKS = 10
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 3
+MAX_DEPTH = 1
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -6303,15 +6303,17 @@ async def crawl_site():
                         if not is_seed:
                             result_depth = 1
                     
-                    # Store URL and depth
+                    # Store URL and depth (keep shallowest depth to avoid reclassification)
                     if hasattr(result, 'url') and result.url:
                         normalized = _normalize_url(result.url)
                         seen_crawled_urls.add(normalized)
-                        crawled_urls_with_depth[normalized] = result_depth
+                        existing_depth = crawled_urls_with_depth.get(normalized)
+                        crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
                     if hasattr(result, 'redirected_url') and result.redirected_url:
                         normalized = _normalize_url(result.redirected_url)
                         seen_crawled_urls.add(normalized)
-                        crawled_urls_with_depth[normalized] = result_depth
+                        existing_depth = crawled_urls_with_depth.get(normalized)
+                        crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
             
             # Extract links from ALL results' HTML
             # Track source page depth to assign correct depth to additional URLs
@@ -6398,8 +6400,8 @@ async def crawl_site():
                             continue
                         if not _is_desy_domain(link_domain):
                             continue
-                        # Normalize URL (remove www)
-                        normalized_link = absolute_url.replace('://www.', '://')
+                        # Normalize URL consistently with seen_crawled_urls (remove www, fragment, trailing slash)
+                        normalized_link = _normalize_url(absolute_url) or absolute_url.replace('://www.', '://')
                         if normalized_link not in seen_crawled_urls:
                             # Do not queue if this URL redirects to an excluded host (avoid fetching them)
                             if CHECK_REDIRECTS_TO_EXCLUDED:
@@ -6421,9 +6423,15 @@ async def crawl_site():
                                 # Keep minimum depth (closest to seed) - but don't go below source_depth + 1
                                 all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
                         else:
-                            # URL was already crawled - use its original depth from BFSDeepCrawlStrategy
-                            # Don't add to all_additional_urls, it will use its original depth
-                            pass
+                            # URL was already crawled by BFS, but the link graph may give
+                            # a shallower depth (e.g., seed links directly to a URL that
+                            # BFS discovered via a longer path). Update crawled_urls_with_depth
+                            # to keep the minimum depth so depth stays stable across MAX_DEPTH values.
+                            link_depth = source_depth + 1
+                            if link_depth <= MAX_DEPTH:
+                                existing = crawled_urls_with_depth.get(normalized_link)
+                                if existing is None or link_depth < existing:
+                                    crawled_urls_with_depth[normalized_link] = link_depth
                 except Exception as e:
                     # Log but continue
                     pass
@@ -6628,9 +6636,12 @@ async def crawl_site():
             for url_key, depth_value in additional_urls_with_depth.items():
                 existing_depth = additional_urls_with_depth_merged.get(url_key)
                 additional_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
-            # Section 4.1/4.2: Build crawled_urls_with_depth_merged so CURRENT RUN overwrites checkpoint (correct merge direction)
+            # Section 4.1/4.2: Build crawled_urls_with_depth_merged using minimum depth per URL across checkpoint and current run.
+            # This preserves the shallowest known path from seed when the same URL is rediscovered at a deeper level.
             crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
-            crawled_urls_with_depth_merged.update(crawled_urls_with_depth)
+            for url_key, depth_value in crawled_urls_with_depth.items():
+                existing_depth = crawled_urls_with_depth_merged.get(url_key)
+                crawled_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
             
             # Track links found vs URLs crawled for analysis
             links_found_vs_crawled = {
@@ -6817,27 +6828,38 @@ async def crawl_site():
                     if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
                         depth = 0  # Seed URL - always depth 0
                     else:
-                        depth = 0  # Default
-                        # 1) Already-crawled URL -> depth from merged map (BFS + single-page + additional crawl)
+                        # Collect depth from map sources (these have correct absolute depths)
+                        # and take the minimum to ensure stable depth assignment.
+                        depth_candidates = []
+                        # 1) Crawled URL depth from merged map (BFS + single-page + additional crawl)
                         if crawled_urls_with_depth_merged is not None:
                             if normalized_final in crawled_urls_with_depth_merged:
-                                depth = crawled_urls_with_depth_merged[normalized_final]
-                            elif normalized_original in crawled_urls_with_depth_merged:
-                                depth = crawled_urls_with_depth_merged[normalized_original]
+                                depth_candidates.append(crawled_urls_with_depth_merged[normalized_final])
+                            if normalized_original in crawled_urls_with_depth_merged:
+                                depth_candidates.append(crawled_urls_with_depth_merged[normalized_original])
                         # 2) Additional URL with assigned depth (from manual link extraction)
-                        if depth == 0 and additional_urls_with_depth_merged is not None:
+                        if additional_urls_with_depth_merged is not None:
                             if normalized_final in additional_urls_with_depth_merged:
-                                depth = additional_urls_with_depth_merged[normalized_final]
-                            elif normalized_original in additional_urls_with_depth_merged:
-                                depth = additional_urls_with_depth_merged[normalized_original]
-                        # 3) Result metadata (from BFSDeepCrawlStrategy)
-                        if depth == 0 and hasattr(result, 'metadata') and result.metadata:
-                            depth = result.metadata.get('depth', 0)
-                        elif depth == 0 and hasattr(result, 'depth'):
-                            depth = result.depth
-                        # 4) Fallback: non-seed with no map/metadata -> treat as depth 1 (last resort)
-                        if depth == 0:
-                            depth = 1
+                                depth_candidates.append(additional_urls_with_depth_merged[normalized_final])
+                            if normalized_original in additional_urls_with_depth_merged:
+                                depth_candidates.append(additional_urls_with_depth_merged[normalized_original])
+                        # Pick the shallowest depth from map sources (filter out 0 for non-seeds)
+                        non_zero = [d for d in depth_candidates if d > 0]
+                        if non_zero:
+                            depth = min(non_zero)
+                        else:
+                            # 3) Fallback: Result metadata (from BFSDeepCrawlStrategy)
+                            # NOTE: Only used when maps have no entry. metadata.depth may be
+                            # BFS-relative (not absolute) for additional-URL inner BFS results,
+                            # so it must NOT compete with map values via min().
+                            depth = 0
+                            if hasattr(result, 'metadata') and result.metadata:
+                                depth = result.metadata.get('depth', 0)
+                            elif hasattr(result, 'depth'):
+                                depth = getattr(result, 'depth', 0) or 0
+                            # 4) Fallback: non-seed with no map/metadata -> treat as depth 1
+                            if depth == 0:
+                                depth = 1
                         # Cap depth at MAX_DEPTH
                         if depth > MAX_DEPTH:
                             depth = MAX_DEPTH
