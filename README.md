@@ -63,22 +63,20 @@ crawl4ai/
 
 ## Technical Overview
 
-| Technique | Description |
-|-----------|-------------|
-| **Async I/O** | `asyncio` + `AsyncWebCrawler` for concurrent browser tasks without blocking |
-| **BFS Crawling** | `BFSDeepCrawlStrategy` — systematic breadth-first coverage (depth 0 → 1 → 2 → …) |
-| **Checkpoint/Resume** | `CrawlState` serialised to JSON every 1,000 pages; resume after crash or SLURM time limit |
-| **5-Layer Filtering** | Login/auth (GROUP 1), error pages (GROUP 2), printversion/siteview (GROUP 3), RSS/logoff (GROUP 3b), query-param dedup (GROUP 4) |
-| **BFS Exclusion Patterns** | 60+ regex patterns fed to Crawl4AI's `FilterChain` to block URLs before fetching |
-| **Redirect Handling** | Pre-queue async HEAD resolution via aiohttp; URLs redirecting to excluded hosts are never fetched |
-| **Table Extraction** | `LinkPreservingTableExtraction` — preserves links, emails, and phone numbers in table cells |
-| **Anti-bot & JS** | Playwright with stealth mode; full JavaScript rendering; configurable locale |
-| **Domain Scoping** | Restricted to `ALLOWED_URL_PREFIXES` (default: `https://it.desy.de/`); `www.` normalisation everywhere |
-| **Content Dedup** | SHA-256 content hashing + `normalize_url_for_dedup()` query-param stripping |
-| **Robust Write Path** | `all_urls_by_depth` updated only after successful file write — counts always match files |
-| **SLURM** | `run_crawler.slurm` for 72-hour background runs on HPC clusters |
+| Technique | What it does | Why it matters |
+|-----------|-------------|----------------|
+| **Async I/O** | Crawls multiple pages at the same time using `asyncio` | 10x faster than crawling one page at a time |
+| **BFS Crawling** | Follows links level by level (depth 0 → 1 → 2 → …) | Systematic coverage — nothing is missed |
+| **Manual Link Extraction** | Re-reads raw HTML to find links BFS missed | BFS skips links in nav/footer/header; this catches them |
+| **Checkpoint/Resume** | Saves crawler state to JSON every 1,000 pages | Job can crash or hit SLURM time limit and resume later |
+| **5-Layer Filtering** | Blocks login, error, print-view, RSS, and duplicate URLs | Avoids downloading 10,000+ junk pages |
+| **Redirect Handling** | Checks where a URL redirects to before queuing it | Prevents fetching pages on excluded domains |
+| **Table Extraction** | Preserves links, emails, and phone numbers in table cells | Crawl4AI loses these; custom extractor keeps them |
+| **Content Dedup** | URL normalisation + SHA-256 content hashing | Same page under 5 different URLs → saved only once |
+| **Anti-bot & JS** | Playwright stealth mode with full JavaScript rendering | Works on JS-heavy pages with bot detection |
+| **SLURM** | 72-hour background runs on HPC clusters | Handles 200k-page crawls unattended |
 
-**Scale:** Up to 200k pages, 10 concurrent browser tasks (configurable), checkpoint every 1,000 pages, memory-conscious (results freed after processing).
+**Scale:** Up to 200k pages, 10 concurrent browser tasks (configurable), checkpoint every 1,000 pages.
 
 ---
 
@@ -204,56 +202,49 @@ Each `.md` file is named from the URL path (sanitised, max 200 chars). Filenames
 
 ## URL Filtering Pipeline
 
-The crawler applies filters at multiple stages to avoid wasting bandwidth on unwanted pages:
+> **Key idea:** Without filtering, the crawler would waste time downloading login pages, error pages, PDF files, print-view duplicates, and RSS feeds. The 5-layer pipeline blocks unwanted URLs **before** they consume bandwidth — and double-checks **after** crawling in case anything slipped through.
 
-| Stage | Group | What it blocks | # Patterns |
-|-------|-------|----------------|------------|
-| **Pre-crawl (BFS)** | Exclusion patterns | `.pdf`, `.ics`, non-HTTP schemes, login paths, error pages, `@@siteview`, `?printversion=`, RSS/feeds, logoff, excluded domains | ~60 |
-| **Pre-queue** | GROUP 1 | Login/auth/admin URLs (`/login`, `/acl_users`, `sso.desy.de`, etc.) | 20 patterns + 4 domains |
-| **Pre-queue** | GROUP 2 | Error/maintenance URLs (`/404`, `/503`, `cgi-bin`, etc.) | 12 patterns + 4 domains |
-| **Pre-queue** | GROUP 4 | Query-param duplicates (strips `printversion`, `lang`, `view`, etc.) | 30 UI-only params |
-| **Post-crawl** | `filter_result_pre_save()` | Scope, login, binary extensions, login-wall content, blank pages, Varnish 503, printversion/siteview | 7 stages |
-| **Post-append** | Exclusion guard | Results matching exclusion patterns filtered at every `all_results.append()` site | 4 guard points |
+**Why it matters:** On a 200k-page site, even 5% noise means 10,000 junk files. Filtering keeps the output clean and the crawl fast.
+
+| When | Filter | What it blocks | Example |
+|------|--------|----------------|----------|
+| **Before fetching** | 60 BFS exclusion patterns | PDFs, calendar files, login paths, print-views, RSS | `/login_form`, `?printversion=1` |
+| **Before queuing** | GROUP 1 — Login/auth | SSO pages, admin URLs | `sso.desy.de`, `/acl_users` |
+| **Before queuing** | GROUP 2 — Error pages | 404, 503, maintenance | `/404`, `/cgi-bin` |
+| **Before queuing** | GROUP 4 — Query-param dedup | URLs that differ only in UI params | `?lang=en` vs `?lang=de` (same content) |
+| **After crawling** | 7-stage post-crawl filter | Scope, login-wall content, blank pages, Varnish 503, printversion | Pages with <50 chars of body text |
+| **At every append** | Exclusion guard at 4 code points | Anything matching exclusion patterns | Safety net — catches edge cases |
 
 ---
 
 ## Extracted Modules
 
-The original monolithic script was decomposed into testable modules:
+> **Key idea:** The original 9,400-line single file was hard to test and debug. I split it into 6 focused modules, each with a clear responsibility and its own test suite.
 
-| Module | Lines | Functions | Responsibility |
-|--------|-------|-----------|----------------|
-| `url_utils.py` | ~320 | 10 | URL normalisation, domain checks, redirect resolution, login/error/dedup filters |
-| `table_processing.py` | ~2,700 | 21 | HTML table extraction with link/email preservation, PUBDB detection, markdown formatting |
-| `content_extraction.py` | ~1,850 | 24 | Indico events, contacts, soup caching, content hashing, result filtering, depth assignment |
-| `markdown_cleanup.py` | ~870 | 8 | Post-processing: separator removal, table dedup, broken fragments, navigation noise |
-| `checkpoint.py` | ~340 | 5 + class | `CrawlState` dataclass, checkpoint I/O, error logging, metadata extraction |
-
-All modules are imported by the main file and exposed as thin wrapper functions for backward compatibility.
+| Module | What it does | Why it exists |
+|--------|-------------|---------------|
+| `url_utils.py` | URL normalisation, domain checks, redirect resolution, login/error/dedup filters | Centralises all URL logic — used by both BFS and manual extraction |
+| `table_processing.py` | HTML table extraction preserving links, emails, phone numbers | Crawl4AI loses links in table cells; this module fixes that |
+| `content_extraction.py` | Indico events, contacts, content hashing, result filtering, depth assignment | Handles DESY-specific page types and the core dedup/depth logic |
+| `markdown_cleanup.py` | Post-processing: remove breadcrumbs, broken tables, duplicate paragraphs | Raw markdown from Crawl4AI contains noise; cleanup produces cleaner output |
+| `checkpoint.py` | `CrawlState` dataclass, checkpoint save/load, error logging | Makes the crawler crash-safe — state is serialised to JSON every 1,000 pages |
 
 ---
 
 ## Testing
 
-230 unit tests across 12 test files:
+> **Key idea:** Every filter, depth rule, and dedup decision has a test. 230 tests ensure that changes don't break existing behaviour.
 
 ```bash
 # Run all tests
 python -m unittest discover -v -p "test_*.py"
-
-# Run a specific test file
-python -m unittest test_crawl_state -v
-python -m unittest test_printversion_fixes -v
-
-# Run a single test
-python -m unittest test_assign_page_depth.TestAssignPageDepth.test_seed_original_url -v
 ```
 
-| Test File | Tests | Covers |
-|-----------|-------|--------|
-| `test_crawl_state.py` | 25 | CrawlState defaults, checkpoint round-trip, memory cleanup |
-| `test_printversion_fixes.py` | 25 | All 5 printversion/siteview fixes |
+| Test File | Tests | What it verifies |
+|-----------|-------|------------------|
 | `test_result_url_validation.py` | 26 | URL extraction, 404 detection |
+| `test_crawl_state.py` | 25 | Checkpoint save/load, memory cleanup |
+| `test_printversion_fixes.py` | 25 | All 5 printversion/siteview fixes |
 | `test_assign_page_depth.py` | 24 | 5-stage depth assignment |
 | `test_filter_result_pre_save.py` | 23 | 7-stage post-crawl filter |
 | `test_post_process_markdown.py` | 20 | Markdown post-processing |
@@ -268,81 +259,101 @@ python -m unittest test_assign_page_depth.TestAssignPageDepth.test_seed_original
 
 ## Chunking Pipeline (Post-Crawl)
 
-The `chunking/` directory provides a post-processing pipeline that splits crawled markdown files into chunks suitable for embedding and RAG indexing:
+> **Key idea:** After crawling, the markdown files are too large for direct embedding. The chunking pipeline splits them into small, overlapping chunks ready for vector databases and LLM retrieval (RAG).
 
 ```bash
 python chunking/run_chunking.py --run-id 23 --write-index
 ```
 
-- Reads `.md` files from `desy_crawled/<run_id>/depth_*/`
-- Splits on `##` headings (RegexChunking) with sliding-window fallback for oversized sections
-- Token limit: 512 tokens per chunk, 400-word window, 50-word overlap
-- Outputs JSONL with `text` + metadata (source URL, page title, section heading)
-- Removes boilerplate sections (External Links, Contact, Career, etc.)
+- **Input:** `.md` files from `desy_crawled/<run_id>/depth_*/`
+- **Splitting:** On `##` headings, with sliding-window fallback for long sections
+- **Chunk size:** 512 tokens max, 400-word window, 50-word overlap
+- **Output:** JSONL with `text` + metadata (source URL, page title, section heading)
+- **Cleanup:** Removes boilerplate (External Links, Contact, Career sections)
 
 ---
 
-## Technical Notes
+## Technical Deep Dive
 
 ### URL Deduplication
 
-- URLs are normalised in two stages: `_normalize_url()` strips `www.`, fragments, and trailing slashes; `normalize_url_for_dedup()` additionally strips 30 UI-only query params (e.g. `printversion`, `lang`, `view`, `embed`) while preserving content-critical params like `q`, `page`, `num`.
-- Before result processing, `state.all_results` is sorted by URL length so the shorter (cleaner) variant is always processed first and wins the dedup check. SHA-256 content hashing catches byte-identical pages that arrive under different URLs.
+> **Key idea:** The same page can appear under many different URLs. Without deduplication, you'd save the same content multiple times. The crawler uses **three layers** of dedup to ensure each page is saved exactly once.
+
+**The problem:** A single DESY page might be reachable via:
+- `https://it.desy.de/about/` (base URL)
+- `https://www.it.desy.de/about/` (with `www.`)
+- `https://it.desy.de/about/index_eng.html` (explicit index)
+- `https://it.desy.de/about/?printversion=1` (print view — same content)
+- `https://it.desy.de/about/?lang=en&view=standard` (UI params — same content)
+
+**How it's solved (3 layers):**
+
+1. **URL normalisation** — `_normalize_url()` strips `www.`, fragments (`#section`), and trailing slashes. Then `normalize_url_for_dedup()` strips 30 UI-only query params (`printversion`, `lang`, `view`, etc.) while keeping content-changing params (`q`, `page`, `num`).
+2. **Sort-by-length trick** — Results are sorted by URL length before processing. Shorter = cleaner URL. The clean URL is always processed first and wins the dedup check; its longer variants are skipped.
+3. **Content hashing** — SHA-256 hash of the page body catches byte-identical pages that arrive under completely different URLs.
 
 ### Markdown Cleanup Pipeline
 
-- Raw markdown passes through three stages: `clean_raw_markdown()` removes breadcrumbs, navigation patterns, duplicate lines, and broken table fragments; `deduplicate_markdown_against_tables()` removes text that duplicates the DOM-ordered table content; `post_process_markdown()` collapses empty sections, filters malformed tables, and strips orphaned separators.
-- Specialised extractors handle Indico event pages (structured title/date/location/contributions), PUBDB pages (UI table filtering), and contact pages (label-value pair parsing).
+> **Key idea:** Crawl4AI's raw markdown output contains navigation breadcrumbs, broken table fragments, and duplicated text. A 3-stage cleanup pipeline removes this noise.
+
+- **Stage 1** (`clean_raw_markdown`) — Removes breadcrumbs, navigation patterns, duplicate lines, broken table fragments.
+- **Stage 2** (`deduplicate_markdown_against_tables`) — If the same text appears both in a table and as a paragraph, remove the paragraph (the table version is better formatted).
+- **Stage 3** (`post_process_markdown`) — Collapses empty sections, filters malformed tables, strips orphaned separators.
+- **Specialised extractors** handle Indico event pages (title/date/location/contributions), PUBDB pages (UI table filtering), and contact pages (label-value pair parsing).
 
 ### Depth Assignment
 
+> **Key idea:** Every page gets a "depth" number (0, 1, 2, 3 …) that represents how many clicks away it is from the homepage. This number determines which folder the page is saved in (`depth_0/`, `depth_1/`, etc.).
+
 #### Why two discovery methods?
 
-Crawl4AI's BFS (`BFSDeepCrawlStrategy`) removes `<nav>`, `<footer>`, `<header>`, and `<aside>` elements from the HTML **before** it looks for links. This is good for keeping navigation noise out of the final markdown, but it means BFS never sees links that live exclusively inside those elements — for example, a sidebar link to `/desy_in_leichter_sprache/` that only appears in `<nav>`.
+**The problem:** Crawl4AI's BFS removes `<nav>`, `<footer>`, `<header>`, and `<aside>` from the HTML **before** looking for links. This keeps navigation noise out of the markdown, but it also means BFS never sees links that only appear inside those elements — like a sidebar link to `/desy_in_leichter_sprache/`.
 
-To avoid missing those links, a second pass (manual link extraction) re-reads the **raw, unfiltered HTML** of every already-crawled page with BeautifulSoup and collects all `<a href>` tags — including ones inside nav/footer/header. Any new links that BFS missed are then crawled as single pages.
+**The solution:** A second pass (manual link extraction) re-reads the **raw, unfiltered HTML** with BeautifulSoup and catches every `<a href>` tag — including ones inside nav/footer/header. This ensures no page is missed.
 
 #### Two depth maps
 
-Each discovery method records the depth at which it found a URL:
+Because there are two discovery methods, there are two depth maps:
 
-| Map | Populated by | Source of depth value |
+| Map | Filled by | Depth comes from |
 |---|---|---|
-| `crawled_urls_with_depth` | BFS results | `result.metadata['depth']` set by Crawl4AI |
-| `additional_urls_with_depth` | Manual link extraction | `source_depth + 1` (parent page's depth + 1) |
+| `crawled_urls_with_depth` | BFS | Crawl4AI sets `result.metadata['depth']` |
+| `additional_urls_with_depth` | Manual extraction | `parent page depth + 1` |
 
-The same URL can appear in both maps with different depths (e.g., BFS found it at depth 2 via one path, manual extraction found it at depth 1 via a direct sidebar link from a seed page).
+The same URL can appear in both maps with different depths. For example, BFS might find page X at depth 2 (via path A → B → X), while the manual pass finds it at depth 1 (via a direct nav link from the homepage).
 
-#### How `assign_page_depth()` resolves the final depth
+#### 5-stage depth resolution
 
-The function resolves depth in 5 stages:
+`assign_page_depth()` picks the final depth:
 
-1. **Seed check** — if the URL is a seed (root) URL → depth **0**.
-2. **Map lookup** — look up the URL in both maps (trying both original and final redirect URL). If found, take the **shallowest** (minimum) value.
-3. **Metadata fallback** — `result.metadata['depth']` or `result.depth`.
-4. **Default** — non-seed pages with no depth info default to **1**.
-5. **Cap** — clamp to `MAX_DEPTH`.
+1. **Seed check** — Is it a homepage/seed URL? → depth **0**
+2. **Map lookup** — Look in both maps. If found, take the **shallowest** (minimum) value
+3. **Metadata fallback** — Read `result.metadata['depth']` from Crawl4AI
+4. **Default** — If nothing is known, assume depth **1** (it's at least one click away)
+5. **Cap** — Never exceed `MAX_DEPTH`
 
-#### Checkpoint persistence
+#### Depth maps survive restarts
 
-The `*_merged` depth maps accumulate across SLURM job restarts via checkpoint round-trips — `CrawlState.to_checkpoint()` saves merged maps, and `from_checkpoint()` restores them, always keeping the shallowest-ever observed depth for each URL.
+The depth maps are saved into the checkpoint. When the crawler resumes after a SLURM restart, it loads the saved maps and merges them with new data — always keeping the shallowest depth ever observed for each URL.
 
 ### Key Design Decisions
 
-- **Modular but backward-compatible** — Extracted modules (`url_utils.py`, `table_processing.py`, etc.) are imported by the main file, which exposes thin wrapper functions. Existing call sites are unchanged; new code can import modules directly.
-- **Checkpoint safety** — The `finally` block skips checkpoint save when depth maps have been nullified by memory cleanup, preventing corruption of valid checkpoint data on SLURM job termination.
-- **Defense-in-depth filtering** — BFS and `arun_many` results are filtered through `exclusion_patterns` at all 4 result-append points, not just at the BFS filter-chain level. This ensures correctness even when the Crawl4AI `FilterChain` import falls back to list mode.
-- **Deterministic dedup** — Sorting `all_results` by URL length before processing guarantees the base URL (without `?printversion=1`) always wins over its parameterised variant, regardless of async crawl order.
+- **Modular but backward-compatible** — Extracted modules are imported by the main file with thin wrapper functions. Existing code works unchanged; new code can import modules directly.
+- **Checkpoint safety** — The `finally` block skips checkpoint save when depth maps are already cleaned up, preventing corruption on SLURM job termination.
+- **Defense-in-depth filtering** — Exclusion patterns are checked at all 4 result-append points, not just at the BFS level. Even if one guard fails, the others catch it.
+- **Deterministic dedup** — Sorting by URL length guarantees the clean URL always wins over its `?printversion=1` variant, regardless of async crawl order.
 
 ---
 
 ## Error Handling & Logs
 
-- **Timeouts** — Logged in `crawl_errors.json` with `is_timeout: true`; can retry with `PAGE_TIMEOUT_EXTENDED`.
-- **404 / empty pages** — Skipped (no file written, no count in `urls_by_depth.json`). 404 pages with meaningful content (>100 chars) are kept.
-- **Varnish 503** — Queued for retry with cache-bypass after 10-second backoff. Still-503 pages are discarded.
-- **Extraction errors** — Caught per result; error appended to `all_errors`; checkpoint saved so progress isn't lost.
-- **Login redirects** — Detected by URL patterns and content keywords; both original and final URLs are checked.
+> **Key idea:** The crawler never stops because of a single page error. Every error is logged, and the crawl continues. Transient errors (Varnish 503) are automatically retried.
+
+- **Timeouts** — Logged in `crawl_errors.json`; can retry later with a longer timeout.
+- **404 / empty pages** — Skipped (no file written). 404 pages with meaningful content (>100 chars body) are kept.
+- **Varnish 503** — Automatically retried after 10-second backoff. Still-failing pages are discarded.
+- **Extraction errors** — Caught per page; checkpoint saved so progress isn't lost.
+- **Login redirects** — Detected by URL patterns and page content keywords; both original and redirect URLs are checked.
 
 ---
 
