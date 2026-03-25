@@ -1,22 +1,39 @@
 # DESY Website Crawler
 
-A production-grade async web crawler for DESY (`it.desy.de`) built with [Crawl4AI](https://github.com/unclecode/crawl4ai) 0.8.0, Playwright/Chromium, and Python 3 asyncio. Designed for **200k+ URL** crawls on SLURM HPC clusters with checkpoint/resume, modular architecture, and a 5-layer URL filtering pipeline. Outputs clean markdown files organised by link depth.
+A production-grade async web crawler for the DESY IT website (`it.desy.de`), built with [Crawl4AI](https://github.com/unclecode/crawl4ai) 0.8.0, Playwright/Chromium, and Python 3 asyncio.
 
-> **Crawl4AI version:** `python -c "import crawl4ai.__version__ as v; print(v.__version__)"`
+> **Key idea:** Crawl up to **200,000 web pages**, convert each one to a clean markdown file, organise them by link depth, and make the output ready for RAG / LLM embedding — all running unattended on a SLURM HPC cluster with automatic checkpoint and resume.
+
+---
+
+## Key Contributions
+
+These are the main things **I built and improved** on top of the base Crawl4AI library:
+
+| # | Contribution | Why it matters |
+|---|---|---|
+| 1 | **Modular architecture** — Refactored 9,400-line monolith into 6 focused modules | Testable, maintainable, each module has a single responsibility |
+| 2 | **5-layer URL filtering pipeline** — 4 filter groups + 60 BFS exclusion patterns | Prevents crawling login pages, error pages, print-view duplicates, and RSS feeds — saves bandwidth and avoids noise |
+| 3 | **Dual link discovery** — BFS + manual HTML extraction | BFS misses links inside `<nav>`/`<footer>`/`<header>`; manual pass catches them so no page is lost |
+| 4 | **Smart deduplication** — URL normalisation + SHA-256 content hashing | The same page can appear under 5+ different URLs; dedup ensures each page is saved exactly once |
+| 5 | **5-stage depth assignment** — Seed check → map lookup → metadata → default → cap | Every page gets the correct "clicks from homepage" number, even across restarts |
+| 6 | **Crash-safe checkpoint/resume** — `CrawlState` dataclass with `from_checkpoint()` / `to_checkpoint()` | A 72-hour crawl can be interrupted and resumed without losing progress |
+| 7 | **Varnish 503 retry** — Automatic retry with backoff for transient backend errors | DESY's Varnish cache occasionally returns 503; retry recovers those pages |
+| 8 | **230 unit tests** across 12 test files | Every filter, depth rule, and dedup decision is tested |
+| 9 | **Chunking pipeline** — Post-crawl markdown splitting for RAG/embedding | Output is ready for vector databases and LLM retrieval |
 
 ---
 
 ## What's New (March 2026)
 
-- **Modular architecture** — The original 9,400-line monolith has been decomposed into 6 focused modules with 230 unit tests.
-- **`CrawlConfig` dataclass** — All configuration in one injectable object; no more scattered globals.
-- **`CrawlState` dataclass** — All mutable crawler state in one serialisable object with `from_checkpoint()` / `to_checkpoint()` methods.
-- **5-layer URL filtering** — Groups 1–4 (login/auth, error pages, printversion/siteview, query-param dedup) plus BFS exclusion patterns block unwanted URLs before and after crawling.
-- **Printversion / `@@siteview` fix** — 5-part fix ensures Plone print-view duplicates are never saved: results sorted by URL length, dedup-key filenames, unified seen-URL keys, post-crawl filter, and exclusion-pattern guards at every result-append point.
-- **Depth-0 or-chain fix** — Depth lookup in Varnish 503 retry now uses explicit `is not None` guards and `min()` so seed URLs (depth 0) aren't misclassified.
-- **Crash-safe checkpoints** — `finally`-block checkpoint skip when depth maps are already nullified; prevents overwriting valid checkpoint data.
-- **Varnish 503 retry** — Transient backend errors are queued and retried with cache-bypass after a backoff period.
-- **Chunking pipeline** — Post-crawl markdown chunking for embedding/RAG (see `chunking/`).
+- **Modular architecture** — 9,400-line monolith → 6 modules + 230 tests.
+- **`CrawlConfig` / `CrawlState` dataclasses** — All config and state in clean, serialisable objects.
+- **5-layer URL filtering** — Login, error, printversion, query-param dedup, BFS exclusion.
+- **Printversion / `@@siteview` fix** — 5-part fix so Plone print-view duplicates are never saved.
+- **Depth-0 or-chain fix** — Seed URLs (depth 0) no longer misclassified during Varnish 503 retry.
+- **Crash-safe checkpoints** — Prevents overwriting valid checkpoint data on SLURM job termination.
+- **Varnish 503 retry** — Transient backend errors retried with cache-bypass after backoff.
+- **Chunking pipeline** — Post-crawl markdown chunking for embedding/RAG.
 
 ---
 
@@ -65,26 +82,32 @@ crawl4ai/
 
 ---
 
-## How It Works
+## How It Works (Simple Overview)
 
-1. **Start / Resume** — Load checkpoint (`CrawlState.from_checkpoint()`) if `USE_CHECKPOINT=True`, otherwise start fresh.
+> **Key idea:** The crawler works like opening a website, clicking every link, clicking every link on *those* pages, and so on — up to a configurable depth. Each page is saved as a markdown file in a folder named after its depth.
 
-2. **Browser & Strategy** — `_build_crawl_setup()` creates `BrowserConfig` (Playwright, stealth, headless), `BFSDeepCrawlStrategy` (depth/page limits, filter chain), content filter, and markdown generator. Returns a `CrawlSetup` namedtuple.
+```
+Seed URLs (depth 0)
+  │
+  ├──→ BFS discovers links on page  ──→  depth 1 pages
+  │       │
+  │       └──→  depth 2, depth 3 …
+  │
+  └──→ Manual pass catches links BFS missed (nav/footer/header)
+          │
+          └──→  also crawled and assigned depth
+```
 
-3. **Crawl Seeds** — For each URL in `ROOT_URLS`, launch BFS crawl via `crawler.arun()`. Results include seed + all discovered pages up to `MAX_DEPTH`.
+**Step by step:**
 
-4. **Iterative Link Discovery** — Multi-pass loop: parse HTML of all results with BeautifulSoup, extract outgoing links, filter by scope/exclusion/depth cap, batch-crawl new URLs via `arun_many`, repeat until no new URLs found.
-
-5. **Result Processing (STEP 8)** — For each result:
-   - **Sort** results by URL length (shorter = cleaner URL wins dedup)
-   - **Filter** via `filter_result_pre_save()` — 7-stage pipeline: scope, login, binary, login-wall, blank, Varnish 503, printversion/siteview
-   - **Assign depth** via `assign_page_depth()` — 5-stage: seed check → map lookup (min of crawled + additional) → metadata → default → cap
-   - **Extract content** — Indico events, DOM-ordered tables, external links, contacts, markdown cleanup
-   - **Write** one `.md` file per URL under `depth_N/`; update `all_urls_by_depth` only after write
-
-6. **Varnish 503 Retry** — URLs that returned transient Varnish errors are retried with cache-bypass after a 10-second backoff.
-
-7. **Finish** — Save `urls_by_depth.json`, `crawl_errors.json`, final checkpoint. Free memory and exit.
+1. **Start or resume** — Load checkpoint if one exists, otherwise start fresh.
+2. **Crawl seed URLs** — Open each seed page in a headless browser, follow links using BFS up to `MAX_DEPTH`.
+3. **Catch missed links** — BFS skips links inside `<nav>`, `<footer>`, `<header>`. A second pass re-reads the raw HTML and catches those links.
+4. **Filter** — Before saving, every result passes through a 7-stage filter (scope, login, binary, login-wall, blank, Varnish 503, printversion).
+5. **Deduplicate** — The same page can appear under many URLs. URL normalisation + content hashing ensure it's saved only once.
+6. **Assign depth** — Each page gets a depth number (0, 1, 2, 3 …) that represents "how many clicks from the homepage."
+7. **Save** — One `.md` file per page, organised into `depth_0/`, `depth_1/`, etc.
+8. **Checkpoint** — State is saved every 1,000 pages. If the job crashes, it resumes from where it left off.
 
 ---
 
@@ -273,8 +296,36 @@ python chunking/run_chunking.py --run-id 23 --write-index
 
 ### Depth Assignment
 
-- `assign_page_depth()` resolves depth in 5 stages: (1) seed URL → depth 0, (2) minimum across both crawled and additional depth maps for both original and final URLs, (3) `result.metadata['depth']` fallback, (4) default to 1 for non-seeds, (5) cap at `MAX_DEPTH`.
-- The `*_merged` depth maps accumulate across SLURM job restarts via checkpoint round-trips — `CrawlState.to_checkpoint()` saves merged maps, and `from_checkpoint()` restores them, always keeping the shallowest-ever observed depth for each URL.
+#### Why two discovery methods?
+
+Crawl4AI's BFS (`BFSDeepCrawlStrategy`) removes `<nav>`, `<footer>`, `<header>`, and `<aside>` elements from the HTML **before** it looks for links. This is good for keeping navigation noise out of the final markdown, but it means BFS never sees links that live exclusively inside those elements — for example, a sidebar link to `/desy_in_leichter_sprache/` that only appears in `<nav>`.
+
+To avoid missing those links, a second pass (manual link extraction) re-reads the **raw, unfiltered HTML** of every already-crawled page with BeautifulSoup and collects all `<a href>` tags — including ones inside nav/footer/header. Any new links that BFS missed are then crawled as single pages.
+
+#### Two depth maps
+
+Each discovery method records the depth at which it found a URL:
+
+| Map | Populated by | Source of depth value |
+|---|---|---|
+| `crawled_urls_with_depth` | BFS results | `result.metadata['depth']` set by Crawl4AI |
+| `additional_urls_with_depth` | Manual link extraction | `source_depth + 1` (parent page's depth + 1) |
+
+The same URL can appear in both maps with different depths (e.g., BFS found it at depth 2 via one path, manual extraction found it at depth 1 via a direct sidebar link from a seed page).
+
+#### How `assign_page_depth()` resolves the final depth
+
+The function resolves depth in 5 stages:
+
+1. **Seed check** — if the URL is a seed (root) URL → depth **0**.
+2. **Map lookup** — look up the URL in both maps (trying both original and final redirect URL). If found, take the **shallowest** (minimum) value.
+3. **Metadata fallback** — `result.metadata['depth']` or `result.depth`.
+4. **Default** — non-seed pages with no depth info default to **1**.
+5. **Cap** — clamp to `MAX_DEPTH`.
+
+#### Checkpoint persistence
+
+The `*_merged` depth maps accumulate across SLURM job restarts via checkpoint round-trips — `CrawlState.to_checkpoint()` saves merged maps, and `from_checkpoint()` restores them, always keeping the shallowest-ever observed depth for each URL.
 
 ### Key Design Decisions
 
