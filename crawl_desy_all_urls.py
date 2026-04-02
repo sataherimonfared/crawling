@@ -52,8 +52,8 @@ import asyncio
 import json
 import re
 import logging
-import json
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 from html import unescape
@@ -67,11 +67,23 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
     print("[WARNING] aiohttp not available - redirect resolution will use synchronous fallback")
 
+# URL utility functions (extracted in refactoring Step 2)
+import url_utils as _url_utils
+
+# Table processing functions (extracted in refactoring Step 3)
+import table_processing as _table_processing
+
+# Content extraction functions (extracted in refactoring Step 4)
+import content_extraction as _content_extraction
+import markdown_cleanup as _markdown_cleanup
+import checkpoint as _checkpoint
+
 
 # Crawl4AI is a required runtime dependency for this script.
 # Keep the failure mode explicit and actionable (no URL-specific behavior).
 try:
     from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, BrowserConfig
+    from crawl4ai import MemoryAdaptiveDispatcher, RateLimiter
     from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 except ModuleNotFoundError as e:
     if e.name == "crawl4ai":
@@ -93,49 +105,14 @@ except ImportError:
     BEAUTIFULSOUP_AVAILABLE = False
     print("[WARNING] BeautifulSoup not available - links/emails in tables may not be preserved")
 
-# ============================================================================
-# PERFORMANCE FIX: Soup caching to avoid redundant HTML parsing
-# ============================================================================
-# Parsing large HTML documents with BeautifulSoup is expensive (50-200ms per page).
-# The same result.html is often parsed 4-5 times in different code paths.
-# This cache ensures each HTML is parsed only once per result.
-
-_soup_cache = {}  # Keyed by result URL
-
 def _get_cached_soup(result):
-    """
-    Get a cached BeautifulSoup object for a crawl result's HTML.
-    
-    PERFORMANCE: Avoids redundant parsing of the same HTML multiple times.
-    Each parse of a 200KB HTML takes ~100ms; with 4-5 parses per page at 5000 pages,
-    this saves ~2000+ seconds per crawl.
-    
-    Args:
-        result: Crawl result object with .url and .html attributes
-        
-    Returns:
-        BeautifulSoup object, or None if HTML not available
-    """
-    if not BEAUTIFULSOUP_AVAILABLE:
-        return None
-    if not result or not hasattr(result, 'html') or not result.html:
-        return None
-    
-    url = getattr(result, 'url', None)
-    if not url:
-        # No URL to cache by - parse directly
-        return BeautifulSoup(result.html, 'lxml')
-    
-    if url not in _soup_cache:
-        _soup_cache[url] = BeautifulSoup(result.html, 'lxml')
-    
-    return _soup_cache[url]
+    """Delegate to content_extraction."""
+    return _content_extraction._get_cached_soup(result)
 
 
 def _clear_soup_cache():
-    """Clear the soup cache to free memory after processing."""
-    global _soup_cache
-    _soup_cache.clear()
+    """Delegate to content_extraction."""
+    _content_extraction._clear_soup_cache()
 
 # Content filtering support (PruningContentFilter for removing non-essential content)
 try:
@@ -189,12 +166,14 @@ except ImportError:
 
 # List of URLs to crawl
 ROOT_URLS = [
+    "https://it.desy.de/index_eng.html",
+    "https://it.desy.de/index_ger.html",
+    # # "https://www.desy.de",
+    # "https://desy.de/index_ger.html",
+    # "https://desy.de/index_eng.html",
     # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
     # "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
     # "https://www.desy.de/career/contact/index_eng.html",
-    # # "https://www.desy.de",
-    "https://desy.de/index_ger.html",
-    "https://desy.de/index_eng.html",
     # "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
     # # Events page (should extract events)
 
@@ -218,6 +197,14 @@ ROOT_URLS = [
     # "https://indico.desy.de/event/51547/",
 ]
 
+# Restrict crawling to URLs that start with these prefixes.
+# With the current seeds, this keeps the crawl inside the DESY IT site only.
+# To re-enable every DESY subdomain later, set this tuple to ("https://desy.de/",)
+# and change _is_allowed_crawl_url() to return _is_desy_domain(urlparse(url).netloc).
+ALLOWED_URL_PREFIXES = (
+    "https://it.desy.de/",
+)
+
 
 
 
@@ -229,8 +216,9 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't 
 
 # Log directory for all log files
 #LOG_DIR = Path("/data/dust/group/it/ReferenceData/log")
-LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/23/log")
-
+#LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/23/log")
+LOG_DIR = OUTPUT_DIR / "log"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 try:
     # Try to create the directory if it doesn't exist
@@ -409,86 +397,35 @@ CONTENT_CRITICAL_PARAMS = {
 # These functions save and load crawler state to enable resuming after crashes
 
 def save_checkpoint(checkpoint_data: dict) -> bool:
-    """
-    Save checkpoint to disk for crash recovery.
-    
-    Args:
-        checkpoint_data: Dictionary containing:
-            - seen_final_urls: Set of processed URLs
-            - all_urls_by_depth: Dict of URLs organized by depth
-            - all_successful_urls: List of successfully saved URLs
-            - all_errors: List of errors
-            - additional_urls_with_depth: Dict of URL -> depth mapping
-            - crawled_urls_with_depth: Dict of already crawled URLs with depths
-    
-    Returns:
-        True if save successful, False otherwise
-    """
-    try:
-        import json
-        # Convert sets to lists for JSON serialization
-        serializable_data = {
-            'timestamp': datetime.now().isoformat(),
-            'seen_final_urls': list(checkpoint_data.get('seen_final_urls', set())),
-            'all_urls_by_depth': checkpoint_data.get('all_urls_by_depth', {}),
-            'all_successful_urls': checkpoint_data.get('all_successful_urls', []),
-            'all_errors': checkpoint_data.get('all_errors', []),
-            'additional_urls_with_depth': checkpoint_data.get('additional_urls_with_depth', {}),
-            'crawled_urls_with_depth': checkpoint_data.get('crawled_urls_with_depth', {}),
-            'pages_processed': checkpoint_data.get('pages_processed', 0),
-            'max_depth_crawled': checkpoint_data.get('max_depth_crawled', 0),  # Track the max depth that was crawled
-            'seed_urls_processed': list(checkpoint_data.get('seed_urls_processed', set())),  # Track which seed URLs were processed
-        }
-        CHECKPOINT_FILE.write_text(json.dumps(serializable_data, indent=2), encoding='utf-8')
-        return True
-    except Exception as e:
-        print(f"[WARNING] Failed to save checkpoint: {e}")
-        return False
+    """Delegate to checkpoint module."""
+    return _checkpoint.save_checkpoint(checkpoint_data, CHECKPOINT_FILE)
 
 
 def load_checkpoint() -> dict:
-    """
-    Load checkpoint from disk if USE_CHECKPOINT is True.
-    
-    Returns:
-        Dictionary with checkpoint data, or empty dict if no checkpoint exists
-    """
-    if not USE_CHECKPOINT:
-        return {}
-    
-    try:
-        import json
-        if CHECKPOINT_FILE.exists():
-            data = json.loads(CHECKPOINT_FILE.read_text(encoding='utf-8'))
-            # Convert lists back to sets where needed
-            return {
-                'seen_final_urls': set(data.get('seen_final_urls', [])),
-                'all_urls_by_depth': data.get('all_urls_by_depth', {}),
-                'all_successful_urls': data.get('all_successful_urls', []),
-                'all_errors': data.get('all_errors', []),
-                'additional_urls_with_depth': data.get('additional_urls_with_depth', {}),
-                'crawled_urls_with_depth': data.get('crawled_urls_with_depth', {}),
-                'pages_processed': data.get('pages_processed', 0),
-                'max_depth_crawled': data.get('max_depth_crawled', 0),
-                'seed_urls_processed': set(data.get('seed_urls_processed', [])),
-            }
-    except Exception as e:
-        print(f"[WARNING] Failed to load checkpoint: {e}")
-    
-    return {}
+    """Delegate to checkpoint module."""
+    return _checkpoint.load_checkpoint(CHECKPOINT_FILE, USE_CHECKPOINT)
 
 # How many pages to crawl simultaneously (parallelism)
-# Higher = faster but uses more resources
-# Recommended: 3-5 for stable crawling, 10+ for faster (may trigger rate limits)
-# PERFORMANCE: Increased from 15 to 30 to accelerate crawling
-# I checked this: python -c "import os; print(os.cpu_count())" 96
-CONCURRENT_TASKS = 10
-
 # Maximum depth to crawl (how many link levels to follow)
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 1
+MAX_DEPTH = 4
+
+# Higher = faster but uses more resources; scaled down for deeper crawls to avoid Varnish 503 bursts.
+# Scaling: depth=3→10, depth=4→8, depth=5→6, depth=6+→4
+# I checked this: python -c "import os; print(os.cpu_count())" 96
+CONCURRENT_TASKS = max(4, 10 - (MAX_DEPTH - 3) * 2)  # fewer workers for deeper crawls
+INTER_BATCH_DELAY = 0.0 if MAX_DEPTH <= 3 else 1.5  # seconds; restores pacing removed by ProcessPoolExecutor
+
+
+# Number of parallel workers for STEP 8 result processing (Issue 3 fix).
+# Each worker runs the CPU-heavy per-result pipeline (markdown extraction,
+# table/image extraction, cleanup, file write) in a separate process.
+# Set to 0 to disable parallelism and process results serially.
+import os as _os
+PARALLEL_WORKERS = min(64, _os.cpu_count() or 1)
+
 
 # Maximum total pages to crawl (set to a large number for no practical limit)
 # Set to a very large number (like 10000) to crawl all 862+ pages you found
@@ -498,8 +435,54 @@ MAX_DEPTH = 1
 MAX_PAGES = 200000  # Increased to match reference file (100,012 URLs) with room for growth
 
 # Anti-bot settings
-ENABLE_STEALTH_MODE = True  # Enable stealth mode to evade bot detection
+ENABLE_STEALTH_MODE = False  # Disabled: honest crawler, not disguised as human browser
 HEADLESS = True  # Run browser in headless mode (no visible window)
+
+# Identifying User-Agent for DESY WebOffice logs
+CRAWLER_USER_AGENT = (
+    "Mozilla/5.0 (compatible; DESY-IT-LLM-Crawler/1.0; "
+    "+https://it.desy.de/; contact taheri@mail.desy.de)"
+)
+
+# Per-page delay (ms) added inside CrawlerRunConfig to space requests within arun_many.
+# Only active at MAX_DEPTH >= 4 to avoid slowing down shallow runs.
+PAGE_DELAY_MS = 500 if MAX_DEPTH >= 4 else 0
+
+# Pre-seed parent URLs: pages fetched sequentially (before BFS starts) whose
+# child <a href> links are injected into the crawl queue.
+# Use this for parent pages that work fine individually but sometimes fail (e.g. 503)
+# under concurrent BFS load, causing their child URLs to never be discovered.
+# Update this list whenever you change ROOT_URLS / ALLOWED_URL_PREFIXES.
+# Discovered child URLs are crawled at depth PRESEED_CHILD_DEPTH.
+# Set to [] to disable.  Only active when MAX_DEPTH >= 2.
+
+# --- Helper: UCO calendar month-view URLs (current + previous month) ---
+# These calendar pages sometimes 503 under concurrent load, causing event
+# detail pages (invId=...) to be missed.  Produces 4 URLs per base path.
+import datetime as _dt_preseed
+_preseed_today = _dt_preseed.date.today()
+_preseed_curr = _preseed_today.replace(day=1).strftime('%Y%m%d')
+_preseed_prev = ((_preseed_today.replace(day=1) - _dt_preseed.timedelta(days=1))
+                 .replace(day=1).strftime('%Y%m%d'))
+
+def _uco_calendar_urls(*base_paths):
+    """Generate current + previous month calendar URLs for given base paths."""
+    urls = []
+    for base in base_paths:
+        urls.append(f"{base}?view=month&date={_preseed_prev}")
+        urls.append(f"{base}?view=month&date={_preseed_curr}")
+    return urls
+
+PRESEED_PARENT_URLS = _uco_calendar_urls(
+    # -- it.desy.de UCO calendar (DE + EN) --
+    "https://it.desy.de/dienste/uco/aktuelles/index_ger.html",
+    "https://it.desy.de/services/uco/news/index_eng.html",
+    # -- Add more base paths here when expanding scope, e.g.: --
+    # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
+    # "https://www.desy.de/news/events/index_eng.html",
+) if MAX_DEPTH >= 2 else []
+
+PRESEED_CHILD_DEPTH = 3  # depth assigned to child URLs found via pre-seeding
 
 # JavaScript rendering
 # Crawl4AI uses Playwright by default, which handles JavaScript automatically
@@ -516,436 +499,149 @@ PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previou
 FORCE_LOCALE = "en-US"
 ACCEPT_LANGUAGE_HEADER = "en-US,en;q=0.9"
 
+
+# ============================================================================
+# CRAWL CONFIGURATION DATACLASS
+# ============================================================================
+# Single source of truth for all crawl parameters.  Refactored phase-functions
+# receive a CrawlConfig instance instead of reading module-level globals.
+#
+# The existing module-level constants above are kept for backward compatibility
+# until every call-site is migrated.  The defaults here mirror those constants
+# exactly so that ``CrawlConfig()`` reproduces the current behaviour.
+# ============================================================================
+
+@dataclass
+class CrawlConfig:
+    """All crawl configuration in one place."""
+
+    # -- Seed URLs --------------------------------------------------------
+    root_urls: list = field(default_factory=lambda: list(ROOT_URLS))
+
+    # -- Scope restriction ------------------------------------------------
+    allowed_url_prefixes: tuple = field(default_factory=lambda: ALLOWED_URL_PREFIXES)
+
+    # -- Output paths -----------------------------------------------------
+    output_dir: Path = field(default_factory=lambda: OUTPUT_DIR)
+    log_dir: Path = field(default_factory=lambda: LOG_DIR)
+
+    # -- Domain / redirect filtering --------------------------------------
+    excluded_domains: set = field(default_factory=lambda: set(EXCLUDED_DOMAINS))
+    check_redirects_to_excluded: bool = CHECK_REDIRECTS_TO_EXCLUDED
+
+    # -- Checkpoint / resume ----------------------------------------------
+    use_checkpoint: bool = USE_CHECKPOINT
+    checkpoint_frequency: int = CHECKPOINT_FREQUENCY
+
+    # -- GROUP 1: login / auth / admin patterns ---------------------------
+    login_auth_admin_patterns: list = field(
+        default_factory=lambda: list(LOGIN_AUTH_ADMIN_PATTERNS)
+    )
+    auth_only_domains: set = field(default_factory=lambda: set(AUTH_ONLY_DOMAINS))
+
+    # -- GROUP 2: error-page patterns -------------------------------------
+    error_url_patterns: list = field(
+        default_factory=lambda: list(ERROR_URL_PATTERNS)
+    )
+    error_prone_domains: set = field(default_factory=lambda: set(ERROR_PRONE_DOMAINS))
+
+    # -- GROUP 4: query-param dedup ---------------------------------------
+    ui_only_query_params: set = field(default_factory=lambda: set(UI_ONLY_QUERY_PARAMS))
+    content_critical_params: set = field(
+        default_factory=lambda: set(CONTENT_CRITICAL_PARAMS)
+    )
+
+    # -- Crawler knobs ----------------------------------------------------
+    concurrent_tasks: int = CONCURRENT_TASKS
+    max_depth: int = MAX_DEPTH
+    max_pages: int = MAX_PAGES
+    enable_stealth_mode: bool = ENABLE_STEALTH_MODE
+    headless: bool = HEADLESS
+    page_timeout: int = PAGE_TIMEOUT
+    page_timeout_extended: int = PAGE_TIMEOUT_EXTENDED
+    force_locale: str = FORCE_LOCALE
+    accept_language_header: str = ACCEPT_LANGUAGE_HEADER
+
+    # -- Unified binary-extension list ------------------------------------
+    # Superset of the old _BINARY_EXTENSIONS (pre-crawl) and
+    # _BINARY_EXTENSIONS_CHECK (post-crawl).  One list, used everywhere.
+    binary_extensions: tuple = (
+        '.gif', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.bmp', '.ico',
+        '.tiff', '.zip', '.tar', '.gz', '.rar',
+        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.mp4', '.mp3', '.avi', '.mov', '.wmv', '.flv', '.ogg', '.wav',
+        # Academic / LaTeX source files (run-20 noise)
+        '.tex', '.eps', '.ps', '.tgz', '.bib',
+        '.f90', '.f77', '.f',
+        '.bbl', '.blg', '.cls', '.sty', '.dtx', '.ins', '.aux',
+        # RSS / Atom feeds
+        '.atom',
+    )
+
+    # -- BFS exclusion patterns -------------------------------------------
+    # Populated from the FilterChain setup inside crawl_site() when
+    # URL_FILTER_AVAILABLE is True.  Defaults to [] so references in the
+    # iterative link-extraction loop never raise NameError.
+    exclusion_patterns: list = field(default_factory=list)
+
+    # -- Derived (computed in __post_init__) -------------------------------
+    error_log_file: Path = field(init=False, repr=False)
+    checkpoint_file: Path = field(init=False, repr=False)
+    compiled_login_patterns: list = field(init=False, repr=False)
+    compiled_error_patterns: list = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.error_log_file = self.log_dir / "crawl_errors.json"
+        self.checkpoint_file = self.log_dir / "crawl_checkpoint.json"
+        self.compiled_login_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.login_auth_admin_patterns
+        ]
+        self.compiled_error_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.error_url_patterns
+        ]
+
+
+# Default config instance — mirrors the module-level constants exactly.
+config = CrawlConfig()
+
+
 #6000=>148 errors
 #45000=> 176 errors
 # ============================================================================
-# Custom Table Extraction Strategy that Preserves Links
-# ============================================================================
-# This custom strategy extends DefaultTableExtraction to preserve HTML links
-# (including mailto: links) in table cells by converting them to markdown format.
-# This is a general-purpose solution that works for all types of URLs.
-class LinkPreservingTableExtraction(TableExtractionStrategy):
-    """
-    Custom table extraction strategy that preserves HTML links and emails in table cells.
-    
-    This strategy wraps DefaultTableExtraction but post-processes the extracted tables
-    to convert HTML links to markdown format, ensuring emails and URLs are preserved.
-    """
-    
-    def __init__(self, table_score_threshold=3, min_rows=1, min_cols=2, verbose=True):
-        """
-        Initialize the link-preserving table extraction strategy.
-        
-        Args:
-            table_score_threshold: Minimum score for a table to be extracted (lower = more tables)
-            min_rows: Minimum number of rows for a valid table
-            min_cols: Minimum number of columns for a valid table
-            verbose: Enable verbose logging
-        """
-        self.base_strategy = DefaultTableExtraction(
-            table_score_threshold=table_score_threshold,
-            min_rows=min_rows,
-            min_cols=min_cols,
-            verbose=verbose
-        )
-        self.verbose = verbose
-        # Add logger attribute that TableExtractionStrategy expects
-        self.logger = logging.getLogger(__name__)
-    
-    def extract_tables(self, element, **kwargs):
-        """
-        Extract tables from HTML, preserving links in cells.
-        
-        Args:
-            element: HTML element (can be string, BeautifulSoup, or element)
-            **kwargs: Additional parameters (may include url, extraction_strategy, etc.)
-            
-        Returns:
-            List of extracted tables with links preserved as markdown
-        """
-        # Extract URL from kwargs if available
-        url = kwargs.get('url', None)
-        
-        # Convert element to HTML string if needed
-        if isinstance(element, str):
-            html = element
-        else:
-            # If it's a BeautifulSoup object or other element, convert to string
-            html = str(element) if hasattr(element, '__str__') else str(element)
-        
-        # First, use DefaultTableExtraction to get the table structure
-        # Pass element and kwargs to match expected signature
-        if hasattr(self.base_strategy, 'extract_tables'):
-            tables = self.base_strategy.extract_tables(element, **kwargs)
-        else:
-            # Fallback for older versions that might use extract()
-            tables = self.base_strategy.extract(html, url) if hasattr(self.base_strategy, 'extract') else []
-        
-        if not tables or not BEAUTIFULSOUP_AVAILABLE:
-            return tables
-        
-        # Parse HTML to extract link information
-        try:
-            soup = BeautifulSoup(html, 'lxml')
-            html_tables = soup.find_all('table')
-            
-            # Process each extracted table
-            for table_idx, table in enumerate(tables):
-                if table_idx >= len(html_tables):
-                    continue
-                
-                html_table = html_tables[table_idx]
-                
-                # Process headers
-                if 'headers' in table:
-                    table['headers'] = self._process_row(
-                        table['headers'],
-                        html_table,
-                        is_header=True
-                    )
-                
-                # Process rows
-                if 'rows' in table:
-                    processed_rows = []
-                    for row_idx, row in enumerate(table['rows']):
-                        processed_row = self._process_row(
-                            row,
-                            html_table,
-                            row_index=row_idx
-                        )
-                        processed_rows.append(processed_row)
-                    table['rows'] = processed_rows
-        
-        except Exception as e:
-            if self.verbose:
-                print(f"[WARNING] Failed to preserve links in tables: {e}")
-        
-        return tables
-    
-    def _process_row(self, row_data, html_table, is_header=False, row_index=0):
-        """
-        Process a table row, converting HTML links to markdown.
-        
-        Args:
-            row_data: List of cell values (plain text)
-            html_table: BeautifulSoup table element
-            is_header: Whether this is a header row
-            row_index: Index of the row in the table
-            
-        Returns:
-            List of processed cell values with links as markdown
-        """
-        processed_cells = []
-        
-        try:
-            # Find the corresponding row in HTML - use recursive=True to catch all rows
-            rows = html_table.find_all('tr', recursive=True)
-            # Filter to ensure rows belong to this table, not nested tables
-            rows = [r for r in rows if r.find_parent('table') == html_table]
-            
-            # Determine which HTML row to use
-            html_row_idx = row_index
-            if is_header:
-                # Check if there's a thead
-                thead = html_table.find('thead')
-                if thead:
-                    header_rows = thead.find_all('tr', recursive=True)
-                    header_rows = [r for r in header_rows if r.find_parent('table') == html_table]
-                    if row_index < len(header_rows):
-                        html_row = header_rows[row_index]
-                    else:
-                        html_row = None
-                else:
-                    # First row might be header
-                    html_row = rows[0] if rows else None
-            else:
-                # Data row - skip header rows
-                tbody = html_table.find('tbody')
-                if tbody:
-                    tbody_rows = tbody.find_all('tr', recursive=True)
-                    tbody_rows = [r for r in tbody_rows if r.find_parent('table') == html_table]
-                    if row_index < len(tbody_rows):
-                        html_row = tbody_rows[row_index]
-                    else:
-                        html_row = None
-                else:
-                    # No tbody, skip first row if it's a header
-                    start_idx = 1 if html_table.find('th') else 0
-                    actual_idx = start_idx + row_index
-                    html_row = rows[actual_idx] if actual_idx < len(rows) else None
-            
-            if html_row:
-                # Use recursive=True to catch all cells, then filter nested tables
-                # Since we're using html_row.find_all(), all returned cells are descendants of html_row
-                # We only need to filter out cells that belong to nested tables
-                html_cells = html_row.find_all(['td', 'th'], recursive=True)
-                html_cells = [c for c in html_cells if c.find_parent('table') == html_table]
-                
-                # Process each cell
-                for cell_idx, cell_value in enumerate(row_data):
-                    if cell_idx < len(html_cells):
-                        html_cell = html_cells[cell_idx]
-                        processed_cell = self._process_cell(cell_value, html_cell)
-                        processed_cells.append(processed_cell)
-                    else:
-                        processed_cells.append(str(cell_value))
-            else:
-                # No matching HTML row, return as-is
-                processed_cells = [str(cell) for cell in row_data]
-        
-        except Exception:
-            # If processing fails, return original row data
-            processed_cells = [str(cell) for cell in row_data]
-        
-        return processed_cells
-    
-    def _process_cell(self, cell_text, html_cell):
-        """
-        Process a single table cell, converting HTML links to markdown.
-        
-        Args:
-            cell_text: Plain text content of the cell
-            html_cell: BeautifulSoup cell element
-            
-        Returns:
-            Processed cell text with links as markdown
-        """
-        if not html_cell:
-            return str(cell_text)
-        
-        try:
-            # Find all links in the cell
-            links = html_cell.find_all('a', href=True)
-            
-            if not links:
-                return str(cell_text)
-            
-            # Convert links to markdown
-            markdown_links = []
-            for link in links:
-                href = link.get('href', '').strip()
-                link_text = link.get_text(strip=True) or href
-                
-                if href.startswith('mailto:'):
-                    email = unescape(href[7:])
-                    markdown_links.append(f"[{link_text}](mailto:{email})")
-                elif href:
-                    markdown_links.append(f"[{link_text}]({href})")
-            
-            # If we have links, return them (prioritize email links)
-            if markdown_links:
-                email_links = [l for l in markdown_links if 'mailto:' in l]
-                if email_links:
-                    return email_links[0] if len(email_links) == 1 else " | ".join(email_links)
-                else:
-                    return " | ".join(markdown_links)
-            else:
-                return str(cell_text)
-        
-        except Exception:
-            return str(cell_text)
+# Custom Table Extraction Strategy (delegated to table_processing module)
+LinkPreservingTableExtraction = _table_processing.LinkPreservingTableExtraction
 
 
 def format_cell_with_links(cell_content, cell_html=None):
-    """
-    Format a table cell, preserving links and emails as markdown.
-    
-    This function ensures that hyperlinks and email addresses within table cells
-    are preserved in the markdown output. If cell_html is provided, it extracts
-    links and emails from the HTML. Otherwise, it processes the text content.
-    
-    Args:
-        cell_content: Plain text content of the cell
-        cell_html: Optional HTML content of the cell (for link extraction)
-    
-    Returns:
-        Formatted markdown string with links preserved
-    """
-    if not cell_content:
-        return ""
-    
-    # If HTML is available, extract links and emails from it
-    if cell_html and BEAUTIFULSOUP_AVAILABLE:
-        try:
-            soup = BeautifulSoup(cell_html, 'lxml')
-            cell_text = soup.get_text(strip=True)
-            
-            # Extract all links (both <a> tags and mailto: links)
-            links = []
-            for link in soup.find_all('a', href=True):
-                href = link.get('href', '').strip()
-                link_text = link.get_text(strip=True) or href
-                
-                # Handle email links (mailto:) - this is critical for preserving emails
-                if href.startswith('mailto:'):
-                    email = unescape(href[7:])
-                    # For email links, use the email address as the link text if link_text is just the name
-                    # Format: [Name](mailto:email@desy.de)
-                    links.append(f"[{link_text}](mailto:{email})")
-                # Handle regular links
-                elif href:
-                    # Make relative URLs absolute if needed
-                    if href.startswith('/'):
-                        # Keep as-is for now (could make absolute if base URL available)
-                        links.append(f"[{link_text}]({href})")
-                    elif href.startswith('http'):
-                        links.append(f"[{link_text}]({href})")
-                    else:
-                        links.append(f"[{link_text}]({href})")
-            
-            # If we found links, prioritize links over plain text
-            # For email cells, the link IS the content, so return just the link
-            if links:
-                # For email links, return just the markdown link (not combined with text)
-                # This ensures emails appear as [Name](mailto:email@desy.de) instead of "Name | [Name](mailto:email@desy.de)"
-                email_links = [l for l in links if 'mailto:' in l]
-                if email_links:
-                    # If we have email links, return them (usually just one)
-                    return email_links[0] if len(email_links) == 1 else " | ".join(email_links)
-                else:
-                    # Regular links - combine with text if text is different
-                    if cell_text and cell_text.strip():
-                        # Check if cell_text matches any link text
-                        link_texts = [l.split(']')[0].replace('[', '').strip() for l in links]
-                        if cell_text.strip() not in link_texts:
-                            # Text is different from link text, combine them
-                            return f"{cell_text} | " + " | ".join(links)
-                    return " | ".join(links)
-            else:
-                return cell_text or str(cell_content)
-        except Exception:
-            # Fallback to plain text if HTML parsing fails
-            return str(cell_content)
-    else:
-        # No HTML available, check if text contains email pattern
-        text = str(cell_content).strip()
-        
-        # Try to detect email in plain text
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        emails = re.findall(email_pattern, text)
-        if emails:
-            # Replace email with markdown link
-            for email in emails:
-                text = text.replace(email, f"[{email}](mailto:{email})")
-        
-        return text
+    """Delegate to table_processing."""
+    return _table_processing.format_cell_with_links(cell_content, cell_html)
 
 
 def is_pdf_url(url):
-    """
-    Check if a URL points to a PDF file.
-    Handles URLs with query parameters like ?preview=preview
-    Also detects common PDF URL patterns like /pdf/ (e.g., arXiv URLs)
-    """
-    # Remove query parameters and fragments for checking
-    url_clean = url.split('?')[0].split('#')[0].lower()
-    
-    # Check if URL ends with .pdf (case-insensitive)
-    if url_clean.endswith('.pdf') or '.pdf' in url_clean:
-        return True
-    
-    # Check for common PDF URL patterns (e.g., arXiv: /pdf/12345)
-    # Pattern: /pdf/ followed by alphanumeric characters
-    pdf_patterns = [
-        r'/pdf/',           # arXiv, many academic sites (e.g., arxiv.org/pdf/12345)
-        r'/pdfs/',          # Alternative pattern
-        r'/document/',      # Some document servers
-        r'/file.*\.pdf',    # File paths with .pdf
-    ]
-    
-    for pattern in pdf_patterns:
-        if re.search(pattern, url_clean):
-            return True
-    
-    return False
+    """Delegate to url_utils."""
+    return _url_utils.is_pdf_url(url)
 
 
 def is_pubdb_url(url):
-    """
-    Check if a URL is a PUBDB (bib-pubdb1.desy.de) page.
-    These pages require special filtering to remove navigation/search UI elements.
-    """
-    if not url:
-        return False
-    url_lower = url.lower()
-    return 'bib-pubdb1.desy.de' in url_lower or 'bib-pubdb' in url_lower
+    """Delegate to table_processing."""
+    return _table_processing.is_pubdb_url(url)
 
 
 def is_pubdb_content(html_content):
-    """
-    Check if HTML content is from a PUBDB page by detecting PUBDB-specific markers.
-    This handles cases where pages redirect to or embed PUBDB content.
-    """
-    if not html_content:
-        return False
-    html_lower = str(html_content).lower()
-    # Check for PUBDB domain in links/content
-    pubdb_indicators = [
-        'bib-pubdb1.desy.de',
-        'bib-pubdb',
-        'guest :: login',
-        'search: | [search tips]',
-        'sort by: | display results:',
-        'results overview',
-        'interested in being notified about new results'
-    ]
-    # Need at least 2 indicators to be confident it's PUBDB content
-    matches = sum(1 for indicator in pubdb_indicators if indicator in html_lower)
-    return matches >= 2
+    """Delegate to table_processing."""
+    return _table_processing.is_pubdb_content(html_content)
 
-
-# PUBDB UI keywords that indicate navigation/search interface (not publication records)
-_PUBDB_UI_KEYWORDS = [
-    'guest', 'login', 'search:', 'sort by:', 'display results:',
-    'output format:', 'search tips', 'collections:', 'name | info',
-    'results overview', 'try your search', 'rss feed', 'interested in being notified',
-    'haven\'t found what you were looking for'
-]
-
+_PUBDB_UI_KEYWORDS = _table_processing._PUBDB_UI_KEYWORDS
 
 def is_pubdb_ui_table(table_text):
-    """
-    Check if a table is a PUBDB UI table (navigation/search interface) rather than publication records.
-    
-    Args:
-        table_text: The text content of the table (lowercase recommended)
-    
-    Returns:
-        bool: True if the table is a UI table, False if it contains publication records
-    """
-    if not table_text:
-        return False
-    
-    # Ensure lowercase for consistent matching
-    table_text_lower = table_text.lower() if not isinstance(table_text, str) or table_text != table_text.lower() else table_text
-    
-    # Check if this table contains publication records (PUBDB-YYYY-NNNNN pattern)
-    has_publication_id = bool(re.search(r'pubdb-\d{4}-\d{5}', table_text_lower, re.I))
-    
-    # Only filter if it has UI keywords AND doesn't contain publication IDs
-    # Also filter if it contains "pubdb" in UI context (login/pubdb link, not PUBDB-ID)
-    has_ui_keywords = any(keyword in table_text_lower for keyword in _PUBDB_UI_KEYWORDS)
-    has_pubdb_ui_context = ('pubdb' in table_text_lower and 
-                          ('login' in table_text_lower or 'guest' in table_text_lower or 
-                           'search:' in table_text_lower or 'submit' in table_text_lower))
-    
-    return (has_ui_keywords or has_pubdb_ui_context) and not has_publication_id
-
+    """Delegate to table_processing."""
+    return _table_processing.is_pubdb_ui_table(table_text)
 
 def _is_pubdb_page(url, html_content):
-    """
-    Check if a page is a PUBDB page by checking both URL and content.
-    This handles cases where pages redirect to or embed PUBDB content.
-    
-    Args:
-        url: The page URL (can be None)
-        html_content: The HTML content (can be None)
-    
-    Returns:
-        bool: True if the page is a PUBDB page
-    """
-    return (url and is_pubdb_url(url)) or is_pubdb_content(html_content)
-
+    """Delegate to table_processing."""
+    return _table_processing._is_pubdb_page(url, html_content)
 
 # ============================================================================
 # JavaScript-based Visibility Detection for Inactive/Hidden Links
@@ -959,4080 +655,212 @@ def _is_pubdb_page(url, html_content):
 # ============================================================================
 
 def get_link_visibility_detection_script():
-    """
-    Returns JavaScript code that detects which links are visible and clickable.
-    This should be executed in the browser AFTER page load to identify inactive links.
-    
-    Returns:
-        str: JavaScript code that returns an array of invisible link URLs
-    """
-    return """
-    (function() {
-        const invisibleLinks = [];
-        const allLinks = document.querySelectorAll('a[href]');
-        
-        for (const link of allLinks) {
-            const href = link.getAttribute('href');
-            if (!href || href.startsWith('#')) continue;  // Skip anchors and empty hrefs
-            
-            let isVisible = true;
-            let reason = null;
-            
-            // Check 1: Element has display:none or visibility:hidden
-            const computedStyle = window.getComputedStyle(link);
-            if (computedStyle.display === 'none') {
-                isVisible = false;
-                reason = 'display:none';
-            } else if (computedStyle.visibility === 'hidden') {
-                isVisible = false;
-                reason = 'visibility:hidden';
-            } else if (computedStyle.opacity === '0') {
-                isVisible = false;
-                reason = 'opacity:0';
-            }
-            
-            // Check 2: Element or parent is disabled/inactive
-            if (isVisible) {
-                if (link.hasAttribute('disabled') || 
-                    link.hasAttribute('aria-disabled') ||
-                    link.getAttribute('aria-disabled') === 'true') {
-                    isVisible = false;
-                    reason = 'disabled attribute or aria-disabled';
-                }
-                
-                // Check if parent or ancestor is disabled/inactive
-                let parent = link.parentElement;
-                for (let i = 0; i < 5; i++) {  // Check up to 5 levels up
-                    if (!parent) break;
-                    const classes = parent.className || '';
-                    const id = parent.id || '';
-                    if (classes.includes('disabled') || 
-                        classes.includes('inactive') || 
-                        classes.includes('is-disabled') ||
-                        id.includes('disabled') || 
-                        id.includes('inactive')) {
-                        isVisible = false;
-                        reason = 'parent has disabled/inactive class';
-                        break;
-                    }
-                    parent = parent.parentElement;
-                }
-            }
-            
-            // Check 3: Element is not in tab order (tabindex="-1" often means inactive)
-            if (isVisible && link.hasAttribute('tabindex') && 
-                link.getAttribute('tabindex') === '-1') {
-                isVisible = false;
-                reason = 'tabindex=-1 (not in tab order)';
-            }
-            
-            // Check 4: Element is clipped or has zero dimensions
-            if (isVisible) {
-                const rect = link.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) {
-                    isVisible = false;
-                    reason = 'zero dimensions (width or height)';
-                }
-            }
-            
-            // Check 5: Element is off-screen (common for skip links)
-            if (isVisible) {
-                const rect = link.getBoundingClientRect();
-                if (rect.top < -1000 || rect.left < -1000) {
-                    isVisible = false;
-                    reason = 'off-screen (skip link)';
-                }
-            }
-            
-            // If not visible, add to invisible links
-            if (!isVisible) {
-                invisibleLinks.push({
-                    url: href,
-                    text: link.textContent.trim().substring(0, 50),
-                    reason: reason
-                });
-            }
-        }
-        
-        return invisibleLinks;
-    })();
-    """
-
-
-# ============================================================================
-# Indico Event Page Extractor
-# ============================================================================
-# Indico pages (indico.desy.de) have a specific structure for events/meetings.
-# This extractor captures: event name, date, location, zoom links, contributions.
+    """Delegate to content_extraction."""
+    return _content_extraction.get_link_visibility_detection_script()
 
 def is_indico_url(url):
-    """Check if URL is an Indico event page."""
-    if not url:
-        return False
-    return 'indico.desy.de' in url.lower() and '/event/' in url.lower()
+    """Delegate to content_extraction."""
+    return _content_extraction.is_indico_url(url)
 
 
 def extract_indico_event(html_content, url=None):
-    """
-    Extract structured event information from Indico pages.
-    
-    Extracts:
-    - Event title
-    - Date and time
-    - Location (room) or Zoom link
-    - Description
-    - Registration/submission deadlines
-    - Contributions with speakers and attachments
-    
-    Args:
-        html_content: Raw HTML from the Indico page
-        url: The page URL (for reference)
-        
-    Returns:
-        Markdown-formatted string with event info, or None if extraction fails
-    """
-    if not BEAUTIFULSOUP_AVAILABLE or not html_content:
-        return None
-    
-    try:
-        soup = BeautifulSoup(html_content, 'lxml')
-        lines = []
-        
-        # === EVENT TITLE ===
-        # Indico uses h1 with class "event-header-title" or similar
-        title_elem = soup.find('h1', class_=lambda c: c and 'title' in str(c).lower())
-        if not title_elem:
-            title_elem = soup.find('h1')
-        if title_elem:
-            title = title_elem.get_text(strip=True)
-            lines.append(f"# {title}")
-            lines.append("")
-        
-        # === DATE AND TIME ===
-        # Look for date/time elements
-        date_elem = soup.find(['time', 'span', 'div'], class_=lambda c: c and ('date' in str(c).lower() or 'time' in str(c).lower()))
-        if not date_elem:
-            # Try finding by datetime attribute
-            date_elem = soup.find('time', attrs={'datetime': True})
-        if not date_elem:
-            # Try common patterns in text
-            for elem in soup.find_all(['span', 'div', 'p']):
-                text = elem.get_text(strip=True)
-                # Look for date patterns like "Friday Jan 16, 2026"
-                if re.search(r'(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+\w+\s+\d+', text, re.I):
-                    date_elem = elem
-                    break
-        
-        if date_elem:
-            date_text = date_elem.get_text(strip=True)
-            # Clean up the date text
-            date_text = re.sub(r'\s+', ' ', date_text)
-            lines.append(f"**Date:** {date_text}")
-            lines.append("")
-        
-        # === LOCATION ===
-        # Look for location/room info
-        location_elem = soup.find(['span', 'div'], class_=lambda c: c and 'location' in str(c).lower())
-        if not location_elem:
-            # Try looking for room patterns
-            for elem in soup.find_all(['span', 'div', 'p']):
-                text = elem.get_text(strip=True)
-                # Room patterns like "125 (68)" or "Room 125"
-                if re.match(r'^\d+\s*\(\d+\)$', text) or 'room' in text.lower():
-                    location_elem = elem
-                    break
-        
-        if location_elem:
-            location = location_elem.get_text(strip=True)
-            lines.append(f"**Location:** {location}")
-            lines.append("")
-        
-        # === ZOOM/VIDEO LINK ===
-        # Extract Zoom or video conference links
-        zoom_links = []
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            if any(vc in href.lower() for vc in ['zoom.us', 'teams.microsoft', 'meet.google', 'webex', 'bluejeans']):
-                link_text = link.get_text(strip=True) or href
-                zoom_links.append(f"[{link_text}]({href})")
-        
-        if zoom_links:
-            lines.append("**Video Conference:**")
-            for zl in zoom_links:
-                lines.append(f"- {zl}")
-            lines.append("")
-        
-        # === DESCRIPTION ===
-        # Look for description/abstract section
-        desc_elem = soup.find(['div', 'section'], class_=lambda c: c and 'description' in str(c).lower())
-        if not desc_elem:
-            desc_elem = soup.find(['div', 'section'], id=lambda i: i and 'description' in str(i).lower())
-        
-        if desc_elem:
-            desc_text = desc_elem.get_text(separator=' ', strip=True)
-            # Clean up and limit length
-            desc_text = re.sub(r'\s+', ' ', desc_text)
-            if desc_text and len(desc_text) > 10:
-                lines.append("**Description:**")
-                lines.append(desc_text[:1000])  # Limit to 1000 chars
-                lines.append("")
-        
-        # === DEADLINES ===
-        # Look for registration/submission deadlines
-        deadline_patterns = ['deadline', 'registration', 'submission', 'abstract']
-        for pattern in deadline_patterns:
-            for elem in soup.find_all(['div', 'span', 'p', 'dt', 'dd']):
-                text = elem.get_text(strip=True).lower()
-                if pattern in text and ('deadline' in text or re.search(r'\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}', text)):
-                    full_text = elem.get_text(strip=True)
-                    if len(full_text) < 200:  # Reasonable length for a deadline
-                        lines.append(f"**{full_text}**")
-        
-        if any('deadline' in l.lower() for l in lines):
-            lines.append("")
-        
-        # === CONTRIBUTIONS/AGENDA ===
-        # Look for timetable/contributions
-        contributions = []
-        
-        # Find timetable entries (usually in a structured list or table)
-        timetable = soup.find(['div', 'section', 'ul'], class_=lambda c: c and ('timetable' in str(c).lower() or 'contributions' in str(c).lower() or 'agenda' in str(c).lower()))
-        
-        if not timetable:
-            # Try finding by common patterns
-            timetable = soup.find(['div', 'section'], id=lambda i: i and ('timetable' in str(i).lower() or 'schedule' in str(i).lower()))
-        
-        if timetable:
-            # Look for individual entries
-            entries = timetable.find_all(['div', 'li', 'tr'], class_=lambda c: c and ('entry' in str(c).lower() or 'contribution' in str(c).lower() or 'talk' in str(c).lower()))
-            
-            for entry in entries[:20]:  # Limit to 20 contributions
-                entry_text = entry.get_text(separator=' ', strip=True)
-                entry_text = re.sub(r'\s+', ' ', entry_text)
-                
-                # Extract time if present
-                time_match = re.search(r'\d{1,2}:\d{2}\s*(AM|PM|am|pm)?', entry_text)
-                time_str = time_match.group(0) if time_match else ""
-                
-                # Extract speaker name
-                speaker_elem = entry.find(['span', 'div'], class_=lambda c: c and 'speaker' in str(c).lower())
-                speaker = speaker_elem.get_text(strip=True) if speaker_elem else ""
-                
-                # Extract title
-                title_elem = entry.find(['span', 'div', 'a'], class_=lambda c: c and 'title' in str(c).lower())
-                contrib_title = title_elem.get_text(strip=True) if title_elem else ""
-                
-                # Extract attachment links (PDFs, etc.)
-                attachments = []
-                for link in entry.find_all('a', href=True):
-                    href = link.get('href', '')
-                    if any(ext in href.lower() for ext in ['.pdf', '.pptx', '.ppt', '.doc', '/attachments/', '/material/']):
-                        link_text = link.get_text(strip=True) or 'Attachment'
-                        # Make absolute URL if needed
-                        if not href.startswith('http'):
-                            href = f"https://indico.desy.de{href}" if href.startswith('/') else href
-                        attachments.append(f"[{link_text}]({href})")
-                
-                if time_str or contrib_title or speaker:
-                    contrib_line = ""
-                    if time_str:
-                        contrib_line += f"**{time_str}** "
-                    if contrib_title:
-                        contrib_line += f"- {contrib_title}"
-                    if speaker:
-                        contrib_line += f" (Speaker: {speaker})"
-                    contributions.append(contrib_line)
-                    
-                    for att in attachments:
-                        contributions.append(f"  - {att}")
-        
-        # Also find standalone attachment links
-        all_attachments = []
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            if any(ext in href.lower() for ext in ['.pdf', '.pptx', '.ppt', '.docx']):
-                link_text = link.get_text(strip=True)
-                if link_text and len(link_text) < 100:  # Reasonable filename length
-                    if not href.startswith('http'):
-                        href = f"https://indico.desy.de{href}" if href.startswith('/') else href
-                    all_attachments.append(f"[{link_text}]({href})")
-        
-        if contributions:
-            lines.append("## Agenda/Contributions")
-            lines.append("")
-            for c in contributions:
-                lines.append(c)
-            lines.append("")
-        elif all_attachments:
-            lines.append("## Attachments")
-            lines.append("")
-            for att in all_attachments:
-                lines.append(f"- {att}")
-            lines.append("")
-        
-        # === EXTERNAL LINKS ===
-        # Collect important external links
-        external_links = []
-        for link in soup.find_all('a', href=True):
-            href = link.get('href', '')
-            text = link.get_text(strip=True)
-            # Skip internal Indico links and very short text
-            if href.startswith('http') and 'indico.desy.de' not in href and len(text) > 2:
-                if href not in [l[1] for l in external_links]:  # Avoid duplicates
-                    external_links.append((text, href))
-        
-        if external_links:
-            lines.append("## External Links")
-            lines.append("")
-            for text, href in external_links[:10]:  # Limit to 10 links
-                lines.append(f"- [{text}]({href})")
-            lines.append("")
-        
-        if lines:
-            result = '\n'.join(lines)
-            
-            # === CLEANUP: Remove browser warning and duplicate content ===
-            # Filter out "browser out of date" warning that Indico shows
-            result = re.sub(r'#{1,6}\s*⚠\s*Your browser is out of date\s*⚠.*?Indico may not work correctly in this browser\.?\s*\n?', '', result, flags=re.IGNORECASE | re.DOTALL)
-            result = re.sub(r'⚠\s*Your browser is out of date\s*⚠.*?Indico may not work correctly in this browser\.?\s*\n?', '', result, flags=re.IGNORECASE | re.DOTALL)
-            
-            # Remove duplicate External Links sections (keep only the first one)
-            external_links_pattern = r'(## External Links\n\n(?:- \[[^\]]+\]\([^)]+\)\n)+\n)'
-            matches = list(re.finditer(external_links_pattern, result))
-            if len(matches) > 1:
-                # Keep only the first External Links section
-                for m in matches[1:]:
-                    result = result[:m.start()] + result[m.end():]
-            
-            # Remove excessive newlines
-            result = re.sub(r'\n{4,}', '\n\n\n', result)
-            
-            return result.strip()
-        
-    except Exception as e:
-        print(f"[WARNING] Indico extraction failed: {e}")
-    
-    return None
+    """Delegate to content_extraction."""
+    return _content_extraction.extract_indico_event(html_content, url)
 
 
 def _normalize_url(url):
-    """
-    Normalize URL for consistent comparison and deduplication.
-    - Removes www. prefix
-    - Strips fragment (# and everything after)
-    - Strips trailing slash from path (treats /page and /page/ as same)
-    Query string is preserved.
-    
-    Args:
-        url: URL string (may be None)
-        
-    Returns:
-        Normalized URL string or None
-    """
-    if not url:
-        return None
-    s = url.split('#', 1)[0]  # remove fragment
-    s = s.replace('://www.', '://')  # remove www
-    # strip trailing slash from path (before query)
-    if '?' in s:
-        path_part, query_part = s.split('?', 1)
-        path_part = path_part.rstrip('/') or '/'
-        s = path_part + '?' + query_part
-    else:
-        s = s.rstrip('/') or s
-    return s
+    """Delegate to url_utils."""
+    return _url_utils._normalize_url(url)
 
 
 def _is_valid_crawl_url(url):
-    """
-    Strict URL validation for crawl attempts.
-    Only allows HTTPS URLs with non-empty netloc.
-    
-    Args:
-        url: URL string to validate
-        
-    Returns:
-        tuple: (is_valid: bool, skip_reason: str or None)
-    """
-    if not url or not isinstance(url, str):
-        return False, "empty_or_not_string"
-    
-    parsed = urlparse(url)
-    
-    # Only allow HTTPS scheme
-    if parsed.scheme not in ('https',):
-        if parsed.scheme in ('mailto', 'tel', 'javascript', 'data'):
-            return False, f"protocol_{parsed.scheme}"
-        return False, "invalid_scheme"
-    
-    # Require non-empty netloc
-    if not parsed.netloc:
-        # Check if it's a relative URL or fragment
-        if url.startswith('#'):
-            return False, "fragment_only"
-        if not url.startswith('http'):
-            return False, "relative_url"
-        return False, "missing_netloc"
-    
-    # FIX 5: Block image and binary file extensions (case-insensitive path check).
-    # filter_chain is silently ignored by BFS, so this is the authoritative gate.
-    # PDF is intentionally excluded from this list — it has explicit crawl support.
-    _path_lower = parsed.path.lower()
-    _BINARY_EXTENSIONS = (
-        '.gif', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.bmp', '.ico', '.tiff',
-        '.zip', '.tar', '.gz', '.rar',
-        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-        '.mp4', '.mp3', '.avi', '.mov', '.wmv', '.flv', '.ogg', '.wav',
-    )
-    if any(_path_lower.endswith(ext) or (ext + '?') in _path_lower or (ext + '#') in _path_lower
-           for ext in _BINARY_EXTENSIONS):
-        return False, "binary_file_extension"
-    
-    return True, None
+    """Delegate to url_utils (uses config.binary_extensions)."""
+    return _url_utils._is_valid_crawl_url(url, config.binary_extensions)
 
 
-# Cache for redirect resolution (url -> final host) to avoid repeated HEAD requests; cleared at start of crawl_site
-_redirect_resolution_cache = {}
+# Redirect resolution cache lives in url_utils; alias for backward compat.
+_redirect_resolution_cache = _url_utils._redirect_resolution_cache
 
 
 async def _resolve_redirect_final_host(url, timeout=5):
-    """
-    Resolve redirects and return the final URL's host (normalized: www. removed).
-    Used to skip queuing URLs that redirect to EXCLUDED_DOMAINS so we never fetch those hosts.
-    Returns None on error or if URL is not http(s); caller may then allow the URL.
-    
-    PERFORMANCE FIX: Now async using aiohttp — does not block the event loop.
-    """
-    if not url or not url.strip().lower().startswith(('http://', 'https://')):
-        return None
-    if url in _redirect_resolution_cache:
-        return _redirect_resolution_cache[url]
-    
-    if AIOHTTP_AVAILABLE:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.head(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
-                    allow_redirects=True,
-                    headers={'User-Agent': 'Mozilla/5.0 (compatible; Crawl4AI-redirect-check/1.0)'}
-                ) as resp:
-                    final = str(resp.url)
-            parsed = urlparse(final)
-            host = (parsed.netloc or '').replace('www.', '')
-            _redirect_resolution_cache[url] = host
-            return host
-        except Exception:
-            _redirect_resolution_cache[url] = None
-            return None
-    else:
-        # Fallback to sync urllib if aiohttp not available
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'Mozilla/5.0 (compatible; Crawl4AI-redirect-check/1.0)'})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                final = resp.geturl()
-            parsed = urlparse(final)
-            host = (parsed.netloc or '').replace('www.', '')
-            _redirect_resolution_cache[url] = host
-            return host
-        except Exception:
-            _redirect_resolution_cache[url] = None
-            return None
+    """Delegate to url_utils."""
+    return await _url_utils._resolve_redirect_final_host(url, timeout)
 
 
 def _normalize_domain(netloc):
-    """Return the host portion normalized (lowercased, no www., no port)."""
-    if not netloc:
-        return ""
-    host = netloc.lower().split(':', 1)[0].strip()
-    if host.startswith('www.'):
-        host = host[4:]
-    return host
+    """Delegate to url_utils."""
+    return _url_utils._normalize_domain(netloc)
 
 
 def _is_desy_domain(netloc):
-    """Return True if the normalized host is desy.de or a subdomain thereof."""
-    host = _normalize_domain(netloc)
-    return host == 'desy.de' or host.endswith('.desy.de')
+    """Delegate to url_utils."""
+    return _url_utils._is_desy_domain(netloc)
+
+
+def _is_allowed_crawl_url(url):
+    """Delegate to url_utils (uses config.allowed_url_prefixes)."""
+    return _url_utils._is_allowed_crawl_url(url, config.allowed_url_prefixes)
 
 
 def should_skip_login_auth_url(url):
-    """
-    Check if a URL should be skipped due to being a login/auth/admin page.
-    
-    GROUP 1 FILTER: Detects and blocks URLs that point to authentication,
-    login, admin, or registration pages. These pages typically contain only
-    auth forms with no useful content for research/documentation.
-    
-    Args:
-        url: URL string to check
-        
-    Returns:
-        bool: True if URL should be skipped (is login/auth/admin), False if safe to crawl
-    """
-    if not url:
-        return False
-    
-    # Check if domain is auth-only (skip all URLs from these domains)
-    parsed = urlparse(url)
-    domain = _normalize_domain(parsed.netloc)
-    if domain in AUTH_ONLY_DOMAINS:
-        return True
-    
-    # Check if URL path matches any login/auth/admin pattern
-    url_lower = url.lower()
-    for pattern in _COMPILED_LOGIN_AUTH_PATTERNS:
-        if pattern.search(url_lower):
-            return True
-    
-    return False
+    """Delegate to url_utils (uses config compiled patterns & auth domains)."""
+    return _url_utils.should_skip_login_auth_url(
+        url, config.compiled_login_patterns, config.auth_only_domains
+    )
 
 
 def should_skip_error_url(url):
-    """
-    Check if a URL should be skipped due to being an error page or error-prone pattern.
-    
-    GROUP 2 FILTER: Detects and blocks URLs that point to error pages,
-    maintenance pages, or known error-prone domains. These pages typically
-    contain error messages with no useful content.
-    
-    DESY-Specific: Only checks DESY domains (no external domain concerns).
-    
-    Args:
-        url: URL string to check
-        
-    Returns:
-        bool: True if URL should be skipped (is error page), False if safe to crawl
-    """
-    if not url:
-        return False
-    
-    # Check if domain is error-prone (skip all URLs from these domains)
-    parsed = urlparse(url)
-    domain = _normalize_domain(parsed.netloc)
-    if domain in ERROR_PRONE_DOMAINS:
-        return True
-    
-    # Check if URL path matches any error page pattern
-    url_lower = url.lower()
-    for pattern in _COMPILED_ERROR_PATTERNS:
-        if pattern.search(url_lower):
-            return True
-    
-    return False
+    """Delegate to url_utils (uses config compiled patterns & error domains)."""
+    return _url_utils.should_skip_error_url(
+        url, config.compiled_error_patterns, config.error_prone_domains
+    )
 
 
 def normalize_url_for_dedup(url):
-    """
-    Normalize a URL for GROUP 4 deduplication by stripping UI-only query parameters.
-    
-    This function:
-    1. Removes UI-only query params (printversion, embed, lang, session IDs, etc.)
-    2. Keeps content-critical query params (search, pagination, filters)
-    3. Returns a normalized URL that should match similar pages with different UI params
-    
-    Args:
-        url: Full URL string (e.g., "https://example.com/page?printversion=1&lang=ger")
-        
-    Returns:
-        str: Normalized URL with UI-only params removed
-        
-    Example:
-        normalize_url_for_dedup("https://desy.de/page?printversion=1&lang=ger")
-        → "https://desy.de/page"
-        
-        normalize_url_for_dedup("https://desy.de/page?q=search&page=2")
-        → "https://desy.de/page?q=search&page=2"  (keeps content-critical params)
-    """
-    if not url:
-        return url
-    
-    try:
-        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-        
-        parsed = urlparse(url)
-        
-        # Parse query string into dict, handling multiple values per key
-        params = parse_qs(parsed.query, keep_blank_values=True)
-        
-        # Build new params dict keeping only content-critical params
-        filtered_params = {}
-        for key, values in params.items():
-            # Keep if it's in CONTENT_CRITICAL_PARAMS
-            # Skip if it's in UI_ONLY_QUERY_PARAMS
-            if key not in UI_ONLY_QUERY_PARAMS:
-                if key in CONTENT_CRITICAL_PARAMS or (not key in UI_ONLY_QUERY_PARAMS):
-                    # Default: if not explicitly marked as UI-only, keep it (conservative)
-                    filtered_params[key] = values
-        
-        # If no content-critical params remain, strip query string entirely
-        if not filtered_params:
-            normalized_query = ''
-        else:
-            # Reconstruct query string from filtered params
-            normalized_query = urlencode(filtered_params, doseq=True)
-        
-        # Reconstruct URL without query string (or with filtered query string)
-        normalized_parsed = (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            normalized_query,
-            parsed.fragment  # Keep fragment as-is
-        )
-        
-        normalized_url = urlunparse(normalized_parsed)
-        return normalized_url
-        
-    except Exception as e:
-        # If parsing fails, return original URL
-        return url
+    """Delegate to url_utils (uses config query-param sets)."""
+    return _url_utils.normalize_url_for_dedup(
+        url, config.ui_only_query_params, config.content_critical_params
+    )
 
 
 def should_skip_query_param_duplicate(url, seen_normalized_urls):
-    """
-    Check if a URL should be skipped because it's a duplicate of an already-crawled URL
-    (differs only in UI-only query parameters).
-    
-    GROUP 4 FILTER: Detects and blocks URLs that are variations of already-crawled
-    pages with different UI-only query parameters (printversion, embed, lang, etc.).
-    These pages produce identical content but are treated as different URLs.
-    
-    This is a PRE-CRAWL deduplication check that prevents wasting bandwidth on
-    duplicate pages. Unlike ContentHash (post-crawl), this prevents the crawl entirely.
-    
-    Args:
-        url: URL string to check
-        seen_normalized_urls: Set of already-crawled normalized URLs
-        
-    Returns:
-        bool: True if URL should be skipped (is duplicate), False if safe to crawl
-        
-    Side Effect:
-        Adds normalized URL to seen_normalized_urls if it's a new one
-    """
-    if not url:
-        return False
-    
-    # Normalize URL by removing UI-only query params
-    normalized = normalize_url_for_dedup(url)
-    
-    # Check if we've already crawled this normalized URL
-    if normalized in seen_normalized_urls:
-        return True  # Skip - already crawled the base URL
-    
-    # Track this normalized URL for future checks
-    seen_normalized_urls.add(normalized)
-    return False  # Safe to crawl - haven't seen this URL before
+    """Delegate to url_utils (uses config query-param sets)."""
+    return _url_utils.should_skip_query_param_duplicate(
+        url, seen_normalized_urls,
+        config.ui_only_query_params, config.content_critical_params
+    )
 
 
 def _is_empty_or_whitespace(text):
-    """
-    Check if text is None, empty, or contains only whitespace.
-    
-    Args:
-        text: Text to check (may be None)
-        
-    Returns:
-        True if text is None, empty, or whitespace-only
-    """
-    return not text or not text.strip()
+    """Delegate to table_processing."""
+    return _table_processing._is_empty_or_whitespace(text)
 
 
 def _is_in_navigation(elem):
-    """
-    Check if a BeautifulSoup element is inside navigation/header/footer/aside containers.
-    
-    Args:
-        elem: BeautifulSoup element to check
-        
-    Returns:
-        True if element is inside nav, header, footer, or aside
-    """
-    if not elem:
-        return False
-    return elem.find_parent(['nav', 'header', 'footer', 'aside']) is not None
+    """Delegate to table_processing."""
+    return _table_processing._is_in_navigation(elem)
 
 
 def _is_separator_line(line):
-    """
-    Check if a line is a markdown separator (---, |---|---, table separators, etc.).
-    
-    Args:
-        line: Line string to check (should be stripped)
-        
-    Returns:
-        True if line is a separator
-    """
-    if not line:
-        return False
-    return (line == '---' or 
-            re.match(r'^\|[\s\-:]+\|$', line) or 
-            line == '|---|---' or
-            re.match(r'^\|[\s\-]+\|$', line) or
-            re.match(r'^[\|\s\-]+$', line))
+    """Delegate to markdown_cleanup."""
+    return _markdown_cleanup._is_separator_line(line)
 
 
 def _normalize_text_spacing(line):
-    """
-    Normalize text spacing to fix concatenation issues.
-    
-    Fixes patterns like:
-    - "word+Capital" -> "word +Capital"
-    - "hutch:+49" -> "hutch: +49" (but preserve phone formats)
-    - Multiple spaces -> single space
-    
-    Args:
-        line: Input line string
-        
-    Returns:
-        Normalized line string
-    """
-    if not line or line.strip().startswith(('#', '|', '-', '*')) or not line.strip():
-        # Don't modify markdown syntax lines
-        return line
-    
-    # Normalize multiple spaces to single space
-    normalized = re.sub(r' +', ' ', line)
-    
-    # Fix concatenated patterns: word+Capital (but not in URLs/emails)
-    # Pattern: lowercase letter followed by uppercase letter (word boundary)
-    normalized = re.sub(r'([a-z])([A-Z])', r'\1 \2', normalized)
-    
-    # Fix: word+number (but preserve phone formats like "+49 (0)40")
-    # Only fix if not part of phone number pattern
-    if not re.search(r'\+?\d+\s*\(', normalized):  # Not a phone number
-        normalized = re.sub(r'([a-zA-Z])(\+?\d)', r'\1 \2', normalized)
-    
-    # Fix: number+word (but preserve units like "6GeV" -> "6 GeV")
-    normalized = re.sub(r'(\d)([A-Za-z])', r'\1 \2', normalized)
-    
-    # Fix: punctuation+word (colon, semicolon, etc.)
-    normalized = re.sub(r'([:;])([A-Za-z])', r'\1 \2', normalized)
-    
-    # Fix: word:number or word:+number (e.g., "hutch:+49" -> "hutch: +49")
-    # But preserve phone formats like "+49 (0)40"
-    normalized = re.sub(r'([a-zA-Z]):(\+?\d)', r'\1: \2', normalized)
-    
-    # Preserve email addresses and URLs (undo any changes to them)
-    # This is a simple check - more complex patterns would need more sophisticated handling
-    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    url_pattern = r'https?://[^\s]+'
-    
-    return normalized
+    """Delegate to markdown_cleanup."""
+    return _markdown_cleanup._normalize_text_spacing(line)
 
 
 def extract_external_links(html_content, current_url):
-    """
-    Extract all external links (links to different domains) with their text and associated headings.
-    
-    IMPORTANT: Links inside tables are SKIPPED - they should remain in their table positions.
-    Only links outside tables are extracted here, grouped by their associated headings/sections.
-    
-    Args:
-        html_content: HTML content as string
-        current_url: Current page URL to determine external links
-        
-    Returns:
-        Markdown string with external links grouped by section/heading, or empty string if none found
-    """
-    if not BEAUTIFULSOUP_AVAILABLE or not html_content:
-        return ""
-    
-    try:
-        soup = BeautifulSoup(html_content, 'lxml')
-        current_domain = _normalize_domain(urlparse(current_url).netloc)
-        
-        # Find all links
-        links = soup.find_all('a', href=True)
-        external_links_by_section = {}  # Dict: section_heading -> list of links
-        seen_links = set()  # Deduplicate by URL
-        
-        for link in links:
-            href = link.get('href', '').strip()
-            if not href or href.startswith('#') or href.startswith('mailto:'):
-                continue
-            
-            # SKIP links inside tables - they should stay in their table positions
-            # Check if link is inside a table cell (td/th) or directly inside a table
-            parent_table = link.find_parent('table')
-            parent_cell = link.find_parent(['td', 'th'])
-            
-            # Link is in a table if it's inside a table element OR inside a table cell
-            if parent_table or parent_cell:
-                continue
-            
-            # Make absolute URL
-            absolute_url = urljoin(current_url, href)
-            parsed = urlparse(absolute_url)
-            link_domain = _normalize_domain(parsed.netloc)
-            
-            # Check if external (different domain)
-            if link_domain and link_domain != current_domain:
-                # Skip if already seen
-                if absolute_url in seen_links:
-                    continue
-                seen_links.add(absolute_url)
-                
-                # Get link text
-                link_text = link.get_text(strip=True)
-                if not link_text:
-                    link_text = absolute_url
-                
-                # Find associated heading/section for this link
-                # Look for nearest heading (h1-h6) before this link in the DOM
-                section_heading = None
-                best_heading = None
-                best_heading_level = 7  # Start with level higher than any real heading
-                
-                # Strategy: Find all headings before this link in document order
-                # Then pick the closest one (highest level, most recent)
-                link_position = None
-                try:
-                    # Get all elements before this link
-                    all_elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a'])
-                    for i, elem in enumerate(all_elements):
-                        if elem == link:
-                            link_position = i
-                            break
-                    
-                    if link_position is not None:
-                        # Find all headings before this link
-                        for i in range(link_position - 1, -1, -1):
-                            elem = all_elements[i]
-                            if elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                heading_level_num = int(elem.name[1])
-                                heading_text = elem.get_text(strip=True)
-                                if heading_text and heading_level_num < best_heading_level:
-                                    best_heading = heading_text
-                                    best_heading_level = heading_level_num
-                                    # Prefer closer headings (stop if we found a good one)
-                                    if heading_level_num <= 3:  # h1, h2, h3 are usually section headers
-                                        break
-                except Exception:
-                    # Fallback: simple parent traversal
-                    current = link
-                    for _ in range(5):  # Limit search depth
-                        if current is None:
-                            break
-                        # Check previous siblings
-                        prev = current.find_previous_sibling()
-                        while prev:
-                            if prev.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                heading_level_num = int(prev.name[1])
-                                heading_text = prev.get_text(strip=True)
-                                if heading_text and heading_level_num < best_heading_level:
-                                    best_heading = heading_text
-                                    best_heading_level = heading_level_num
-                            prev = prev.find_previous_sibling()
-                        current = current.parent
-                
-                section_heading = best_heading
-                
-                # Use section heading or default
-                section_key = section_heading if section_heading else "External Links"
-                
-                if section_key not in external_links_by_section:
-                    external_links_by_section[section_key] = []
-                
-                external_links_by_section[section_key].append({
-                    'text': link_text,
-                    'url': absolute_url
-                })
-        
-        # Format as markdown sections grouped by heading
-        if external_links_by_section:
-            markdown = ""
-            # Sort sections: "External Links" last, others alphabetically
-            sorted_sections = sorted(
-                [k for k in external_links_by_section.keys() if k != "External Links"]
-            )
-            if "External Links" in external_links_by_section:
-                sorted_sections.append("External Links")
-            
-            for section in sorted_sections:
-                links_list = external_links_by_section[section]
-                if links_list:
-                    # Use the section heading as markdown heading (or default)
-                    if section == "External Links":
-                        markdown += "\n\n## External Links\n\n"
-                    else:
-                        # Use the section heading as-is (it's already a heading from HTML)
-                        markdown += f"\n\n## {section}\n\n"
-                    
-                    for link in links_list:
-                        markdown += f"- [{link['text']}]({link['url']})\n"
-            
-            return markdown
-        
-        return ""
-    except Exception as e:
-        # Silently fail - external links are optional
-        return ""
+    """Delegate to content_extraction."""
+    return _content_extraction.extract_external_links(html_content, current_url)
 
 
 def extract_cell_links(cell_element):
-    """
-    Extract ALL content from a table cell (text + links) and return as markdown.
-    
-    GENERAL-PURPOSE STRATEGY:
-    1. Remove images (they're decorative, not content)
-    2. Convert all links to markdown format, preserving their text content
-    3. Extract all remaining text
-    4. Combine everything in order
-    
-    This ensures names, emails, phone numbers, and all text are preserved.
-    
-    Args:
-        cell_element: BeautifulSoup element representing a table cell
-        
-    Returns:
-        Markdown string with all content preserved (text + links)
-    """
-    if not cell_element:
-        return ""
-    
-    try:
-        # Create a working copy to avoid modifying the original
-        cell_html = str(cell_element)
-        cell_copy = BeautifulSoup(cell_html, 'lxml')
-        cell = cell_copy
-        
-        # Step 1: Remove all images (decorative, not content)
-        # But preserve any text that might be associated with them
-        for img in cell.find_all('img'):
-                img.decompose()
-        
-        # Step 2: Process all links and convert to markdown
-        # This preserves the link text (which often contains names)
-        links = cell.find_all('a', href=True, recursive=True)
-        from bs4 import NavigableString
-        
-        for link in links:
-            href = link.get('href', '').strip()
-            if not href:
-                link.decompose()  # Remove empty links
-                continue
-            
-            # Get link text - this is critical for preserving names
-            link_text = link.get_text(strip=True)
-            
-            # If no link text, try to get it from attributes
-            if not link_text or len(link_text) < 1:
-                link_text = (link.get('title') or link.get('aria-label') or '').strip()
-            
-            # Handle mailto links
-            if href.startswith('mailto:'):
-                email = unescape(href[7:])
-                # Use email as text if link text is generic or missing
-                if not link_text or link_text.lower() in ['email', 'e-mail', 'mail', 'contact', 'e-mail:']:
-                    link_text = email
-                markdown_link = f"[{link_text}](mailto:{email})"
-            elif href:
-                # Regular link - use link text or href as fallback
-                if not link_text:
-                        link_text = href
-                markdown_link = f"[{link_text}]({href})"
-            else:
-                link.decompose()
-                continue
-            
-            # Replace link with markdown (preserves link text)
-            link.replace_with(NavigableString(markdown_link))
-        
-        # Step 3: Extract all text (includes markdown links we just inserted)
-        # Use space separator to keep words together but separate elements
-        cell_text = cell.get_text(separator=' ', strip=True)
-        
-        # Step 4: Clean up whitespace
-
-
-        # Use unicode-aware regex to handle umlauts and special characters correctly
-        cell_text = re.sub(r'\s+', ' ', cell_text, flags=re.UNICODE).strip()
-        
-        # Step 5: Remove duplicate email links (if same email appears multiple times)
-        email_pattern = r'\[([^\]]+)\]\(mailto:([^\)]+)\)'
-        emails_seen = set()
-        def dedup_emails(match):
-            email = match.group(2).lower()
-            if email in emails_seen:
-                return match.group(2)  # Just return email, not full link
-            emails_seen.add(email)
-            return match.group(0)  # Keep full markdown link
-        
-        cell_text = re.sub(email_pattern, dedup_emails, cell_text)
-        
-        # Step 6: Add labels if content suggests them (phone, location, email)
-        # Only add if label is missing
-        original_html = str(cell_element)
-        
-        # Email label
-        if re.search(r'\[([^\]]+)\]\(mailto:[^\)]+\)', cell_text):
-            if not re.search(r'(?:E-Mail|E-mail|Email|e-mail)[:\s]', cell_text, re.IGNORECASE):
-                cell_text = re.sub(r'(\[([^\]]+)\]\(mailto:[^\)]+\))', r'E-mail: \1', cell_text, count=1)
-        
-        # Phone label
-        phone_pattern = r'(\+?\d{1,3}[\s\-\(\)]*(?:0\))?\s*\d{1,4}[\s\-]+\d{3,4}[\s\-]+\d{3,4})'
-        phone_match = re.search(phone_pattern, cell_text)
-        if phone_match:
-            phone_text = phone_match.group(1)
-            digit_count = len(re.findall(r'\d', phone_text))
-            # Valid phone: at least 8 digits, not a year
-            if digit_count >= 8 and not re.match(r'^(19|20)\d{2}', phone_text.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')):
-                before_phone = cell_text[:phone_match.start()]
-                if not re.search(r'(?:Phone|Tel|Telephone)[:\s]', before_phone, re.IGNORECASE):
-                    cell_text = cell_text[:phone_match.start()] + 'Phone: ' + phone_text + cell_text[phone_match.end():]
-        
-        # Location label
-        location_pattern = r'\b([A-Z]\d+[A-Z]?\s*[/-]\s*\d+[A-Z]?|[A-Z]\d+[a-z]?\s*/\s*[A-Z]{1,3}\.?\d+)'
-        location_match = re.search(location_pattern, cell_text)
-        if location_match:
-            location_text = location_match.group(1)
-            # Exclude publication IDs and dates
-            if not re.search(r'PUBDB|PUB|ID|DOI|ISBN', location_text, re.IGNORECASE):
-                if not re.match(r'^\d{4}[\s\-]+\d{4}', location_text):
-                    before_location = cell_text[:location_match.start()]
-                    if not re.search(r'(?:Location|Office|Room)[:\s]', before_location, re.IGNORECASE):
-                        cell_text = cell_text[:location_match.start()] + 'Location: ' + location_text + cell_text[location_match.end():]
-        
-        # Step 7: Remove duplicate consecutive words (but not names before links)
-        cell_text = re.sub(r'\b([A-Z][a-z]+)\s+\1\b(?!\s*\[)', r'\1', cell_text)
-        
-        return cell_text if cell_text else ""
-        
-    except Exception as e:
-        # Fallback: just get text content
-        try:
-            return cell_element.get_text(strip=True)
-        except:
-            return ""
+    """Delegate to table_processing."""
+    return _table_processing.extract_cell_links(cell_element)
 
 
 def enrich_crawl4ai_tables_with_links(result, is_pdf=False):
-    """
-    Method 1: Extract tables using Crawl4AI's built-in table extraction,
-    then enrich them with links from the original HTML.
-    
-    This preserves Crawl4AI's table structure and formatting while adding
-    back the links that were lost during markdown conversion.
-    
-    Args:
-        result: Crawl4AI result object
-        is_pdf: Whether this is a PDF result
-        
-    Returns:
-        Markdown string with formatted tables with links preserved
-    """
-    tables_markdown = ""
-    
-    try:
-        # Get Crawl4AI's extracted tables
-        if not hasattr(result, 'tables') or not result.tables:
-            return ""
-        
-        tables_markdown = "\n\n## Extracted Tables\n\n"
-        
-        # Get HTML tables for link enrichment (only for HTML pages)
-        html_tables = []
-        if not is_pdf and hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-            try:
-                soup = BeautifulSoup(result.html, 'lxml')
-                html_tables = soup.find_all('table', recursive=True)
-            except Exception:
-                pass
-        
-        # Process each Crawl4AI table
-        used_html_tables = set()  # Track which HTML tables we've already used
-        
-        for idx, crawl_table in enumerate(result.tables, 1):
-            tables_markdown += f"### Table {idx}\n\n"
-            
-            # Try to find corresponding HTML table to enrich with links
-            # Match by content similarity rather than just index
-            enriched_table = None
-            if html_tables:
-                # Get a sample of text from Crawl4AI table for matching
-                crawl_sample = ""
-                if crawl_table.get('rows'):
-                    # Use first few cells from first row as identifier
-                    first_row = crawl_table.get('rows', [])[0]
-                    crawl_sample = " ".join(str(cell)[:30] for cell in first_row[:3] if cell)
-                
-                # Find best matching HTML table
-                best_match_idx = None
-                best_match_score = 0
-                
-                for html_idx, html_table in enumerate(html_tables):
-                    if html_idx in used_html_tables:
-                        continue
-                    
-                    # Get sample text from HTML table
-                    html_sample = ""
-                    tbody = html_table.find('tbody')
-                    table_rows = tbody.find_all('tr') if tbody else html_table.find_all('tr')
-                    if table_rows:
-                        first_row = table_rows[0]
-                        cells = first_row.find_all(['td', 'th'], limit=3)
-                        html_sample = " ".join(cell.get_text(strip=True)[:30] for cell in cells)
-                    
-                    # Simple similarity: check if crawl_sample appears in html_sample or vice versa
-                    if crawl_sample and html_sample:
-                        # Count common words
-                        crawl_words = set(crawl_sample.lower().split())
-                        html_words = set(html_sample.lower().split())
-                        common = len(crawl_words & html_words)
-                        if common > best_match_score:
-                            best_match_score = common
-                            best_match_idx = html_idx
-                
-                # Use best match if found, otherwise try index-based matching
-                if best_match_idx is not None and best_match_score > 0:
-                    html_table = html_tables[best_match_idx]
-                    used_html_tables.add(best_match_idx)
-                    enriched_table = enrich_table_with_html_links(crawl_table, html_table)
-                elif idx <= len(html_tables) and (idx - 1) not in used_html_tables:
-                    # Fallback to index-based matching
-                    html_table = html_tables[idx - 1]
-                    used_html_tables.add(idx - 1)
-                    enriched_table = enrich_table_with_html_links(crawl_table, html_table)
-            
-            # Use enriched table if available, otherwise use Crawl4AI's original
-            table_to_use = enriched_table if enriched_table else crawl_table
-            
-            # Extract table data
-            headers = table_to_use.get('headers', [])
-            rows = table_to_use.get('rows', [])
-            caption = table_to_use.get('caption', '')
-            
-            if caption:
-                tables_markdown += f"*{caption}*\n\n"
-            
-            # Format as markdown table
-            if headers and rows:
-                tables_markdown += "| " + " | ".join(str(h) for h in headers) + " |\n"
-                tables_markdown += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                
-                for row in rows:
-                    row_data = row[:len(headers)] if len(row) >= len(headers) else row + [''] * (len(headers) - len(row))
-                    tables_markdown += "| " + " | ".join(str(cell) for cell in row_data) + " |\n"
-                tables_markdown += "\n"
-            elif rows:
-                if rows:
-                    first_row = rows[0]
-                    tables_markdown += "| " + " | ".join(str(cell) for cell in first_row) + " |\n"
-                    tables_markdown += "| " + " | ".join(["---"] * len(first_row)) + " |\n"
-                    for row in rows[1:]:
-                        tables_markdown += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-                    tables_markdown += "\n"
-        
-        # Also check for tables that Crawl4AI might have missed (both nested and top-level)
-        # Only extract tables that have meaningful content
-        if html_tables:
-            missed_count = 0
-            for html_idx, html_table in enumerate(html_tables):
-                if html_idx in used_html_tables:
-                    continue
-                
-                # Extract table (whether nested or top-level)
-                missed_table = extract_table_from_html(html_table)
-                headers = missed_table.get('headers', [])
-                rows = missed_table.get('rows', [])
-                
-                # Only include if it has meaningful content (at least 2 rows or headers)
-                if (headers and rows) or (rows and len(rows) > 1):
-                    missed_count += 1
-                    # Check if this is a nested table
-                    parent_table = html_table.find_parent('table')
-                    table_label = "Nested" if parent_table else "Missed"
-                    tables_markdown += f"### Table {len(result.tables) + missed_count} ({table_label})\n\n"
-                    
-                    caption = missed_table.get('caption', '')
-                    if caption:
-                        tables_markdown += f"*{caption}*\n\n"
-                    
-                    if headers and rows:
-                        tables_markdown += "| " + " | ".join(str(h) for h in headers) + " |\n"
-                        tables_markdown += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                        for row in rows:
-                            row_data = row[:len(headers)] if len(row) >= len(headers) else row + [''] * (len(headers) - len(row))
-                            tables_markdown += "| " + " | ".join(str(cell) for cell in row_data) + " |\n"
-                        tables_markdown += "\n"
-                    elif rows and len(rows) > 1:
-                        first_row = rows[0]
-                        tables_markdown += "| " + " | ".join(str(cell) for cell in first_row) + " |\n"
-                        tables_markdown += "| " + " | ".join(["---"] * len(first_row)) + " |\n"
-                        for row in rows[1:]:
-                            tables_markdown += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-                        tables_markdown += "\n"
-            
-    except Exception as e:
-        tables_markdown = f"\n\n## Extracted Tables\n\n*Error extracting tables: {e}*\n\n"
-        import traceback
-        traceback.print_exc()
-    
-    return tables_markdown
+    """Delegate to table_processing."""
+    return _table_processing.enrich_crawl4ai_tables_with_links(result, is_pdf)
 
 
 def enrich_table_with_html_links(crawl_table, html_table):
-    """
-    Enrich Crawl4AI's extracted table with links from HTML table.
-    
-    Args:
-        crawl_table: Table dict from Crawl4AI
-        html_table: BeautifulSoup table element
-        
-    Returns:
-        Enriched table dict with links preserved
-    """
-    enriched = {
-        'headers': [],
-        'rows': [],
-        'caption': crawl_table.get('caption', '')
-    }
-    
-    # Enrich headers - use recursive=True to catch all header cells
-    html_headers = []
-    thead = html_table.find('thead')
-    if thead:
-        html_headers = thead.find_all(['th', 'td'], recursive=True)
-        # Filter to ensure headers belong to this table, not nested tables
-        html_headers = [h for h in html_headers if h.find_parent('table') == html_table]
-    else:
-        first_row = html_table.find('tr')
-        if first_row:
-            html_headers = first_row.find_all(['th', 'td'], recursive=True)
-            # Filter to ensure headers belong to this table, not nested tables
-            html_headers = [h for h in html_headers if h.find_parent('table') == html_table]
-    
-    crawl_headers = crawl_table.get('headers', [])
-    for i, crawl_header in enumerate(crawl_headers):
-        if i < len(html_headers):
-            enriched['headers'].append(extract_cell_links(html_headers[i]))
-        else:
-            enriched['headers'].append(str(crawl_header))
-    
-    # Enrich rows - use recursive=True to catch all rows
-    tbody = html_table.find('tbody')
-    if tbody:
-        table_rows = tbody.find_all('tr', recursive=True)
-        # Filter to ensure rows belong to this table, not nested tables
-        table_rows = [r for r in table_rows if r.find_parent('table') == html_table]
-    else:
-        table_rows = html_table.find_all('tr', recursive=True)
-        # Filter to ensure rows belong to this table, not nested tables
-        table_rows = [r for r in table_rows if r.find_parent('table') == html_table]
-        # Exclude header rows
-        if thead:
-            thead_rows = thead.find_all('tr', recursive=True)
-            thead_rows = [r for r in thead_rows if r.find_parent('table') == html_table]
-            thead_row_set = set(thead_rows)
-            table_rows = [r for r in table_rows if r not in thead_row_set]
-        elif html_headers:
-            # Headers were in first row, skip it
-            table_rows = table_rows[1:] if len(table_rows) > 1 else []
-    
-    start_idx = 0  # Already filtered header rows above
-    
-    crawl_rows = crawl_table.get('rows', [])
-    html_rows = table_rows[start_idx:]
-    
-    for row_idx, crawl_row in enumerate(crawl_rows):
-        if row_idx < len(html_rows):
-            html_row = html_rows[row_idx]
-            # Use recursive=True to catch all cells, then filter nested tables
-            # Since we're using html_row.find_all(), all returned cells are descendants of html_row
-            # We only need to filter out cells that belong to nested tables
-            html_cells = html_row.find_all(['td', 'th'], recursive=True)
-            html_cells = [c for c in html_cells if c.find_parent('table') == html_table]
-            enriched_row = []
-            for cell_idx, crawl_cell in enumerate(crawl_row):
-                if cell_idx < len(html_cells):
-                    enriched_row.append(extract_cell_links(html_cells[cell_idx]))
-                else:
-                    enriched_row.append(str(crawl_cell))
-            enriched['rows'].append(enriched_row)
-        else:
-            enriched['rows'].append([str(cell) for cell in crawl_row])
-    
-    return enriched
+    """Delegate to table_processing."""
+    return _table_processing.enrich_table_with_html_links(crawl_table, html_table)
 
 
 def extract_table_from_html(html_table):
-    """
-    Extract a complete table structure from HTML table element.
-    
-    Args:
-        html_table: BeautifulSoup table element
-        
-    Returns:
-        Table dict with headers, rows, and caption
-    """
-    table_data = {
-        'headers': [],
-        'rows': [],
-        'caption': ''
-    }
-    
-    # Extract caption
-    caption = html_table.find('caption')
-    if caption:
-        table_data['caption'] = caption.get_text(strip=True)
-    
-    # Extract headers - be conservative: only use explicit headers
-    # Headers should be in <thead> or use <th> tags, not inferred from first row
-    # Use recursive=True first to catch all header cells, then filter nested tables
-    thead = html_table.find('thead')
-    if thead:
-        # Explicit <thead> section - definitely headers
-        # Use recursive=True to catch all header cells wrapped in other elements
-        header_cells = thead.find_all(['th', 'td'], recursive=True)
-        # Filter out cells from nested tables
-        header_cells = [c for c in header_cells if c.find_parent('table') == html_table]
-        # If no cells found recursively, try direct children as fallback
-        if not header_cells:
-            header_cells = thead.find_all(['th', 'td'], recursive=False)
-        table_data['headers'] = [extract_cell_links(cell) for cell in header_cells]
-    else:
-        # No <thead> - check if first row uses <th> tags (strong indicator of headers)
-        # Use recursive=True first to catch all rows
-        first_row = html_table.find('tr', recursive=True)
-        if first_row:
-            # Ensure first_row belongs to this table, not a nested table
-            if first_row.find_parent('table') != html_table:
-                # Find first row that belongs to this table
-                all_rows = html_table.find_all('tr', recursive=True)
-                all_rows = [r for r in all_rows if r.find_parent('table') == html_table]
-                first_row = all_rows[0] if all_rows else None
-        
-        if first_row:
-            # Use recursive=True to catch all cells wrapped in other elements
-            # Since we're using first_row.find_all(), all returned cells are descendants of first_row
-            # We only need to filter out cells that belong to nested tables
-            header_cells = first_row.find_all(['th', 'td'], recursive=True)
-            # Filter out cells from nested tables
-            header_cells = [c for c in header_cells if c.find_parent('table') == html_table]
-            # If no cells found recursively, try direct children as fallback
-            if not header_cells:
-                header_cells = first_row.find_all(['th', 'td'], recursive=False)
-            
-            # Only treat as headers if ALL cells in first row are <th> tags
-            # This avoids misidentifying data rows as headers
-            if header_cells and all(cell.name == 'th' for cell in header_cells):
-                
-                table_data['headers'] = [extract_cell_links(cell) for cell in header_cells]
-            # Additional check: if first row has <th> tags mixed with <td>, 
-            # only use the <th> cells as headers (common in complex tables)
-            elif header_cells:
-                th_cells = [cell for cell in header_cells if cell.name == 'th']
-                if th_cells and len(th_cells) >= len(header_cells) * 0.5:  # At least 50% are <th>
-                    table_data['headers'] = [extract_cell_links(cell) for cell in header_cells]
-    
-    # Extract rows - GENERAL STRATEGY: Find all rows, exclude only clearly nested ones
-    tbody = html_table.find('tbody')
-    if tbody:
-        # Has tbody - get rows from tbody
-        table_rows = tbody.find_all('tr', recursive=True)
-        # Filter: only exclude rows that are clearly in nested tables
-        filtered_rows = []
-        for r in table_rows:
-            parent_table = r.find_parent('table')
-            # Include if: belongs to html_table OR parent is None (might be in html_table structure)
-            # Exclude only if: parent is a nested table (parent_table is inside html_table)
-            if parent_table and parent_table != html_table:
-                if parent_table.find_parent('table') == html_table:
-                    continue  # Skip nested table rows
-            filtered_rows.append(r)
-        table_rows = filtered_rows
-        # Fallback: if no rows found recursively, try direct children
-        if not table_rows:
-            table_rows = tbody.find_all('tr', recursive=False)
-    else:
-        # No tbody - get all tr elements
-        all_rows = html_table.find_all('tr', recursive=True)
-        # Filter: only exclude rows that are clearly in nested tables
-        filtered_rows = []
-        for r in all_rows:
-            parent_table = r.find_parent('table')
-            if parent_table and parent_table != html_table:
-                if parent_table.find_parent('table') == html_table:
-                    continue  # Skip nested table rows
-            filtered_rows.append(r)
-        all_rows = filtered_rows
-        # Fallback: if no rows found recursively, try direct children
-        if not all_rows:
-            all_rows = html_table.find_all('tr', recursive=False)
-        
-        # Exclude header rows if we found headers
-        if thead:
-            thead_rows = thead.find_all('tr', recursive=True)
-            if not thead_rows:
-                thead_rows = thead.find_all('tr', recursive=False)
-            thead_row_set = set(thead_rows)
-            table_rows = [r for r in all_rows if r not in thead_row_set]
-        elif table_data['headers']:
-            # Headers were in first row, skip it
-            table_rows = all_rows[1:] if len(all_rows) > 1 else []
-        else:
-            table_rows = all_rows
-    
-    # Extract data from each row - GENERAL STRATEGY: Get all cells, exclude only nested ones
-    for tr in table_rows:
-        # CRITICAL FIX: Try direct children first (most accurate for table structure)
-        # Only use recursive=True if direct children don't exist
-        cells = tr.find_all(['td', 'th'], recursive=False)
-        
-        
-        
-        # If no direct children, try recursive but filter nested tables
-        if not cells:
-            cells = tr.find_all(['td', 'th'], recursive=True)
-            # Filter: only exclude cells that are clearly in nested tables
-            filtered_cells = []
-            for c in cells:
-                parent_table = c.find_parent('table')
-                # Include if: belongs to html_table OR parent is None
-                # Exclude only if: parent is a nested table
-                if parent_table and parent_table != html_table:
-                    if parent_table.find_parent('table') == html_table:
-                        continue  # Skip nested table cells
-                filtered_cells.append(c)
-            cells = filtered_cells
-        else:
-            # Direct children found - but still filter out any that might be in nested tables
-            filtered_cells = []
-            for c in cells:
-                parent_table = c.find_parent('table')
-                if parent_table and parent_table != html_table:
-                    continue  # Skip if in nested table
-                filtered_cells.append(c)
-            cells = filtered_cells
-        
-        
-        
-        # Extract cell content
-        if cells:
-            row_data = []
-            for cell in cells:
-                cell_content = extract_cell_links(cell)
-                # Use unicode-aware regex to handle umlauts and special characters correctly
-                cell_content = re.sub(r'\s+', ' ', cell_content, flags=re.UNICODE).strip()
-                row_data.append(cell_content)
-            
-            # Only skip rows where ALL cells are completely empty
-            if any(str(cell).strip() for cell in row_data):
-                table_data['rows'].append(row_data)
-    
-    return table_data
+    """Delegate to table_processing."""
+    return _table_processing.extract_table_from_html(html_table)
 
 
 def parse_single_column_cell_html(cell_element):
-    """
-    Parse single-column cell HTML preserving structure (<br> tags, links).
-    
-    Extracts content from HTML cell element while preserving:
-    - <br> tags as line breaks
-    - Links as markdown format
-    - HTML structure for delimiter detection
-    
-    Args:
-        cell_element: BeautifulSoup cell element (td or th)
-        
-    Returns:
-        Dict with:
-        - 'text': Text content with <br> replaced by newlines
-        - 'html_structure': List of segments with their types (text, link, br)
-        - 'links': List of markdown links found
-    """
-    if not cell_element:
-        return {'text': '', 'html_structure': [], 'links': []}
-    
-    try:
-        # Create working copy
-        cell_html = str(cell_element)
-        cell_copy = BeautifulSoup(cell_html, 'lxml')
-        cell = cell_copy
-        
-        # Remove images (decorative)
-        for img in cell.find_all('img'):
-            img.decompose()
-        
-        # Process links and convert to markdown (preserve for later)
-        links = []
-        link_markdown_map = {}
-        for link in cell.find_all('a', href=True, recursive=True):
-            href = link.get('href', '').strip()
-            if not href:
-                continue
-            
-            link_text = link.get_text(strip=True)
-            if not link_text:
-                link_text = (link.get('title') or link.get('aria-label') or '').strip()
-            
-            if href.startswith('mailto:'):
-                email = unescape(href[7:])
-                if not link_text or link_text.lower() in ['email', 'e-mail', 'mail', 'contact', 'e-mail:']:
-                    link_text = email
-                markdown_link = f"[{link_text}](mailto:{email})"
-            elif href:
-                if not link_text:
-                    link_text = href
-                markdown_link = f"[{link_text}]({href})"
-            else:
-                continue
-    
-            # Store mapping for replacement
-            link_markdown_map[str(link)] = markdown_link
-            links.append(markdown_link)
-            
-            # Replace link with placeholder to preserve position
-            from bs4 import NavigableString
-            link.replace_with(NavigableString(f"__LINK_{len(links)-1}__"))
-        
-        # FIX 3: Flatten HTML structure before extracting text to avoid structural newlines
-        # Replace nested divs/spans with spaces, but preserve <br> tags as newlines
-        # This prevents structural newlines from breaking content parsing
-        
-        # First, replace <br> tags with a special marker (we'll convert to newline later)
-        for br in cell.find_all('br'):
-            br.replace_with(NavigableString('__BR__'))
-        
-        # Flatten nested block elements (div, p, span) by replacing with spaces
-        # This prevents structural newlines from nested HTML
-        # Process in reverse order to avoid modifying parent while iterating
-        for block_elem in reversed(list(cell.find_all(['div', 'p', 'span']))):
-            # Get text content
-            block_text = block_elem.get_text(strip=True)
-            if block_text:
-                # Replace block element with its text content (space-separated)
-                # Ensure proper spacing: add space before and after to prevent concatenation
-                block_elem.replace_with(NavigableString(' ' + block_text + ' '))
-            else:
-                block_elem.decompose()
-        
-        # Now get text - use space separator to avoid structural newlines
-        # FIX 3B: Remove ALL newlines first, then add back only intentional <br> newlines
-        cell_text = cell.get_text(separator=' ', strip=False)
-        
-        # Remove all newlines (structural newlines from HTML)
-        cell_text = re.sub(r'\n+', ' ', cell_text)
-        
-        # Replace BR markers with actual newlines (these are intentional line breaks)
-        cell_text = cell_text.replace('__BR__', '\n')
-        
-        # Normalize multiple spaces to single space (but preserve intentional newlines from <br>)
-        cell_text = re.sub(r'[ \t]+', ' ', cell_text)  # Multiple spaces/tabs -> single space
-        cell_text = re.sub(r'\n\s+', '\n', cell_text)  # Remove leading spaces after newlines
-        cell_text = re.sub(r'\s+\n', '\n', cell_text)  # Remove trailing spaces before newlines
-        cell_text = re.sub(r' +', ' ', cell_text)  # Multiple spaces -> single space
-        
-        # Ensure proper spacing around common field labels (GENERALIZED: handles all variations)
-        # This prevents concatenation like "AckermannE-Mail:" -> "Ackermann E-Mail:"
-        # Also handle cases like "7415Location:" -> "7415 Location:"
-        # Match all label variations: Tel, Telephone, Contact, Phone, Email, E-Mail, Location, Office, Room, etc.
-        # FIX 3L: Don't match single digit + single letter (like "2A") - require 2+ chars for the label part
-        cell_text = re.sub(r'([a-z0-9])([A-Z][a-z]{2,}:)', r'\1 \2', cell_text)  # lowercase/digit followed by 2+ letter Capital: -> add space
-        # Handle specific multi-word labels
-        cell_text = re.sub(r'([a-z0-9])(E-Mail:|E-mail:)', r'\1 \2', cell_text, flags=re.IGNORECASE)
-        cell_text = re.sub(r'([a-z0-9])(Research Areas:)', r'\1 \2', cell_text, flags=re.IGNORECASE)
-        # FIX 3I: Add space between number and letter (e.g., "02Fermi" -> "02 Fermi", "2L37" -> "2L 37")
-        # But don't add space for single letter + number combinations like "2A" (location codes)
-        # Only add space if it's a multi-digit number or multi-letter word
-        cell_text = re.sub(r'(\d{2,})([A-Za-z])', r'\1 \2', cell_text)  # 2+ digits followed by letter
-        cell_text = re.sub(r'([A-Za-z]{2,})(\d+)', r'\1 \2', cell_text)  # 2+ letters followed by number
-        # Handle location codes like "2A / 02" - don't split "2A" but split "02Fermi"
-        # This is more conservative and prevents breaking location codes
-        
-        # Restore markdown links
-        for i, markdown_link in enumerate(links):
-            cell_text = cell_text.replace(f"__LINK_{i}__", markdown_link)
-        
-        return {
-            'text': cell_text,
-            'links': links
-        }
-    except Exception as e:
-        print(f"[DEBUG] parse_single_column_cell_html failed: {e}")
-        return {'text': '', 'html_structure': [], 'links': []}
+    """Delegate to table_processing."""
+    return _table_processing.parse_single_column_cell_html(cell_element)
 
 
 def normalize_field_label(label):
-    """
-    Normalize field labels to standardized headers for consistency across 200k+ URLs.
-    
-    Maps variations like Tel, Telephone, Contact, phone, Phone → Phone
-    Maps variations like Email, e-mail, Mail → E-Mail
-    Maps variations like Office, Room, Address → Location
-    Maps variations like URL, Website, Homepage → Link
-    Maps variations like Research Areas, Interests → Research Areas
-    
-    Args:
-        label: Raw label string (may be empty, None, or contain variations)
-        
-    Returns:
-        Normalized label string (standardized header name)
-    """
-    if not label or not isinstance(label, str):
-        return label or ''
-    
-    label_lower = label.strip().rstrip(':').lower()
-    
-    # Phone variations: Tel, Telephone, Contact, T., etc. → Phone
-    if label_lower in ['tel', 'telephone', 'telefon', 'contact', 't.', 'phone', 'mobile', 'cell', 'fax']:
-        return 'Phone'
-    
-    # Email variations: Email, e-mail, Mail, etc. → E-Mail
-    if label_lower in ['email', 'e-mail', 'e-mail:', 'mail', 'mail:', 'email address', 'e-mail address']:
-        return 'E-Mail'
-    
-    # Location variations: Office, Room, Address, etc. → Location
-    if label_lower in ['location', 'office', 'room', 'address', 'adresse', 'building', 'floor']:
-        return 'Location'
-    
-    # Link variations: URL, Website, Homepage, etc. → Link
-    if label_lower in ['link', 'url', 'website', 'homepage', 'web', 'home page', 'personal website']:
-        return 'Link'
-    
-    # Research variations: Research Areas, Interests, etc. → Research Areas
-    if label_lower in ['research', 'research areas', 'research area', 'interests', 'field', 'fields', 'focus', 'focus areas']:
-        return 'Research Areas'
-    
-    # Name variations: Name, Full Name, etc. → Name
-    if label_lower in ['name', 'full name', 'person', 'contact name']:
-        return 'Name'
-    
-    # If no match, capitalize first letter of each word (Title Case)
-    # This handles unknown labels gracefully
-    words = label_lower.split()
-    normalized = ' '.join(word.capitalize() for word in words)
-    return normalized
+    """Delegate to table_processing."""
+    return _table_processing.normalize_field_label(label)
 
 
 def parse_single_column_table_content(cell_html):
-    """
-    Parse single-column cell content into Label | Value pairs using pattern-based heuristics.
-    
-    Strategy:
-    1. Detect patterns (email, phone, URL) as primary delimiters
-    2. Use HTML structure (<br>, newlines) as secondary
-    3. Use multiple spaces as tertiary
-    4. First segment (if no pattern, short) = Name
-    5. Subsequent segments = Label | Value pairs
-    
-    Args:
-        cell_html: BeautifulSoup cell element (td or th)
-        
-    Returns:
-        List of [label, value] pairs, with first being Name if applicable
-    """
-    if not cell_html:
-        return []
-    
-    # Parse HTML preserving structure
-    parsed = parse_single_column_cell_html(cell_html)
-    cell_text = parsed['text']
-    
-    if _is_empty_or_whitespace(cell_text):
-        return []
-    
-    # Pattern definitions (universal, not hardcoded keywords)
-    patterns = {
-        'email': r'\[([^\]]+)\]\(mailto:([^\s@]+@[^\s@]+\.[^\s)]+)\)|([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})',
-        'phone': r'\+?\d{1,3}[\s\-\(\)]*(?:0\))?\s*\d{1,4}[\s\-]+\d{3,4}[\s\-]+\d{3,4}',
-        'url': r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|(https?://[^\s\)]+)',
-    }
-    
-    # Find all pattern positions
-    pattern_positions = []
-    for pattern_type, pattern_regex in patterns.items():
-        for match in re.finditer(pattern_regex, cell_text):
-            # Check if there's a label before the pattern (within 30 chars)
-            start_pos = max(0, match.start() - 30)
-            before_pattern = cell_text[start_pos:match.start()]
-            
-            # Look for label pattern (text ending with colon, optionally with "E-Mail", "Phone", etc.)
-            label_match = re.search(r'([A-Za-z\s\-]+):\s*$', before_pattern)
-            label = None
-            if label_match:
-                label = label_match.group(1).strip()
-            
-            pattern_positions.append({
-                'type': pattern_type,
-                'start': match.start(),
-                'end': match.end(),
-                'match': match.group(0),
-                'label': label,
-                'label_start': match.start() - len(before_pattern) + (label_match.start() if label_match else 0) if label_match else None
-            })
-    
-    # Sort by position
-    pattern_positions.sort(key=lambda x: x['start'])
-    
-    # Split cell text into segments based on patterns
-    segments = []
-    last_pos = 0
-    
-    for pos_info in pattern_positions:
-        label_start = pos_info.get('label_start')
-        pattern_start = pos_info['start']
-        
-        if label_start is not None and label_start < pattern_start:
-            # Label exists before pattern
-            before_label = cell_text[last_pos:label_start].strip()
-            if before_label:
-                segments.append({
-                    'type': 'text',
-                    'content': before_label,
-                    'position': last_pos
-                })
-            
-            # Label text
-            label_text = pos_info.get('label', '')
-            if label_text:
-                segments.append({
-                    'type': 'label',
-                    'content': label_text,
-                    'position': label_start
-                })
-            
-            last_pos = pattern_start
-        else:
-            # No label - text before pattern
-            before_text = cell_text[last_pos:pattern_start].strip()
-            if before_text:
-                segments.append({
-                    'type': 'text',
-                    'content': before_text,
-                    'position': last_pos
-                })
-        
-        # Pattern itself
-        segments.append({
-            'type': pos_info['type'],
-            'content': pos_info['match'],
-            'position': pattern_start
-        })
-        
-        last_pos = pos_info['end']
-    
-    # Remaining text after last pattern
-    remaining = cell_text[last_pos:].strip()
-    if remaining:
-        segments.append({
-            'type': 'text',
-            'content': remaining,
-            'position': last_pos
-        })
-    
-    # If no patterns found, try HTML structure delimiters
-    if not pattern_positions:
-        # Try splitting on newlines
-        lines = [l.strip() for l in cell_text.split('\n') if l.strip()]
-        if len(lines) > 1:
-            segments = [{'type': 'text', 'content': line, 'position': i} for i, line in enumerate(lines)]
-        else:
-            # Try multiple spaces (2+)
-            parts = re.split(r'\s{2,}', cell_text)
-            if len(parts) > 1:
-                segments = [{'type': 'text', 'content': part.strip(), 'position': i} for i, part in enumerate(parts) if part.strip()]
-            else:
-                # Single segment - return as-is
-                segments = [{'type': 'text', 'content': cell_text.strip(), 'position': 0}]
-    
-    # Convert segments to Label | Value pairs
-    label_value_pairs = []
-    name_field = None
-    
-    # FIX 3K: Check for name in the FULL cell text before pattern-based splitting
-    # This prevents names from being fragmented by pattern detection
-    # Look for name pattern at the start of the cell text (before any patterns)
-    # Pattern: Name followed by label (with or without colon) or email/phone pattern
-    # Try with colon first, then without colon
-    name_pattern_with_colon = r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,4})\s+(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room|Link|URL|Website):'
-    name_pattern_without_colon = r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,4})\s+(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room|Link|URL|Website)\s+'
-    # Also try name followed directly by email link pattern
-    name_pattern_email = r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,4})\s+\[([^\]]+)\]\(mailto:'
-    
-    name_match = re.search(name_pattern_with_colon, cell_text, re.IGNORECASE)
-    if not name_match:
-        name_match = re.search(name_pattern_without_colon, cell_text, re.IGNORECASE)
-    if not name_match:
-        name_match = re.search(name_pattern_email, cell_text, re.IGNORECASE)
-    if name_match:
-        name_candidate = name_match.group(1).strip()
-        # Verify it's a valid name (2-4 words, no patterns)
-        if (len(name_candidate.split()) >= 2 and len(name_candidate.split()) <= 4 and
-            not re.search(patterns['email'], name_candidate) and
-            not re.search(patterns['phone'], name_candidate)):
-            name_field = name_candidate
-            # Remove the name from the first text segment if it exists
-            if segments and segments[0]['type'] == 'text':
-                first_content = segments[0]['content']
-                # Remove the name from the start of the first segment
-                first_content = re.sub(r'^' + re.escape(name_candidate) + r'\s+', '', first_content, flags=re.IGNORECASE)
-                if first_content.strip():
-                    segments[0]['content'] = first_content.strip()
-                else:
-                    segments.pop(0)  # Remove empty segment
-    
-    # Fallback: Check first segment for Name field (if not already found)
-    if not name_field and segments:
-        first_seg = segments[0]
-        first_content = first_seg['content']
-        
-        # FIX 3J: Extract name from text that may contain labels (e.g., "Markus Ackermann E-Mail" -> "Markus Ackermann")
-        # Remove common label patterns from the end of the first segment
-        name_candidate = first_content
-        # Remove label patterns at the end (E-Mail, Phone, Location, etc.)
-        name_candidate = re.sub(r'\s+(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room|Link|URL|Website):?\s*$', '', name_candidate, flags=re.IGNORECASE)
-        name_candidate = name_candidate.strip()
-        
-        # Name if: no pattern, short (< 50 chars), and looks like a name (2-4 capitalized words)
-        is_name_like = bool(re.search(r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,3})', name_candidate))
-        if (first_seg['type'] == 'text' and 
-            len(name_candidate) < 50 and
-            len(name_candidate) > 2 and  # At least 3 characters
-            not re.search(r':\s*$', name_candidate) and
-            not re.search(patterns['email'], name_candidate) and
-            not re.search(patterns['phone'], name_candidate) and
-            (is_name_like or (len(name_candidate.split()) >= 2 and len(name_candidate.split()) <= 4))):  # Require 2+ words
-            name_field = name_candidate
-            # If we extracted name from first segment, remove the original segment and continue
-            segments = segments[1:]  # Remove from segments
-    
-    # Process remaining segments as Label | Value pairs
-    i = 0
-    while i < len(segments):
-        seg = segments[i]
-        
-        if seg['type'] in ['email', 'phone', 'url']:
-            # Pattern found - extract label and value
-            label = ""
-            value = seg['content']
-            
-            # Check if previous segment is a label
-            if i > 0 and segments[i-1]['type'] == 'label':
-                label = normalize_field_label(segments[i-1]['content'])
-                segments.pop(i-1)
-                i -= 1
-            elif i > 0 and segments[i-1]['type'] == 'text':
-                prev_text = segments[i-1]['content']
-                if prev_text.endswith(':') and len(prev_text) < 30:
-                    label = normalize_field_label(prev_text.rstrip(':').strip())
-                    segments.pop(i-1)
-                    i -= 1
-                else:
-                    # Use pattern type as label (normalized)
-                    if seg['type'] == 'email':
-                        label = 'E-Mail'
-                    elif seg['type'] == 'phone':
-                        label = 'Phone'
-                    elif seg['type'] == 'url':
-                        label = 'Link'
-                    else:
-                        label = seg['type'].capitalize()
-            else:
-                # Use pattern type as label (normalized)
-                if seg['type'] == 'email':
-                    label = 'E-Mail'
-                elif seg['type'] == 'phone':
-                    label = 'Phone'
-                elif seg['type'] == 'url':
-                    label = 'Link'
-                else:
-                    label = seg['type'].capitalize()
-            
-            # Check if next segment is continuation (text after pattern)
-            # FIX 3D: Don't append if next text contains a field label (Location:, Phone:, E-Mail:, etc.)
-            if i+1 < len(segments) and segments[i+1]['type'] == 'text':
-                next_text = segments[i+1]['content']
-                # Don't append if it contains a field label pattern - GENERALIZED: matches all variations
-                has_field_label = bool(re.search(r'\b(Location|Office|Room|Address|Phone|Tel|Telephone|Contact|E-Mail|Email|Mail|Link|URL|Website|Homepage|Research|Research Areas|Interests|Name|Fax|Mobile|Cell):', next_text, re.IGNORECASE))
-                # If short, doesn't look like new field, and doesn't contain field label, append to value
-                if len(next_text) < 30 and not re.search(r':\s*$', next_text) and not has_field_label:
-                    value = f"{value} {next_text}"
-                    segments.pop(i+1)
-            
-            if label and value:
-                label_value_pairs.append([label, value])
-        
-        elif seg['type'] == 'text':
-            # Text segment - try to extract Label | Value
-            text = seg['content']
-            
-            # FIX 3E: Check if text contains multiple field labels (e.g., "Location:2A / 02Fermi, Group Leader")
-            # Split on field labels if present - GENERALIZED: matches all variations (Tel, Telephone, Contact, etc.)
-            field_label_pattern = r'\b(Location|Office|Room|Address|Phone|Tel|Telephone|Contact|E-Mail|Email|Mail|Link|URL|Website|Homepage|Research|Research Areas|Interests|Name|Fax|Mobile|Cell):'
-            if re.search(field_label_pattern, text, re.IGNORECASE):
-                # Split text on field labels - capture label and following text
-                # Pattern: (text before)(Label:)(value after label)
-                parts = re.split(f'({field_label_pattern})\s*', text, flags=re.IGNORECASE)
-                current_label = None
-                current_value = []
-                skip_next = False  # Skip the label part itself
-                
-                for i, part in enumerate(parts):
-                    part = part.strip()
-                    if not part:
-                        continue
-                    
-                    # Check if this part is a field label (with colon)
-                    label_match = re.match(field_label_pattern + r'\s*$', part, re.IGNORECASE)
-                    if label_match:
-                        # Save previous label/value pair if exists
-                        if current_label and current_value:
-                            value_text = ' '.join(current_value).strip()
-                            # FIX 3F: Remove label word from value if it appears at start
-                            # Prevents "Location 2A / 02" -> should be "2A / 02"
-                            value_text = re.sub(r'^' + re.escape(current_label) + r'\s+', '', value_text, flags=re.IGNORECASE)
-                            if value_text.strip():
-                                label_value_pairs.append([current_label, value_text.strip()])
-                        # Start new label - normalize it
-                        raw_label = label_match.group(1)  # Get the label name (without colon)
-                        current_label = normalize_field_label(raw_label)
-                        current_value = []
-                        skip_next = False
-                    else:
-                        # This is a value (text after label)
-                        # FIX 3G: Remove label word from value if it appears
-                        # Prevents "Location 2A / 02" when text is "Location:Location 2A / 02"
-                        part_cleaned = part
-                        if current_label:
-                            # Remove label word from start of value
-                            part_cleaned = re.sub(r'^' + re.escape(current_label) + r'\s+', '', part, flags=re.IGNORECASE)
-                        # Only add if we have a current label (skip text before first label)
-                        if current_label:
-                            current_value.append(part_cleaned)
-                        elif not current_label and i == 0:
-                            # Text before first label - might be name or continuation
-                            if not name_field and len(part) < 50:
-                                name_field = part
-                            else:
-                                current_value.append(part)
-                
-                # Save last label/value pair
-                if current_label and current_value:
-                    value_text = ' '.join(current_value).strip()
-                    # FIX 3F: Remove label word from value if it appears at start
-                    value_text = re.sub(r'^' + re.escape(current_label) + r'\s+', '', value_text, flags=re.IGNORECASE)
-                    if value_text.strip():
-                        label_value_pairs.append([current_label, value_text.strip()])
-            # Check if it contains colon (Label: Value format)
-            elif ':' in text:
-                parts = text.split(':', 1)
-                if len(parts) == 2:
-                    raw_label = parts[0].strip()
-                    value = parts[1].strip()
-                    if raw_label and value:
-                        # Normalize label for consistency
-                        label = normalize_field_label(raw_label)
-                        label_value_pairs.append([label, value])
-                else:
-                    if text.strip():
-                        label_value_pairs.append(['', text.strip()])
-            else:
-                # No colon - might be continuation of previous value
-                if label_value_pairs:
-                    label_value_pairs[-1][1] = f"{label_value_pairs[-1][1]} {text}".strip()
-                else:
-                    if not name_field:
-                        name_field = text
-                    else:
-                        label_value_pairs.append(['', text])
-        
-        i += 1
-    
-    # Build result: Name first (if found), then Label | Value pairs
-    result = []
-    if name_field:
-        result.append(['Name', name_field])
-    result.extend(label_value_pairs)
-    
-    return result
+    """Delegate to table_processing."""
+    return _table_processing.parse_single_column_table_content(cell_html)
 
 
 def convert_single_column_to_multi_column_table(table_data, html_table_element):
-    """
-    Convert single-column table to multi-column format using pattern-based parsing.
-    
-    Args:
-        table_data: Table dict with single-column rows (from extract_table_from_html)
-        html_table_element: BeautifulSoup table element (for parsing HTML directly)
-        
-    Returns:
-        Table dict with multi-column rows (Label | Value format)
-    """
-    if not table_data.get('rows'):
-        return table_data
-    
-    # Check if this is a single-column table
-    if not all(len(row) == 1 for row in table_data.get('rows', [])):
-        return table_data  # Already multi-column
-    
-    # Parse each row from HTML directly (preserve structure)
-    parsed_rows_data = []  # List of dicts: {label: value}
-    all_labels_set = set()  # Collect all unique labels
-    
-    # Get all rows from HTML table
-    html_rows = html_table_element.find_all('tr', recursive=False)
-    if not html_rows:
-        html_rows = html_table_element.find_all('tr', recursive=True)
-        # Filter nested table rows
-        html_rows = [r for r in html_rows if r.find_parent('table') == html_table_element]
-    
-    for html_row in html_rows:
-        # Get single cell (single-column table)
-        cells = html_row.find_all(['td', 'th'], recursive=False)
-        if not cells:
-            cells = html_row.find_all(['td', 'th'], recursive=True)
-            cells = [c for c in cells if c.find_parent('table') == html_table_element]
-        
-        if len(cells) == 1:
-            # Single-column cell - parse it
-            cell_html = cells[0]
-            label_value_pairs = parse_single_column_table_content(cell_html)
-            
-            if label_value_pairs:
-                # Convert pairs to dict for easier handling
-                row_dict = {}
-                for label, value in label_value_pairs:
-                    if label:  # Only add if label exists
-                        # Normalize label for consistency across 200k+ URLs
-                        normalized_label = normalize_field_label(label)
-                        row_dict[normalized_label] = value
-                        all_labels_set.add(normalized_label)
-                    else:
-                        # No label - might be continuation or standalone value
-                        if row_dict:
-                            # Append to last value
-                            last_key = list(row_dict.keys())[-1]
-                            row_dict[last_key] = f"{row_dict[last_key]} {value}".strip()
-                        else:
-                            # First item with no label - use "Info"
-                            row_dict['Info'] = value
-                            all_labels_set.add('Info')
-                
-                parsed_rows_data.append(row_dict)
-            else:
-                # Parsing failed - try to extract name from cell content before falling back to "Original"
-                # This prevents "| Original |" rows when we can extract at least a name
-                cell_text = extract_cell_links(cells[0])
-                # Try to extract name pattern (capitalized words at start, including umlauts)
-                name_match = re.search(r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){0,3})', cell_text, re.UNICODE)
-                if name_match:
-                    name = name_match.group(1).strip()
-                    # Extract remaining content
-                    remaining = cell_text[len(name):].strip()
-                    if remaining:
-                        parsed_rows_data.append({'Name': name, 'Info': remaining})
-                        all_labels_set.add('Name')
-                        all_labels_set.add('Info')
-                    else:
-                        parsed_rows_data.append({'Name': name})
-                        all_labels_set.add('Name')
-                else:
-                    # No name found, use "Original" as fallback
-                    parsed_rows_data.append({'Original': cell_text})
-                    all_labels_set.add('Original')
-        else:
-            # Multi-column row (shouldn't happen in single-column table, but handle it)
-            row_data = [extract_cell_links(cell) for cell in cells]
-            # Convert to dict format for consistency
-            row_dict = {}
-            for i, cell_val in enumerate(row_data):
-                label = f"Column {i+1}"
-                row_dict[label] = cell_val
-                all_labels_set.add(label)
-            parsed_rows_data.append(row_dict)
-    
-    # If we successfully parsed at least one row, update table structure
-    if parsed_rows_data and all_labels_set:
-        # Create ordered header list (Name first if present, then others alphabetically)
-        headers = []
-        if 'Name' in all_labels_set:
-            headers.append('Name')
-            all_labels_set.remove('Name')
-        # Add remaining labels in sorted order
-        headers.extend(sorted(all_labels_set))
-        
-        # Convert dict rows to list rows matching header order
-        parsed_rows = []
-        for row_dict in parsed_rows_data:
-            row_values = [row_dict.get(label, '') for label in headers]
-            parsed_rows.append(row_values)
-        
-        table_data['rows'] = parsed_rows
-        table_data['headers'] = headers
-    
-    return table_data
+    """Delegate to table_processing."""
+    return _table_processing.convert_single_column_to_multi_column_table(table_data, html_table_element)
 
 
 def extract_headings_and_tables_in_dom_order(html_content, url=None):
-    """
-    Extract headings and tables in DOM order from rendered HTML.
-    
-    This function:
-    1. Finds all headings (h1-h6) and tables in the HTML
-    2. Sorts them by their position in the DOM
-    3. Associates each table with its nearest preceding heading
-    4. Returns a list of content items in DOM order
-    
-    Args:
-        html_content: Rendered HTML string from Crawl4AI (result.html)
-        url: Optional URL to enable PUBDB-specific filtering
-        
-    Returns:
-        List of content items: [
-            {'type': 'heading', 'level': 4, 'text': 'SCIENTISTS', 'position': 0},
-            {'type': 'table', 'data': {...}, 'position': 1},
-            ...
-        ]
-    """
-    if not BEAUTIFULSOUP_AVAILABLE:
-        return []
-    
-    try:
-        
-        soup = BeautifulSoup(html_content, 'lxml')
-        
-        # Find main content area
-        main_content_area = (soup.find('main') or 
-                           soup.find('article') or 
-                           soup.find('body') or
-                           soup)
-        
-        
-        
-        # FIX 2B: Filter out navigation/header/footer headings if main_content_area is body
-        # This prevents extracting navigation headings when body is used as fallback
-        navigation_containers = ['nav', 'header', 'footer', 'aside']
-        nav_elements = set()
-        if main_content_area.name == 'body':
-            # Filter by semantic HTML elements
-            for nav_tag in navigation_containers:
-                for nav_elem in soup.find_all(nav_tag, recursive=True):
-                    for heading in nav_elem.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], recursive=True):
-                        nav_elements.add(heading)
-            
-            # Also filter by common navigation class/id patterns
-            nav_patterns = [r'nav', r'sidebar', r'menu', r'header', r'footer', r'topbar', r'breadcrumb']
-            for pattern in nav_patterns:
-                for elem in soup.find_all(['div', 'section'], class_=re.compile(pattern, re.I), recursive=True):
-                    for heading in elem.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], recursive=True):
-                        nav_elements.add(heading)
-                for elem in soup.find_all(['div', 'section'], id=re.compile(pattern, re.I), recursive=True):
-                    for heading in elem.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], recursive=True):
-                        nav_elements.add(heading)
-        
-        # Collect all headings, tables, AND paragraphs with their DOM positions
-        # FIX: Also include 'p' elements to capture paragraph content (e.g., belle2.desy.de)
-        all_elements = []
-        
-        # Elements to extract: headings, tables, and paragraphs with substantial content
-        content_tags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'p',  'ul', 'ol']  # 'ul', 'ol'
-        
-        
-        # Find all content elements
-        for elem in main_content_area.find_all(content_tags, recursive=True):
-            # Skip navigation headings
-            if elem.name.startswith('h') and elem in nav_elements:
-                continue
-            # Only process top-level tables (not nested)
-            if elem.name == 'table' and elem.find_parent('table') is not None:
-                continue
-            # Process all paragraphs
-            if elem.name == 'p':
-                # Don't skip navigation paragraphs - let URL dedup handle redirects
-                # Skip very short paragraphs (likely navigation/labels)
-                text = elem.get_text(strip=True)
-                # FIX: Allow short paragraphs that are questions or follow headings (common on landing pages)
-                # Questions (ending with ?) are often descriptive text after headings
-                is_question = text.endswith('?')
-                # Check if previous sibling is a heading
-                prev_sibling = elem.find_previous_sibling(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-                is_after_heading = prev_sibling is not None
-                
-                # Lower threshold for questions or paragraphs after headings
-                min_length = 15 if (is_question or is_after_heading) else 30
-                if len(text) < min_length:
-                    continue
-                # Skip paragraphs that are just links
-                links = elem.find_all('a')
-                if links and len(text) < 50 and len(links) >= len(text.split()):
-                    continue
-            
-            # FIX 2: Calculate position: count only previous elements within main_content_area
-            # This prevents counting navigation/header elements that appear before main content
-            position = 0
-            # Get all elements in main_content_area in document order
-            all_content_elems = main_content_area.find_all(content_tags, recursive=True)
-            for prev_elem in all_content_elems:
-                # Stop when we reach current element
-                if prev_elem == elem:
-                    break
-                # Only count top-level tables (not nested)
-                if prev_elem.name == 'table':
-                    if prev_elem.find_parent('table') is None:
-                        position += 1
-                elif prev_elem.name.startswith('h'):
-                    position += 1
-                elif prev_elem.name == 'p':
-                    # Only count substantial paragraphs
-                    text = prev_elem.get_text(strip=True)
-                    if len(text) >= 30 and not _is_in_navigation(prev_elem):
-                        position += 1
-                elif prev_elem.name in ['ul', 'ol']:
-                    # Count lists (but skip if in navigation areas)
-                    if not _is_in_navigation(prev_elem):
-                        position += 1
-            
-            
-            
-            # Determine element type
-            if elem.name.startswith('h'):
-                elem_type = 'heading'
-            elif elem.name == 'table':
-                elem_type = 'table'
-            elif elem.name == 'p':
-                elem_type = 'paragraph'
-            elif elem.name in ['ul', 'ol']: 
-                elem_type = 'list'
-            else:
-                elem_type = 'text'
-            
-            all_elements.append({
-                'element': elem,
-                'type': elem_type,
-                'position': position
-            })
-        
-        # Sort by position
-        all_elements.sort(key=lambda x: x['position'])
-        
-        
-        
-        # Process elements and extract content
-        dom_ordered_content = []
-        seen_headings = set()
-        # FIX: Track table row text to avoid duplicating as paragraphs
-        table_row_texts = set()
-        
-        for item in all_elements:
-            elem = item['element']
-            
-            if item['type'] == 'heading':
-                heading_text = elem.get_text(strip=True)
-                
-                if heading_text and heading_text not in seen_headings:
-                    seen_headings.add(heading_text)
-                    level = int(elem.name[1])
-                    dom_ordered_content.append({
-                        'type': 'heading',
-                        'level': level,
-                        'text': heading_text,
-                        'position': item['position']
-                    })
-            
-            elif item['type'] == 'table':
-                # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
-                # Check both URL and content to handle redirects/embedded content
-                if _is_pubdb_page(url, html_content):
-                    table_text = elem.get_text(strip=True).lower()
-                    
-                    if is_pubdb_ui_table(table_text):
-                        
-                        continue  # Skip this UI table
-                
-                
-                
-                # Extract table data using existing function
-                table_data = extract_table_from_html(elem)
-                
-                
-                
-                if table_data.get('rows'):
-                    # Solution 3: Check if single-column table and convert to multi-column
-                    is_single_column = all(len(row) == 1 for row in table_data.get('rows', []))
-                    if is_single_column:
-                        table_data = convert_single_column_to_multi_column_table(table_data, elem)
-                    
-                    
-                    
-                    dom_ordered_content.append({
-                        'type': 'table',
-                        'data': table_data,
-                        'position': item['position']
-                    })
-                    
-                    # FIX: Collect combined row text to avoid duplicating as paragraphs
-                    # Individual cells may be short, but paragraphs often contain all cells concatenated
-                    for row in table_data.get('rows', []):
-                        # Combine all cells in this row
-                        row_text = ' '.join(str(cell) for cell in row if cell)
-                        if row_text:
-                            # Normalize: lowercase, collapse whitespace, strip markdown links
-                            row_text = row_text.lower()
-                            row_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', row_text)  # Remove markdown links
-                            row_text = ' '.join(row_text.split())  # Normalize whitespace
-                            if len(row_text) > 30:  # Only track substantial text
-                                table_row_texts.add(row_text)
-            
-            elif item['type'] == 'paragraph':
-                # Extract paragraph text with links preserved
-                para_text = elem.get_text(separator=' ', strip=True)
-                
-                
-                
-                # FIX: Skip paragraphs whose text is already in a table row
-                # Match based on key fields (names, emails, phone numbers) rather than exact text
-                if para_text and table_row_texts:
-                    para_normalized = para_text.lower()
-                    para_normalized = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', para_normalized)  # Remove markdown links
-                    para_normalized = re.sub(r'(e-?mail|phone|tel|location|office|room):\s*', '', para_normalized)  # Remove labels
-                    para_normalized = ' '.join(para_normalized.split())  # Normalize whitespace
-                    
-                    # Check if paragraph shares significant content with any table row
-                    is_duplicate = False
-                    for row_text in table_row_texts:
-                        # Extract key tokens (words 3+ chars, not common words)
-                        para_tokens = set(w for w in para_normalized.split() if len(w) >= 3 and w not in ('the', 'and', 'for'))
-                        row_tokens = set(w for w in row_text.split() if len(w) >= 3 and w not in ('the', 'and', 'for'))
-                        
-                        # If many tokens match, it's likely a duplicate
-                        common_tokens = para_tokens & row_tokens
-                        if len(common_tokens) >= 3 and len(common_tokens) >= len(para_tokens) * 0.5:
-                            is_duplicate = True
-                            
-                            break
-                    
-                    if is_duplicate:
-                        continue  # Skip this paragraph - it's duplicate table content
-                
-                # Also extract any links in the paragraph
-                links = []
-                for link in elem.find_all('a', href=True):
-                    href = link.get('href', '')
-                    link_text = link.get_text(strip=True)
-                    if href and link_text:
-                        # Convert to markdown link format
-                        links.append((link_text, href))
-                
-                if para_text and len(para_text) >= 15: # 30:  # Only include substantial paragraphs
-                    # Replace link text with markdown format in paragraph
-                    formatted_text = para_text
-                    for link_text, href in links:
-                        if link_text in formatted_text:
-                            formatted_text = formatted_text.replace(link_text, f"[{link_text}]({href})", 1)
-                    
-                    
-                    
-                    dom_ordered_content.append({
-                        'type': 'paragraph',
-                        'text': formatted_text,
-                        'position': item['position']
-                    })
-            
-            elif item['type'] == 'list':
-                # Extract list items with links preserved
-                list_items = []
-                is_ordered = elem.name == 'ol'
-                
-                # Process all lists including navigation - let URL dedup handle redirects
-                
-                for li in elem.find_all('li', recursive=False):  # Only direct children
-                    # Extract text and links from list item
-                    item_text = li.get_text(separator=' ', strip=True)
-                    if not item_text:
-                        continue
-                    
-                    # Extract links and replace with markdown format
-                    links = []
-                    for link in li.find_all('a', href=True):
-                        href = link.get('href', '')
-                        link_text = link.get_text(strip=True)
-                        if href and link_text:
-                            links.append((link_text, href))
-                    
-                    # Replace link text with markdown format
-                    formatted_item = item_text
-                    for link_text, href in links:
-                        if link_text in formatted_item:
-                            formatted_item = formatted_item.replace(link_text, f"[{link_text}]({href})", 1)
-                    
-                    list_items.append(formatted_item)
-                
-                # Only add list if it has items
-                if list_items:
-                    dom_ordered_content.append({
-                        'type': 'list',
-                        'items': list_items,
-                        'ordered': is_ordered,
-                        'position': item['position']
-                    })
-        
-        return dom_ordered_content
-    except Exception as e:
-        print(f"[DEBUG] extract_headings_and_tables_in_dom_order failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+    """Delegate to table_processing."""
+    return _table_processing.extract_headings_and_tables_in_dom_order(html_content, url)
 
 
 def format_tables_with_headings_as_markdown(dom_ordered_content):
-    """
-    Format headings and tables as markdown, preserving DOM order.
-    
-    Args:
-        dom_ordered_content: List from extract_headings_and_tables_in_dom_order()
-        
-    Returns:
-        Markdown string with headings and tables in DOM order
-    """
-    if not dom_ordered_content:
-        return ""
-    
-    # Defensive check: ensure dom_ordered_content is a list
-    if dom_ordered_content is None:
-        return ""
-    
-    # GENERAL: Merge consecutive single-row tables with similar structure (same headers)
-    # This handles cases where each row is in its own <table> element
-    merged_content = []
-    i = 0
-    while i < len(dom_ordered_content):
-        item = dom_ordered_content[i]
-        
-        if item['type'] == 'heading':
-            merged_content.append(item)
-            i += 1
-        elif item['type'] == 'table':
-            # Check if this is a single-row table that might be part of a larger table
-            table_data = item.get('data', {}) or {}
-            rows = table_data.get('rows', []) or []
-            headers = table_data.get('headers', []) or []
-            
-            # Check if this is a single-row table with structured data (Name, E-mail, Phone, Location)
-            is_single_row_structured = (len(rows) == 1 and 
-                                       headers and 
-                                       len(headers) >= 2 and
-                                       any(label.lower() in ['name', 'e-mail', 'email', 'phone', 'location'] for label in headers))
-            
-            
-            
-            if is_single_row_structured:
-                # Look ahead for consecutive single-row tables with same headers
-                merge_candidates = [item]
-                j = i + 1
-                while j < len(dom_ordered_content):
-                    next_item = dom_ordered_content[j]
-                    
-                    if next_item['type'] != 'table':
-                        
-                        break
-                    
-                    next_table_data = next_item.get('data', {}) or {}
-                    next_rows = next_table_data.get('rows', []) or []
-                    next_headers = next_table_data.get('headers', []) or []
-                    
-                    # Check if next table has same structure (same header types, single row)
-                    # GENERAL: Headers may have person-specific values (e.g., "Andrey Siemens E-mail" vs "Anjali Panchwanee E-mail")
-                    # So we check if headers have the same field types (E-mail, Location, Phone) rather than exact match
-                    # Also allow different numbers of columns as long as field types match (some tables may be missing columns)
-                    
-                    if len(next_rows) == 1 and next_headers:
-                        # Extract field types from headers (normalize to generic labels)
-                        def extract_field_type(header):
-                            header_lower = str(header).lower()
-                            if 'e-mail' in header_lower or 'email' in header_lower:
-                                return 'e-mail'
-                            elif 'phone' in header_lower or 'tel' in header_lower:
-                                return 'phone'
-                            elif 'location' in header_lower or 'office' in header_lower or 'room' in header_lower:
-                                return 'location'
-                            elif 'name' in header_lower:
-                                return 'name'
-                            else:
-                                return header_lower
-                        
-                        current_field_types = set(extract_field_type(h) for h in (headers or []))
-                        next_field_types = set(extract_field_type(h) for h in (next_headers or []))
-                        
-                        # Merge if field types overlap (same structure, even if some columns are missing)
-                        # Allow merging if at least 2 field types match (e.g., both have E-Mail and Location)
-                        intersection = current_field_types & next_field_types
-                        will_merge = len(intersection) >= 2
-                        
-                        
-                        
-                        if will_merge:
-                            merge_candidates.append(next_item)
-                            
-                            j += 1
-                        else:
-                            
-                            break
-                    else:
-                        # Next item is not a table or doesn't have single row, stop merging
-                        break
-                
-                # If we found multiple tables to merge, merge them
-                
-                if len(merge_candidates) > 1:
-                    # Merge all rows from candidates into one table
-                    merged_rows = []
-                    # Use normalized generic headers (extract field types, not person-specific values)
-                    def normalize_header(header):
-                        header_str = str(header).lower()
-                        if 'e-mail' in header_str or 'email' in header_str:
-                            return 'E-Mail'
-                        elif 'phone' in header_str or 'tel' in header_str:
-                            return 'Phone'
-                        elif 'location' in header_str or 'office' in header_str or 'room' in header_str:
-                            return 'Location'
-                        elif 'name' in header_str:
-                            return 'Name'
-                        else:
-                            # Keep original if no match
-                            return str(header)
-                    
-                    # Collect all unique headers from all candidates to ensure we don't lose any columns
-                    all_headers_set = set()
-                    for candidate in merge_candidates:
-                        candidate_data = candidate.get('data', {}) or {}
-                        candidate_headers = candidate_data.get('headers', []) or []
-                        for h in candidate_headers:
-                            if h:  # Skip None headers
-                                normalized_h = normalize_header(h)
-                                all_headers_set.add(normalized_h)
-                    
-                    # FIX: If Name is not in headers but rows contain email links with names, infer Name column
-                    # This handles cases where HTML structure doesn't have explicit Name header but email links contain names
-                    if 'Name' not in all_headers_set:
-                        # Check if any row has an email link with a name-like pattern
-                        for candidate in merge_candidates:
-                            candidate_data = candidate.get('data', {}) or {}
-                            candidate_rows = candidate_data.get('rows', []) or []
-                            for row in candidate_rows:
-                                # Check all cells in the row for email links
-                                for cell in row:
-                                    cell_str = str(cell)
-                                    # Look for markdown email link: [Name](mailto:...)
-                                    email_match = re.search(r'\[([^\]]+)\]\(mailto:[^)]+\)', cell_str)
-                                    if email_match:
-                                        link_text = email_match.group(1).strip()
-                                        # Validate it looks like a name (1-5 words, capitalized)
-                                        words = link_text.split()
-                                        if 1 <= len(words) <= 5:
-                                            # Check if words look like names (start with capital or umlaut)
-                                            is_name = all(
-                                                w and (w[0].isupper() or w[0] in 'äöüÄÖÜ') 
-                                                for w in words if w and not w.startswith('(')
-                                            )
-                                            # Check it's not a phone/number pattern
-                                            has_phone = bool(re.search(r'\d{3,}|T\.|Phone', link_text))
-                                            
-                                            if is_name and not has_phone:
-                                                # Found a name in email link - add Name to headers
-                                                all_headers_set.add('Name')
-                                                break
-                                if 'Name' in all_headers_set:
-                                    break
-                            if 'Name' in all_headers_set:
-                                break
-                    
-                    # Create ordered header list (Name first if present, then E-Mail, Phone, Location, then others)
-                    normalized_headers = []
-                    header_order = ['Name', 'E-Mail', 'Phone', 'Location']
-                    for h in header_order:
-                        if h in all_headers_set:
-                            normalized_headers.append(h)
-                            all_headers_set.remove(h)
-                    # Add any remaining headers
-                    normalized_headers.extend(sorted(all_headers_set))
-                    
-                    # Now merge rows, ensuring all columns are present
-                    for candidate in merge_candidates:
-                        candidate_data = candidate.get('data', {}) or {}
-                        candidate_rows = candidate_data.get('rows', []) or []
-                        candidate_headers = candidate_data.get('headers', []) or []
-                        # Map candidate headers to normalized headers
-                        candidate_header_map = {normalize_header(h): h for h in candidate_headers if h}
-                        
-                        if not candidate_rows:
-                            continue  # Skip if no rows
-                        
-                        for row in candidate_rows:
-                            # Create a new row with all normalized headers
-                            new_row = []
-                            for norm_h in normalized_headers:
-                                # Find the original header that maps to this normalized header
-                                orig_h = candidate_header_map.get(norm_h)
-                                if orig_h and orig_h in candidate_headers:
-                                    col_idx = candidate_headers.index(orig_h)
-                                    if col_idx < len(row):
-                                        new_row.append(row[col_idx])
-                                    else:
-                                        new_row.append('')
-                                else:
-                                    # Header not in original - might be inferred (like Name)
-                                    # If this is Name and we have email links in the row, extract name from email
-                                    if norm_h == 'Name':
-                                        # Look for email link in any cell of this row
-                                        name_extracted = False
-                                        for cell in row:
-                                            cell_str = str(cell)
-                                            email_match = re.search(r'\[([^\]]+)\]\(mailto:[^)]+\)', cell_str)
-                                            if email_match:
-                                                link_text = email_match.group(1).strip()
-                                                # Validate it looks like a name
-                                                words = link_text.split()
-                                                if 1 <= len(words) <= 5:
-                                                    is_name = all(
-                                                        w and (w[0].isupper() or w[0] in 'äöüÄÖÜ') 
-                                                        for w in words if w and not w.startswith('(')
-                                                    )
-                                                    has_phone = bool(re.search(r'\d{3,}|T\.|Phone', link_text))
-                                                    
-                                                    if is_name and not has_phone:
-                                                        new_row.append(link_text)
-                                                        name_extracted = True
-                                                        break
-                                        if not name_extracted:
-                                            new_row.append('')
-                                    else:
-                                        new_row.append('')
-                            merged_rows.append(new_row)
-                    
-                    # Create merged table with normalized headers
-                    merged_table = {
-                        'type': 'table',
-                        'data': {
-                            'headers': normalized_headers,
-                            'rows': merged_rows
-                        },
-                        'position': item['position']
-                    }
-                    merged_content.append(merged_table)
-                    
-                    i = j  # Skip all merged tables
-                else:
-                    # No merge needed, add as-is
-                    merged_content.append(item)
-                    i += 1
-            else:
-                # Not a candidate for merging, add as-is
-                merged_content.append(item)
-                i += 1
-        elif item['type'] == 'paragraph':
-            # Paragraphs don't need merging, just add them
-            merged_content.append(item)
-            i += 1
-        else:
-            merged_content.append(item)
-            i += 1
-    
-    # Now format the merged content
-    markdown_output = ""
-    seen_table_signatures = set()  # For deduplication
-    
-    
-    
-    for item in merged_content:
-        if item['type'] == 'heading':
-            level = item['level']
-            text = item['text']
-            markdown_output += '#' * level + ' ' + text + "\n\n"
-        
-        elif item['type'] == 'table':
-            table_data = item.get('data', {}) or {}
-            headers = table_data.get('headers', []) or []
-            rows = table_data.get('rows', []) or []
-            
-            
-            
-            if not rows:
-                
-                continue
-            
-            # GENERAL: Filter out trivial/small tables (single-row tables with just links, empty tables, etc.)
-            # Skip tables that are too small or contain only links/empty cells
-            # BUT: Allow single-row tables with 3+ columns that contain structured data (like staff/group member tables)
-            if len(rows) <= 1:
-                # Single-row table - check if it's just a link or trivial content
-                first_row = rows[0] if rows else []
-                # Count non-empty cells
-                non_empty_cells = [str(c).strip() for c in first_row if str(c).strip()]
-                num_cols = len(first_row)
-                
-                # GENERAL: Only filter if table has 1-2 non-empty cells AND they're just links
-                # Tables with 3+ columns (even if single-row) may contain structured data (staff info, etc.)
-                if len(non_empty_cells) <= 2 and num_cols <= 2:
-                    # Check if cells contain mostly links/URLs
-                    link_count = sum(1 for cell in non_empty_cells if re.search(r'\[.*?\]\(.*?\)|https?://', str(cell)))
-                    if link_count >= len(non_empty_cells):
-                        # This is a trivial link table - skip it
-                        
-                        continue
-                # GENERAL: Filter out single-cell tables that are likely broken fragments
-                # Pattern: Single-cell table with just a value (no label, no structure)
-                if len(non_empty_cells) == 1:
-                    single_cell = non_empty_cells[0]
-                    # Skip if it's just a number/unit with no label (broken fragment)
-                    if re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad)?\s*$', single_cell, re.I):
-                        
-                        continue
-                # GENERAL: Filter out single-cell tables that are likely broken fragments
-                # Pattern: Single-cell table with just a value (no label, no structure)
-                if len(non_empty_cells) == 1:
-                    single_cell = non_empty_cells[0]
-                    # Skip if it's just a number/unit with no label (broken fragment)
-                    if re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad)?\s*$', single_cell, re.I):
-                        
-                        continue
-            
-            # GENERAL: Filter out malformed tables (too many columns, concatenated data)
-            # Pattern: Tables with 10+ columns are likely malformed (concatenated data)
-            if rows and len(rows[0]) > 10:
-                
-                continue
-            
-            # Deduplication: Create signature from first few non-empty cells of first row
-            # GENERAL: More robust signature to catch duplicates even with formatting differences
-            sig_row = rows[0] if rows else []
-            # Get first 3 non-empty cells (more robust than 2)
-            sig_cells = [str(c).strip().lower()[:50] for c in sig_row[:3] if str(c).strip()]
-            # Also include header signature if available
-            if headers:
-                header_sig = "|".join([str(h).strip().lower()[:30] for h in headers[:3] if str(h).strip()])
-                table_sig = f"{header_sig}|{''.join(sig_cells)}"
-            else:
-                table_sig = "|".join(sig_cells)
-            
-            # GENERAL: Also check for malformed table signatures (concatenated data)
-            # Only filter if table has many columns (10+) OR if it's single-column with field labels
-            # Multi-column tables (2-10 columns) with field labels in cells are legitimate
-            if table_sig:
-                num_columns = len(rows[0]) if rows else 0
-                field_labels_in_sig = len(re.findall(r'\b(e-mail|phone|location|email|tel|telephone):', table_sig, re.I))
-                # Only filter if: (many columns AND field labels) OR (single-column with 3+ field labels)
-                # This allows legitimate 2-column tables where cells contain structured data
-                
-                if (num_columns > 10 and field_labels_in_sig >= 3) or (num_columns == 1 and field_labels_in_sig >= 3):
-                    
-                    continue
-            
-            if table_sig and table_sig in seen_table_signatures:
-                
-                continue  # Skip duplicate
-            
-            if table_sig:
-                seen_table_signatures.add(table_sig)
-            
-            
-            
-            # Format as markdown table
-            if headers:
-                # GENERAL: Check if detected headers are actually label-value pairs (common in parameter tables)
-                # If headers look like labels (end with ":" or contain label words), treat them as data instead
-                is_label_value_headers = False
-                if len(headers) >= 2:
-                    first_header = str(headers[0]).strip()
-                    second_header = str(headers[1]).strip() if len(headers) > 1 else ""
-                    # Check if first header ends with ":" (label indicator)
-                    if first_header.endswith(':') or first_header.endswith('：'):
-                        is_label_value_headers = True
-                    # Also check if headers contain common label words
-                    label_words = ['energy', 'circumference', 'number', 'length', 'angle', 'radius', 'field', 
-                                   'aperture', 'gradient', 'emittance', 'tune', 'frequency', 'time', 'current',
-                                   'charge', 'power', 'size', 'divergence', 'function', 'damping', 'spread',
-                                   'bunch', 'separation', 'bucket', 'coupling', 'factor', 'magnetic', 'critical',
-                                   'photon', 'revolution', 'ratio', 'electron', 'loss', 'turn', 'radiation',
-                                   'lifetime', 'sector', 'cell', 'section', 'undulator', 'beam', 'horizontal',
-                                   'vertical', 'momentum', 'compaction', 'chromaticity', 'synchrotron', 'wiggler',
-                                   'alignment', 'tolerance', 'dipole', 'quadrupole', 'sextupole', 'bpm']
-                    # Check if first header contains label words (e.g., "Electron energy", "Circumference", etc.)
-                    if any(word in first_header.lower() for word in label_words):
-                        is_label_value_headers = True
-                    # Also check if second header looks like a value (numbers, units, etc.)
-                    # Pattern: Second header is a value (number with unit, or just a number/unit)
-                    if second_header and re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad|Hz|V|A|W|J|kg|g|s|min|h|d|y|°C|K|Pa|bar|atm|psi|N|kgf|lbf|m/s|km/h|mph|rpm|rad/s|deg/s)?\s*$', second_header, re.I):
-                        is_label_value_headers = True
-                    
-                    
-                
-                if is_label_value_headers:
-                    # Headers are actually label-value pairs - treat as data rows (no separate header row)
-                    # GENERAL: When headers are label-value pairs, they should be treated as data, not headers
-                    # Do NOT add a separator row - that would make them look like headers in markdown
-                    
-                    # Add headers as first data row (no separator - they're data, not headers)
-                    if headers:
-                        # GENERAL: Normalize header content - replace newlines with spaces
-                        # Use unicode-aware regex to handle umlauts and special characters correctly
-                        normalized_headers = []
-                        for h in headers:
-                            header_str = str(h)
-                            header_str = re.sub(r'\s+', ' ', header_str, flags=re.UNICODE).strip()
-                            normalized_headers.append(header_str)
-                        markdown_output += "| " + " | ".join(normalized_headers) + " |\n"
-                        # Skip first row if it matches headers (to avoid duplication)
-                        if rows and len(rows) > 0:
-                            first_row_str = "|".join(str(c).strip().lower() for c in rows[0][:len(headers)])
-                            headers_str = "|".join(str(h).strip().lower() for h in headers)
-                        
-                        if first_row_str == headers_str:
-                            rows = rows[1:]  # Skip duplicate first row
-                else:
-                    # Normal headers - NOT label-value pairs
-                    
-                    if headers:
-                        # GENERAL: Normalize header content - replace newlines with spaces
-                        # Use unicode-aware regex to handle umlauts and special characters correctly
-                        normalized_headers = []
-                        for h in headers:
-                            header_str = str(h)
-                            header_str = re.sub(r'\s+', ' ', header_str, flags=re.UNICODE).strip()
-                            normalized_headers.append(header_str)
-                        markdown_output += "| " + " | ".join(normalized_headers) + " |\n"
-                        markdown_output += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-            elif rows and len(rows[0]) > 1:
-                # GENERAL: Only use first row as header if it doesn't contain data patterns
-                # If first row contains email, phone, location, or other data patterns, treat all rows as data
-                first_row = rows[0]
-                first_row_text = " ".join(str(cell) for cell in first_row).lower()
-                # Check if first row contains data patterns (email, phone, location, etc.)
-                data_patterns = [
-                    r'e-mail|email|mailto:',
-                    r'phone|tel|telephone|\+\d',
-                    r'location|address|office|room',
-                    r'@\w+\.\w+',  # Email addresses
-                ]
-                has_data_patterns = any(re.search(pattern, first_row_text, re.I) for pattern in data_patterns)
-                
-                # Check if first row is a label-value pair (common in parameter tables)
-                # Pattern: First column ends with ":" and second column is a value (number, unit, etc.)
-                is_label_value_pair = False
-                if len(first_row) >= 2:
-                    first_cell = str(first_row[0]).strip()
-                    second_cell = str(first_row[1]).strip()
-                    # Check if first cell ends with ":" (label indicator)
-                    if first_cell.endswith(':') or first_cell.endswith('：'):
-                        is_label_value_pair = True
-                    # Also check if first cell contains common label words
-                    label_words = ['energy', 'circumference', 'number', 'length', 'angle', 'radius', 'field', 
-                                   'aperture', 'gradient', 'emittance', 'tune', 'frequency', 'time', 'current',
-                                   'charge', 'power', 'size', 'divergence', 'function', 'damping', 'spread']
-                    if any(word in first_cell.lower() for word in label_words):
-                        is_label_value_pair = True
-                
-                # GENERAL: Check if first row is a timeline/career entry (date/period in first column)
-                # Pattern: First cell contains date/period pattern (years, "Seit", "Von", etc.) and second cell is long description
-                is_timeline_entry = False
-                if len(first_row) >= 2:
-                    first_cell = str(first_row[0]).strip()
-                    second_cell = str(first_row[1]).strip()
-                    # Check if first cell contains date/period patterns
-                    date_patterns = [
-                        r'\d{4}',  # Year (e.g., "2015", "2007")
-                        r'seit|von|bis|until|from|to',  # Period words (German/English)
-                        r'\d{4}\s*[-–—]\s*\d{4}',  # Year range (e.g., "2007 - 2015")
-                        r'\d{4}\s*–\s*\d{4}',  # Year range with en-dash
-                    ]
-                    has_date_pattern = any(re.search(pattern, first_cell, re.I) for pattern in date_patterns)
-                    # If first cell has date pattern and second cell is a long description (>30 chars), it's likely a timeline entry
-                    if has_date_pattern and len(second_cell) > 30:
-                        is_timeline_entry = True
-                
-                # Also check if first row is very long (likely data, not header)
-                # Headers are typically short labels, data rows are longer
-                first_row_length = sum(len(str(cell)) for cell in first_row)
-                is_likely_data = has_data_patterns or is_label_value_pair or is_timeline_entry or first_row_length > 100
-                
-                
-                
-                if not is_likely_data:
-                    # Use first row as header if no headers
-                    # GENERAL: Normalize header content - replace newlines with spaces
-                    # Use unicode-aware regex to handle umlauts and special characters correctly
-                    normalized_first_row = []
-                    for cell in first_row:
-                        cell_str = str(cell)
-                        cell_str = re.sub(r'\s+', ' ', cell_str, flags=re.UNICODE).strip()
-                        normalized_first_row.append(cell_str)
-                    markdown_output += "| " + " | ".join(normalized_first_row) + " |\n"
-                    markdown_output += "| " + " | ".join(["---"] * len(first_row)) + " |\n"
-                    rows = rows[1:]
-                # else: treat all rows as data (no header row)
-            
-            # Add data rows
-            rows_added = 0
-            for row in rows:
-                row_data = row[:len(headers)] if headers and len(row) >= len(headers) else row
-                # Skip empty/separator-only rows
-                if not any(str(c).strip() for c in row_data):
-                    continue
-                if all(str(c).strip() in ['', '---', '—', '–'] for c in row_data):
-                    continue
-                
-                # GENERAL: Filter malformed rows (too many columns, concatenated data)
-                # Pattern: Row with 10+ columns is likely malformed (concatenated data)
-                num_cols = len(row_data)
-                if num_cols > 10:
-                    
-                    continue
-                
-                # Pattern: Only filter single-column rows with field labels, or rows where ALL cells have labels
-                # Multi-column tables (2-10 columns) with field labels in cells are legitimate structured data
-                if num_cols == 1:
-                    # Single column: filter if has 3+ field labels (concatenated)
-                    first_cell = str(row_data[0]).strip() if row_data else ""
-                    if first_cell:
-                        field_label_count = len(re.findall(r'\b(E-Mail|Phone|Location|Email|Tel|Telephone):', first_cell, re.I))
-                        if field_label_count >= 3:
-                            
-                            continue
-                elif num_cols >= 2:
-                    # Multi-column: only filter if ALL cells have field labels AND many columns (indicates concatenation)
-                    # GENERAL: 2-4 column tables with structured data in cells (like staff tables) are legitimate
-                    # Only filter if 5+ columns AND all cells have labels (likely concatenated)
-                    all_cells_have_labels = True
-                    for cell in row_data:
-                        cell_str = str(cell).strip()
-                        if cell_str:
-                            field_label_count = len(re.findall(r'\b(E-Mail|Phone|Location|Email|Tel|Telephone):', cell_str, re.I))
-                            if field_label_count == 0:
-                                all_cells_have_labels = False
-                                break
-                    if all_cells_have_labels and num_cols >= 5:
-                        # All cells have labels and 5+ columns = likely concatenated
-                        
-                        continue
-                
-                # GENERAL: Normalize cell content - replace newlines with spaces to prevent broken table rows
-                # This fixes cases where names like "Anna\n\n\nBarinskaya" break table formatting
-                # Also handle encoding issues with umlauts and special characters
-                # FIX: If first cell contains a partial name (ends with umlaut) and second cell has a link with full name,
-                # use the full name from the link instead
-                normalized_cells = []
-                for i, cell in enumerate(row_data):
-                    cell_str = str(cell)
-                    # Replace all newlines and multiple spaces with single space
-                    # Use unicode-aware regex to handle umlauts and special characters correctly
-                    cell_str = re.sub(r'\s+', ' ', cell_str, flags=re.UNICODE).strip()
-                    
-                    # FIX: If this is the first cell and it ends with an umlaut (ö, ü, ä), check if next cell has a link with full name
-                    if i == 0 and cell_str and len(cell_str) > 2:
-                        # Check if cell ends with umlaut (likely truncated name)
-                        cell_str_stripped = cell_str.strip()
-                        if cell_str_stripped and cell_str_stripped[-1] in ['ö', 'ü', 'ä', 'Ö', 'Ü', 'Ä']:
-                            
-                            
-                            # Look for a link in the next few cells that might contain the full name
-                            for j in range(1, min(4, len(row_data))):
-                                next_cell = str(row_data[j])
-                                # Extract name from markdown link pattern: [Name](mailto:...)
-                                link_match = re.search(r'\[([^\]]+)\]\(mailto:', next_cell)
-                                if link_match:
-                                    full_name = link_match.group(1).strip()
-                                    
-                                    
-                                    # Check if full_name starts with the partial name
-                                    # Also check if they're similar (partial name is a prefix of full name)
-                                    if (full_name.lower().startswith(cell_str_stripped.lower()) or 
-                                        (len(cell_str_stripped) >= 3 and cell_str_stripped.lower() in full_name.lower() and 
-                                         full_name.lower().index(cell_str_stripped.lower()) == 0)):
-                                        # Use the full name instead
-                                        cell_str = full_name
-                                        
-                                        break
-                    
-                    normalized_cells.append(cell_str)
-                markdown_output += "| " + " | ".join(normalized_cells) + " |\n"
-                rows_added += 1
-            
-            
-            
-            markdown_output += "\n"
-        
-        elif item['type'] == 'paragraph':
-            # Add paragraph text with preserved links
-            para_text = item.get('text', '')
-            # FIX: Allow shorter paragraphs (15+ chars) - they may be questions or descriptive text after headings
-            if para_text and len(para_text.strip()) >= 15:
-                markdown_output += para_text + "\n\n"
-        
-        elif item['type'] == 'list':
-            # Add list items with preserved links
-            list_items = item.get('items', [])
-            is_ordered = item.get('ordered', False)
-            
-            if list_items:
-                for i, list_item in enumerate(list_items):
-                    if is_ordered:
-                        # Ordered list (1., 2., 3., ...)
-                        markdown_output += f"{i + 1}. {list_item}\n"
-                    else:
-                        # Unordered list (*)
-                        markdown_output += f"  * {list_item}\n"
-                markdown_output += "\n"
-        
-        elif item['type'] == 'text':
-            # Generic text content
-            text = item.get('text', '')
-            if text and len(text.strip()) >= 20:
-                markdown_output += text + "\n\n"
-    
-    return markdown_output
-
+    """Delegate to table_processing."""
+    return _table_processing.format_tables_with_headings_as_markdown(dom_ordered_content)
 
 def inject_links_into_markdown_tables(markdown_content, html_content):
-    """
-    Inject links directly into table sections in the markdown content.
-    
-    This function:
-    1. Extracts all tables from HTML with links preserved
-    2. Finds corresponding table sections in the markdown
-    3. Replaces them in-place with enriched versions
-    4. Uses content matching to ensure correct replacement without mixing tables
-    
-    NEW APPROACH: If markdown tables don't have email links but HTML does,
-    replace ALL markdown tables with HTML-extracted versions.
-    
-    Args:
-        markdown_content: The markdown content from Crawl4AI
-        html_content: The original HTML content
-        
-    Returns:
-        Markdown content with links injected into tables
-    """
-    if not BEAUTIFULSOUP_AVAILABLE:
-        return markdown_content
-    
-    try:
-        soup = BeautifulSoup(html_content, 'lxml')
-        # Only get top-level tables to avoid nested table confusion
-        html_tables = [t for t in soup.find_all('table', recursive=True) if t.find_parent('table') is None]
-        
-        if not html_tables:
-            return markdown_content
-        
-        # Check if HTML tables have email links
-        html_has_emails = False
-        html_email_count = 0
-        for html_table in html_tables:
-            mailto_links = html_table.find_all('a', href=lambda x: x and x.startswith('mailto:'))
-            if mailto_links:
-                html_has_emails = True
-                html_email_count += len(mailto_links)
-        
-        # Check if markdown has email links (proper markdown format with email addresses)
-        markdown_has_emails = bool(re.search(r'\[[^\]]+\]\(mailto:[^\s@]+@[^\s@]+\.[^\s)]+\)', markdown_content))
-        
-        # Debug output
-        if html_has_emails:
-            print(f"[DEBUG] HTML has {html_email_count} email link(s)")
-        if markdown_has_emails:
-            print(f"[DEBUG] Markdown already has email links")
-        else:
-            print(f"[DEBUG] Markdown does NOT have email links - will attempt injection")
-        
-        # Extract all tables from HTML with links preserved
-        html_table_data = []
-        used_tables = set()
-        
-        for html_table in html_tables:
-            table_data = extract_table_from_html(html_table)
-            # MINIMAL FIX: Only include tables that have rows (skip empty tables)
-            if not table_data.get('rows'):
-                continue
-            # Get a unique identifier from the table (first few cells of first row)
-            identifier = ""
-            identifier_words = set()
-            if table_data['rows']:
-                first_row = table_data['rows'][0]
-                identifier = " ".join(str(cell)[:30] for cell in first_row[:3] if cell)
-                identifier_words = set(identifier.lower().split())
-            
-            # Also get a sample from headers if available
-            if table_data['headers']:
-                header_text = " ".join(str(h)[:20] for h in table_data['headers'][:3] if h)
-                identifier_words.update(header_text.lower().split())
-            
-            html_table_data.append({
-                'data': table_data,
-                'identifier': identifier,
-                'identifier_words': identifier_words,
-                'formatted': format_table_markdown_inline(table_data)
-            })
-        
-        # AGGRESSIVE MODE: If HTML has emails but markdown doesn't, replace ALL markdown tables with HTML tables
-        # This is simpler and more reliable than trying to match individual tables
-        if html_has_emails and not markdown_has_emails and html_table_data:
-            print(f"[INFO] HTML has {len(html_table_data)} table(s) with emails, markdown has none - using aggressive replacement")
-            # Find all table sections in markdown and replace them with HTML tables in order
-            lines = markdown_content.split('\n')
-            result_lines = []
-            i = 0
-            markdown_table_count = 0
-            
-            while i < len(lines):
-                line = lines[i]
-                
-                # Check if this line looks like the start of a table row (contains |)
-                if '|' in line and not line.strip().startswith('#'):
-                    # Find the table section
-                    table_start = i
-                    table_end = i
-                    
-                    while table_end < len(lines):
-                        current_line = lines[table_end]
-                        if '|' in current_line:
-                            table_end += 1
-                        elif current_line.strip() == '':
-                            if table_end + 1 < len(lines) and '|' in lines[table_end + 1]:
-                                table_end += 1
-                            else:
-                                break
-                        else:
-                            break
-                    
-                    # Replace this markdown table with corresponding HTML table (if available)
-                    if markdown_table_count < len(html_table_data):
-                        result_lines.append(html_table_data[markdown_table_count]['formatted'])
-                        used_tables.add(markdown_table_count)
-                        markdown_table_count += 1
-                        i = table_end
-                        continue
-                    else:
-                        # More markdown tables than HTML tables, keep original
-                        for j in range(table_start, table_end):
-                            result_lines.append(lines[j])
-                        i = table_end
-                        continue
-                
-                # Not a table line, keep as-is
-                result_lines.append(line)
-                i += 1
-            
-            # FIX 4: Don't add "## Extracted Tables" here - DOM-order extraction handles tables separately
-            # This prevents duplicate single-column tables from appearing before DOM-ordered tables
-            # If no markdown tables found, DOM-order extraction will add tables with proper headings
-            # So we skip adding tables here to avoid duplicates
-            pass  # Removed: was adding single-column tables that duplicate DOM-order extraction
-            
-            return "\n".join(result_lines)
-        
-        # Find and replace table sections in markdown (original matching approach for when emails already exist)
-        lines = markdown_content.split('\n')
-        result_lines = []
-        i = 0
-        
-        while i < len(lines):
-            line = lines[i]
-            
-            # Check if this line looks like the start of a table row (contains |)
-            if '|' in line and not line.strip().startswith('#'):
-                # Find the table section (consecutive lines with |)
-                table_start = i
-                table_end = i
-                
-                # Collect table rows - look for separator line (---)
-                has_separator = False
-                while table_end < len(lines):
-                    current_line = lines[table_end]
-                    if '|' in current_line:
-                        # Check if it's a separator line
-                        if re.match(r'^\s*\|[\s\-:]+\|', current_line):
-                            has_separator = True
-                        table_end += 1
-                    elif current_line.strip() == '':
-                        # Empty line - check if next line continues table
-                        if table_end + 1 < len(lines) and '|' in lines[table_end + 1]:
-                            table_end += 1
-                        else:
-                            break
-                    else:
-                        # Non-table line, end of table
-                        break
-                
-                # Extract table content for matching
-                table_lines = lines[table_start:table_end]
-                table_text = "\n".join(table_lines)
-                
-                # CRITICAL: Check if table already has PROPER links (with email addresses, not just names)
-                # Check if table has markdown links with actual email addresses in them
-                # Pattern: [text](mailto:email@domain.com) - we want the email, not just the name
-                # Also check for plain email addresses (might be in raw_markdown)
-                has_proper_email_links = bool(re.search(r'\[[^\]]+\]\(mailto:[^\s@]+@[^\s@]+\.[^\s)]+\)', table_text))
-                has_plain_emails = bool(re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', table_text))
-                has_proper_http_links = '](http' in table_text or '](https' in table_text
-                
-                # Only skip if table has proper links with actual URLs/emails
-                # Don't skip if it just has text that looks like a name (might be link text without href)
-                # BUT: If it has plain emails (not in markdown links), we should still process to convert them
-                if (has_proper_email_links or has_proper_http_links) and not (has_plain_emails and not has_proper_email_links):
-                    # Table already has proper links, just copy it as-is and skip processing
-                    for j in range(table_start, table_end):
-                        result_lines.append(lines[j])
-                    i = table_end
-                    continue
-                
-                # Table doesn't have proper links, proceed with matching and replacement
-                table_words = set(table_text.lower().split())
-                
-                # Try to match with HTML tables (only unused ones)
-                best_match = None
-                best_match_score = 0
-                best_match_idx = -1
-                
-                for idx, html_table_info in enumerate(html_table_data):
-                    if idx in used_tables:
-                        continue
-                    
-                    # Count matching words between table and HTML table
-                    common_words = html_table_info['identifier_words'] & table_words
-                    score = len(common_words)
-                    
-                    # Bonus points if identifier text appears in table
-                    if html_table_info['identifier'] and html_table_info['identifier'].lower()[:50] in table_text.lower():
-                        score += 5
-                    
-                    # Bonus for matching names (common in member tables)
-                    # Check if any person names from HTML table appear in markdown table
-                    identifier_lower = html_table_info['identifier'].lower()
-                    for word in table_words:
-                        if len(word) > 3 and word in identifier_lower:
-                            score += 2
-                    
-                    if score > best_match_score and score > 0:
-                        best_match_score = score
-                        best_match = html_table_info
-                        best_match_idx = idx
-                
-                # If we found a good match, replace the table section
-                if best_match and best_match_score >= 1:  # Lowered threshold to 1 for better matching
-                    # Replace table section with enriched version
-                    result_lines.append(best_match['formatted'])
-                    used_tables.add(best_match_idx)
-                    i = table_end
-                    continue
-                else:
-                    # No match found - try to extract emails from HTML directly as fallback
-                    # This handles cases where table structure differs but emails are present
-                    if BEAUTIFULSOUP_AVAILABLE:
-                        try:
-                            soup = BeautifulSoup(html_content, 'lxml')
-                            html_tables_fallback = soup.find_all('table', recursive=True)
-                            
-                            # Try to find emails in cells that match the markdown table content
-                            for html_table in html_tables_fallback:
-                                html_text = html_table.get_text().lower()
-                                table_text_lower = table_text.lower()
-                                
-                                # If there's some overlap in content, try to extract emails
-                                common_words = set(html_text.split()) & set(table_text_lower.split())
-                                if len(common_words) >= 2:  # At least 2 common words
-                                    # Extract all mailto: links from this table
-                                    mailto_links = html_table.find_all('a', href=lambda x: x and x.startswith('mailto:'))
-                                    if mailto_links:
-                                        # Found emails - try to inject them into the markdown table
-                                        # Create a comprehensive email mapping from HTML
-                                        email_map = {}
-                                        name_to_email = {}
-                                        
-                                        for link in mailto_links:
-                                            email = unescape(link.get('href', '')[7:])
-                                            link_text = link.get_text(strip=True)
-                                            
-                                            # Map link text (name) to email
-                                            if link_text:
-                                                email_map[link_text.lower()] = email
-                                                name_to_email[link_text.lower()] = email
-                                            
-                                            # Also try to find the person's name in the same row/cell
-                                            # Look for parent cell/row to get context
-                                            parent_cell = link.find_parent(['td', 'th'])
-                                            if parent_cell:
-                                                # Get all text from the row to find the person's name
-                                                parent_row = parent_cell.find_parent('tr')
-                                                if parent_row:
-                                                    row_text = parent_row.get_text()
-                                                    # Extract potential names (words that might be names)
-                                                    # Look for patterns like "Name | E-Mail: [Name](mailto:email)"
-                                                    cells = parent_row.find_all(['td', 'th'])
-                                                    for cell in cells:
-                                                        cell_text = cell.get_text(strip=True)
-                                                        # If this cell contains the email link, check adjacent cells for name
-                                                        if link in cell.find_all('a'):
-                                                            # Check previous cells for name
-                                                            cell_idx = cells.index(cell)
-                                                            if cell_idx > 0:
-                                                                prev_cell_text = cells[cell_idx - 1].get_text(strip=True)
-                                                                if prev_cell_text and len(prev_cell_text) > 3:
-                                                                    name_to_email[prev_cell_text.lower()] = email
-                                        
-                                        # Try to replace names with emails in the markdown table
-                                        if email_map or name_to_email:
-                                            enriched_lines = []
-                                            for line in table_lines:
-                                                enriched_line = line
-                                                # Look for patterns: "E-Mail: | Name" and replace Name with email
-                                                # Try multiple patterns
-                                                for name, email in name_to_email.items():
-                                                    # Pattern 1: | E-Mail: | Name |
-                                                    pattern1 = rf'(\|\s*E-Mail:\s*\|\s*){re.escape(name)}(?=\s*\|)'
-                                                    if re.search(pattern1, enriched_line, re.IGNORECASE):
-                                                        enriched_line = re.sub(pattern1, rf'\1[{email}](mailto:{email})', enriched_line, flags=re.IGNORECASE)
-                                                    
-                                                    # Pattern 2: Name | E-Mail: | Name (if name appears twice)
-                                                    pattern2 = rf'({re.escape(name)}.*?\|\s*E-Mail:\s*\|\s*){re.escape(name)}(?=\s*\|)'
-                                                    if re.search(pattern2, enriched_line, re.IGNORECASE):
-                                                        enriched_line = re.sub(pattern2, rf'\1[{email}](mailto:{email})', enriched_line, flags=re.IGNORECASE)
-                                                
-                                                enriched_lines.append(enriched_line)
-                                            
-                                            # If we made changes, use enriched version
-                                            if enriched_lines != table_lines:
-                                                result_lines.extend(enriched_lines)
-                                                i = table_end
-                                                continue
-                        except Exception as e:
-                            # Log error for debugging but continue
-                            print(f"[DEBUG] Fallback email injection failed: {e}")
-                            pass
-                    
-                    # No match found and fallback didn't work, keep original table
-                    for j in range(table_start, table_end):
-                        result_lines.append(lines[j])
-                    i = table_end
-                    continue
-            
-            # Not a table line, keep as-is
-            result_lines.append(line)
-            i += 1
-        
-        return "\n".join(result_lines)
-    
-    except Exception as e:
-        print(f"[WARNING] Error injecting links into markdown: {e}")
-        import traceback
-        traceback.print_exc()
-        return markdown_content
+    """Delegate to table_processing."""
+    return _table_processing.inject_links_into_markdown_tables(markdown_content, html_content)
 
 
 def format_table_markdown_inline(table):
-    """
-    Format a table dictionary as markdown (inline version, no extra headers).
-    
-    Args:
-        table: Table dict with headers, rows, and caption
-        
-    Returns:
-        Markdown string with table formatted
-    """
-    markdown = ""
-    
-    caption = table.get('caption', '')
-    if caption:
-        markdown += f"*{caption}*\n\n"
-    
-    headers = table.get('headers', [])
-    rows = table.get('rows', [])
-
-    # Minimal key-value handling (Issue #3 / #5):
-    # Some 2-column tables are actually field|value pairs, but our header extraction can
-    # mistakenly treat the first pair as "headers", creating a separator row like:
-    # | Electron energy | 6.0 GeV |
-    # | --- | --- |
-    #
-    # Heuristic (simple, structural): if there are exactly 2 "headers" and the remaining
-    # rows are consistently 2 columns, treat headers as the first data row.
-    is_key_value_table = False
-    if headers and len(headers) == 2 and rows and all(len(r) == 2 for r in rows[:5]):
-        h0 = str(headers[0] or "").strip()
-        h1 = str(headers[1] or "").strip()
-        # Treat empty extracted "headers" as a key-value table indicator
-        if not h0 and not h1:
-            is_key_value_table = True
-        # header looks like "Label:" or "Value" (has digits) → likely not a real column header
-        if h0.endswith(':') or h1.endswith(':') or (re.search(r'\d', h1) is not None):
-            is_key_value_table = True
-    
-    # Only add header row if we have explicit headers AND it's not key-value
-    if headers and rows and not is_key_value_table:
-        # We have explicit headers - format as standard markdown table
-        markdown += "| " + " | ".join(str(h) for h in headers) + " |\n"
-        markdown += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-        for row in rows:
-            # Ensure row has same number of cells as headers
-            row_data = row[:len(headers)] if len(row) >= len(headers) else row + [''] * (len(headers) - len(row))
-            # Skip empty/separator-only rows
-            if not any(str(cell).strip() for cell in row_data):
-                continue
-            if all(str(cell).strip() in ['', '---', '—', '–'] for cell in row_data):
-                continue
-            # Clean each cell: remove excessive whitespace, handle empty cells
-            cleaned_row = []
-            for cell in row_data:
-                cell_str = str(cell).strip()
-                # Only remove truly duplicate words that are clearly errors (not names or before links)
-                # Skip if the duplicate word is followed by a link (likely a name)
-                cell_str = re.sub(r'\b([A-Z][a-z]+)\s+\1\b(?!\s*\[)', r'\1', cell_str)  # Remove duplicate words, but not before links
-                cleaned_row.append(cell_str if cell_str else '')
-            markdown += "| " + " | ".join(cleaned_row) + " |\n"
-    elif rows:
-        # No headers OR key-value: format without a header row
-        # Determine max columns from all rows
-        if is_key_value_table:
-            # Treat "headers" as the first data row
-            rows = [headers] + rows
-            headers = []
-        max_cols = max(len(row) for row in rows) if rows else 0
-        for row in rows:
-            # Pad row to max_cols if needed
-            row_data = row + [''] * (max_cols - len(row)) if len(row) < max_cols else row[:max_cols]
-            # Skip empty/separator-only rows
-            if not any(str(cell).strip() for cell in row_data):
-                continue
-            if all(str(cell).strip() in ['', '---', '—', '–'] for cell in row_data):
-                continue
-            # Clean each cell
-            cleaned_row = []
-            for cell in row_data:
-                cell_str = str(cell).strip()
-                # Only remove truly duplicate words that are clearly errors (not names or before links)
-                # Skip if the duplicate word is followed by a link (likely a name)
-                cell_str = re.sub(r'\b([A-Z][a-z]+)\s+\1\b(?!\s*\[)', r'\1', cell_str)  # Remove duplicate words, but not before links
-                cleaned_row.append(cell_str if cell_str else '')
-            markdown += "| " + " | ".join(cleaned_row) + " |\n"
-    
-    return markdown
+    """Delegate to table_processing."""
+    return _table_processing.format_table_markdown_inline(table)
 
 
 def get_table_header_normalized(formatted_table):
-    """
-    Extract and normalize the header from a formatted markdown table.
-    Returns normalized header string, or None if no header found.
-    """
-    if _is_empty_or_whitespace(formatted_table):
-        return None
-    lines = formatted_table.split('\n')
-    for line in lines:
-        if line.strip() and '|' in line and not re.match(r'^\s*\|[\s\-:]+\|', line):
-            return re.sub(r'\s+', ' ', line.lower().strip())
-    return None
-
+    """Delegate to table_processing."""
+    return _table_processing.get_table_header_normalized(formatted_table)
 
 # ============================================================================
 # Enhanced Duplication Detection and Noise Removal Functions
 # ============================================================================
 
 def normalize_text_enhanced(text):
-    """
-    Enhanced normalization with word deduplication and markdown link normalization.
-    
-    This handles:
-    - Markdown link whitespace normalization
-    - Word-level deduplication ("Contact Contact" -> "Contact")
-    - Standard text normalization
-    """
-    # First normalize markdown links (remove whitespace in link syntax)
-    text = normalize_markdown_links(text)
-    
-    # Convert to lowercase
-    text = text.lower()
-    
-    # Remove markdown syntax for comparison (extract content)
-    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)  # Extract link text
-    text = re.sub(r'mailto:\s*', '', text)  # Remove mailto: prefix
-    
-    # Remove punctuation
-    text = re.sub(r'[^\w\s]', '', text)
-    
-    # Collapse whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-    
-    # Remove consecutive duplicate words
-    words = text.split()
-    deduplicated_words = []
-    prev_word = None
-    for word in words:
-        if word != prev_word:
-            deduplicated_words.append(word)
-        prev_word = word
-    
-    return ' '.join(deduplicated_words)
+    """Delegate to content_extraction."""
+    return _content_extraction.normalize_text_enhanced(text)
 
 
 def normalize_markdown_links(text):
-    """
-    Remove whitespace from markdown link syntax.
-    
-    Fixes:
-    - [ text](url) -> [text](url)
-    - (mailto: email) -> (mailto:email)
-    - [email ](mailto: email ) -> [email](mailto:email)
-    """
-    # Remove spaces in link brackets
-    text = re.sub(r'\[\s+', '[', text)
-    text = re.sub(r'\s+\]', ']', text)
-    
-    # Remove spaces in link parentheses
-    text = re.sub(r'\(\s+', '(', text)
-    text = re.sub(r'\s+\)', ')', text)
-    
-    # Remove spaces after colons in URLs/mailto
-    text = re.sub(r':\s+', ':', text)
-    
-    # Remove spaces before/after email addresses in links
-    text = re.sub(r'\[(\s+)([^\]]+)(\s+)\]', r'[\2]', text)
-    
-    return text
+    """Delegate to content_extraction."""
+    return _content_extraction.normalize_markdown_links(text)
 
 
 def extract_emails_from_text(text):
-    """Extract email addresses from text for deduplication."""
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    emails = re.findall(email_pattern, text)
-    return [e.lower().strip() for e in emails]
+    """Delegate to content_extraction."""
+    return _content_extraction.extract_emails_from_text(text)
 
 
 def text_similarity(text1, text2):
-    """Calculate similarity ratio between two texts (0.0 to 1.0)."""
-    if not text1 or not text2:
-        return 0.0
-    
-    # Use simple character-based similarity (can be enhanced with difflib)
-    if text1 == text2:
-        return 1.0
-    
-    # Calculate longest common subsequence ratio
-    len1, len2 = len(text1), len(text2)
-    if len1 == 0 or len2 == 0:
-        return 0.0
-    
-    # Simple ratio: count matching characters
-    matches = sum(1 for c1, c2 in zip(text1, text2) if c1 == c2)
-    max_len = max(len1, len2)
-    
-    return matches / max_len if max_len > 0 else 0.0
+    """Delegate to content_extraction."""
+    return _content_extraction.text_similarity(text1, text2)
 
 
 def detect_enhanced_repetition(markdown_lines):
-    """
-    Enhanced repetition detection with:
-    - Multi-line block comparison
-    - Email address extraction and deduplication
-    - Substring/containment detection
-    - Paragraph extraction and comparison
-    """
-    duplicates = set()
-    
-    # 1. Email address deduplication (highest priority)
-    email_to_lines = {}
-    for i, line in enumerate(markdown_lines):
-        emails = extract_emails_from_text(line)
-        for email in emails:
-            if email in email_to_lines:
-                # This email was seen before - mark all occurrences as duplicates
-                duplicates.update(email_to_lines[email])
-                duplicates.add(i)
-            else:
-                email_to_lines[email] = []
-            email_to_lines[email].append(i)
-    
-    # 2. Multi-line block detection (sliding window)
-    seen_blocks = {}
-    block_size = 3
-    for i in range(len(markdown_lines) - block_size + 1):
-        block = '\n'.join(markdown_lines[i:i+block_size])
-        normalized = normalize_text_enhanced(block)
-        
-        if len(normalized) < 50:  # Skip very short blocks
-            continue
-        
-        # Check similarity to seen blocks
-        for seen_block, seen_indices in seen_blocks.items():
-            similarity = text_similarity(normalized, seen_block)
-            if similarity > 0.90:  # 90% similar
-                duplicates.update(seen_indices)
-                duplicates.update(range(i, i+block_size))
-                break
-        
-        # Store this block
-        if normalized not in seen_blocks:
-            seen_blocks[normalized] = []
-        seen_blocks[normalized].append(range(i, i+block_size))
-    
-    # 3. Single-line comparison with enhanced normalization
-    seen_lines = {}
-    for i, line in enumerate(markdown_lines):
-        normalized = normalize_text_enhanced(line)
-        
-        # Skip very short lines (< 10 chars)
-        if len(normalized) < 10:
-            continue
-        
-        # Check similarity to seen lines
-        for seen_line, seen_indices in seen_lines.items():
-            similarity = text_similarity(normalized, seen_line)
-            if similarity > 0.95:
-                duplicates.update(seen_indices)
-                duplicates.add(i)
-                break
-        
-        # Check substring/containment relationships
-        for seen_line, seen_indices in seen_lines.items():
-            if normalized in seen_line or seen_line in normalized:
-                # Keep the longer line, mark shorter as duplicate
-                if len(normalized) < len(seen_line):
-                    duplicates.add(i)
-                else:
-                    duplicates.update(seen_indices)
-                break
-        
-        # Store this line
-        if normalized not in seen_lines:
-            seen_lines[normalized] = []
-        seen_lines[normalized].append(i)
-    
-    # 4. Paragraph extraction and comparison
-    paragraph_to_lines = {}
-    paragraph_pattern = r'([^.!?]+[.!?])'
-    
-    for i, line in enumerate(markdown_lines):
-        paragraphs = re.findall(paragraph_pattern, line)
-        for para in paragraphs:
-            normalized = normalize_text_enhanced(para)
-            if len(normalized) < 30:  # Skip very short paragraphs
-                continue
-            
-            if normalized in paragraph_to_lines:
-                # This paragraph was seen before
-                duplicates.update(paragraph_to_lines[normalized])
-                duplicates.add(i)
-            else:
-                paragraph_to_lines[normalized] = []
-            paragraph_to_lines[normalized].append(i)
-    
-    return duplicates
+    """Delegate to content_extraction."""
+    return _content_extraction.detect_enhanced_repetition(markdown_lines)
 
 
 def extract_contact_blocks(html_soup):
-    """
-    Extract complete contact blocks (name + title + phone + email + location).
-    
-    Strategy:
-    1. Find elements containing email addresses
-    2. Expand to parent container (paragraph, div, list item)
-    3. Extract all text from container (preserves relationships)
-    4. Group by proximity (same container = same person)
-    """
-    contact_blocks = []
-    
-    if not BEAUTIFULSOUP_AVAILABLE:
-        return contact_blocks
-    
-    # Find all email links
-    email_links = html_soup.find_all('a', href=re.compile(r'mailto:'))
-    
-    for link in email_links:
-        # Extract email
-        email = link.get('href', '').replace('mailto:', '').strip()
-        if not email:
-            continue
-        
-        # Find parent container (p, div, li, td, tr)
-        # Try multiple parent levels to find the best container
-        # Strategy: Find the smallest container that includes both name and email
-        parent = None
-        best_parent = None
-        best_score = 0
-        
-        for parent_tag in ['p', 'div', 'li', 'td', 'tr', 'section', 'article']:
-            candidate = link.find_parent(parent_tag)
-            if candidate:
-                candidate_text = candidate.get_text(strip=True)
-                # Score based on:
-                # 1. Has name-like pattern (2-4 capitalized words) - high priority
-                # 2. Has substantial content (20+ chars) - medium priority
-                # 3. Has phone pattern - bonus
-                score = 0
-                has_name_pattern = bool(re.search(r'\b[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+', candidate_text))
-                has_phone = bool(re.search(r'T\.\s*\(?\d+', candidate_text))
-                
-                if has_name_pattern:
-                    score += 10
-                if len(candidate_text) > 20:
-                    score += 5
-                if has_phone:
-                    score += 2
-                
-                # Prefer containers with names and substantial content
-                if score > best_score:
-                    best_score = score
-                    best_parent = candidate
-                
-                # Also keep first substantial candidate as fallback
-                if not parent and len(candidate_text) > 20:
-                    parent = candidate
-        
-        # Use best parent if found, otherwise use fallback
-        parent = best_parent if best_parent else parent
-        
-        if parent:
-            # Extract all text from parent (preserves structure)
-            # Use separator=' ' to keep words together, but preserve line structure where possible
-            contact_text = parent.get_text(separator=' ', strip=True)
-            
-            # Also try to get text with line breaks to preserve structure better
-            # This helps when contact info spans multiple lines
-            contact_text_with_breaks = parent.get_text(separator='\n', strip=True)
-            # If text with breaks is longer, it might have better structure
-            if len(contact_text_with_breaks) > len(contact_text) * 1.2:
-                # Use the version with breaks, but normalize
-                contact_text = re.sub(r'\n+', ' ', contact_text_with_breaks)
-            
-            # If parent doesn't have enough content or doesn't have a name pattern, 
-            # try to expand to include siblings or parent's parent
-            # This helps when name is in a previous sibling element or parent container
-            if len(contact_text) < 30 or not re.search(r'\b[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+', contact_text):
-                # Try to find previous sibling that might contain the name
-                prev_sibling = parent.find_previous_sibling()
-                if prev_sibling:
-                    prev_text = prev_sibling.get_text(separator=' ', strip=True)
-                    # Check if it looks like a name (2-4 capitalized words, no title keywords)
-                    if re.match(r'^[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+', prev_text):
-                        # Make sure it's not a title
-                        title_keywords_check = ['team', 'head', 'manager', 'leader', 'trainer', 'assistant', 'hr', 'recruitment', 
-                                              'employer', 'branding', 'scientist', 'technician', 'clerk', 'assistent', 'staff', 'scientific']
-                        if not any(keyword in prev_text.lower() for keyword in title_keywords_check):
-                            contact_text = prev_text + ' ' + contact_text
-                
-                # Also try parent's parent if current parent is too small
-                if len(contact_text) < 50:
-                    grandparent = parent.find_parent(['div', 'section', 'article', 'li'])
-                    if grandparent and grandparent != parent:
-                        grandparent_text = grandparent.get_text(separator=' ', strip=True)
-                        # If grandparent has more content and includes a name pattern, use it
-                        if len(grandparent_text) > len(contact_text) and re.search(r'\b[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+', grandparent_text):
-                            contact_text = grandparent_text
-            
-            # Extract name (pattern: First Last or Last, First)
-            # More flexible pattern: allows for middle names, titles (Dr., Prof.), and handles various formats
-            # Allow special characters (umlauts) in names: Ä, Ö, Ü, ä, ö, ü, ß
-            # Pattern 1: Standard name (First Last, First Middle Last, etc.) - with umlauts
-            name_pattern1 = r'\b([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+)\b'
-            # Pattern 2: Name with title prefix (Dr. John Smith, Prof. Dr. Jane Doe)
-            name_pattern2 = r'\b(?:Dr\.|Prof\.|Prof\.\s+Dr\.)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+)\b'
-            # Pattern 3: Name at start of text (common in contact blocks) - with umlauts
-            name_pattern3 = r'^([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)'
-            
-            names = []
-            # Try all patterns
-            names.extend(re.findall(name_pattern1, contact_text))
-            names.extend(re.findall(name_pattern2, contact_text))
-            names.extend(re.findall(name_pattern3, contact_text))
-            
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_names = []
-            for name in names:
-                name_clean = name.strip()
-                if name_clean and name_clean not in seen and len(name_clean) > 3:
-                    seen.add(name_clean)
-                    unique_names.append(name_clean)
-            
-            names = unique_names
-            
-            # Filter out names that are actually titles (common false positives)
-            # Titles often look like names: "Team Leader", "Head of", etc.
-            title_keywords = ['team', 'head', 'manager', 'leader', 'trainer', 'assistant', 'hr', 'recruitment', 
-                            'employer', 'branding', 'scientist', 'technician', 'clerk', 'assistent', 'staff', 'scientific']
-            filtered_names = []
-            for name in names:
-                name_lower = name.lower()
-                # Skip if name contains title keywords (likely a title, not a name)
-                if not any(keyword in name_lower for keyword in title_keywords):
-                    # Also check if it's a reasonable name length (2-4 words, each capitalized)
-                    words = name.split()
-                    # Allow names with special characters (like "Krüger" with umlaut)
-                    if 2 <= len(words) <= 4:
-                        # Check if first letter of each word is uppercase (allow special chars)
-                        if all(w and (w[0].isupper() or w[0] in 'ÄÖÜäöü') for w in words):
-                            filtered_names.append(name)
-            
-            # If we filtered out all names but have titles, try to extract name from beginning of text
-            # (before title keywords appear)
-            if not filtered_names:
-                # Look for name pattern at the very start of contact_text (before any title keywords)
-                # Split text by common separators and check first part
-                text_parts = re.split(r'\s+(?:Head|Manager|Leader|Trainer|Assistant|Team|HR|Recruitment|Employer|Branding|Scientist|Technician|Clerk|Assistent|T\.|E\.)', contact_text, flags=re.IGNORECASE, maxsplit=1)
-                if text_parts and len(text_parts[0].strip()) > 0:
-                    first_part = text_parts[0].strip()
-                    # Check if first part looks like a name (2-4 capitalized words)
-                    name_match = re.search(r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', first_part)
-                    if name_match:
-                        potential_name = name_match.group(1)
-                        # Make sure it's not a title and has reasonable length
-                        if (not any(keyword in potential_name.lower() for keyword in title_keywords) and
-                            2 <= len(potential_name.split()) <= 4):
-                            filtered_names.append(potential_name)
-                
-                # Also try extracting name that appears before pronoun (common pattern: "Name (pronoun)")
-                # Allow special characters in names (umlauts, etc.)
-                pronoun_match = re.search(r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,3})\s*\(', contact_text)
-                if pronoun_match:
-                    potential_name = pronoun_match.group(1)
-                    if (not any(keyword in potential_name.lower() for keyword in title_keywords) and
-                        2 <= len(potential_name.split()) <= 4):
-                        if potential_name not in filtered_names:
-                            filtered_names.append(potential_name)
-                
-                # Also try to extract name from HTML structure - look for text nodes before the email link
-                # This helps when name is in a separate element
-                if link.parent:
-                    # Get all text before the link in the parent (preserve order)
-                    # Find all text nodes and links before this email link
-                    all_siblings = []
-                    for sibling in link.parent.children:
-                        if sibling == link:
-                            break
-                        if hasattr(sibling, 'get_text'):
-                            sibling_text = sibling.get_text(separator=' ', strip=True)
-                            if sibling_text:
-                                all_siblings.append(sibling_text)
-                    
-                    # Combine siblings to get full context
-                    link_context = ' '.join(all_siblings)
-                    if not link_context:
-                        # Fallback: get all text from parent
-                        link_context = link.parent.get_text(separator=' ', strip=True)
-                    
-                    # Split by common separators (pronoun, title keywords, phone, email)
-                    name_candidates = re.split(r'\s*(?:\(he/him\)|\(she/her\)|\(they/them\)|Head|Manager|Leader|Trainer|Assistant|Team|HR|Recruitment|T\.|E\.|@)', link_context, flags=re.IGNORECASE, maxsplit=1)
-                    if name_candidates and len(name_candidates[0].strip()) > 0:
-                        first_part = name_candidates[0].strip()
-                        # Check if it looks like a name (2-4 capitalized words, no title keywords)
-                        # Allow umlauts and special characters
-                        name_match = re.search(r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,3})', first_part)
-                        if name_match:
-                            potential_name = name_match.group(1)
-                            if (not any(keyword in potential_name.lower() for keyword in title_keywords) and
-                                2 <= len(potential_name.split()) <= 4):
-                                if potential_name not in filtered_names:
-                                    filtered_names.append(potential_name)
-            
-            # If we still don't have names, try a more aggressive approach
-            # Look for name patterns that appear at the very beginning of the contact text
-            if not filtered_names:
-                # Extract everything before the first title keyword, phone, or email
-                text_before_metadata = re.split(r'\s*(?:Head|Manager|Leader|Trainer|Assistant|Team|HR|Recruitment|Employer|Branding|Scientist|Technician|Clerk|Assistent|Staff|T\.|E\.|\(he/him\)|\(she/her\)|@)', contact_text, flags=re.IGNORECASE, maxsplit=1)[0]
-                if text_before_metadata:
-                    # Look for name pattern in this text
-                    name_match = re.search(r'^([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){1,3})', text_before_metadata.strip())
-                    if name_match:
-                        potential_name = name_match.group(1)
-                        # Make sure it's not a title
-                        if not any(keyword in potential_name.lower() for keyword in title_keywords):
-                            filtered_names.append(potential_name)
-            
-            names = filtered_names if filtered_names else unique_names  # Fallback to original if filtering removed everything
-            
-            # If we have multiple name candidates, prefer the one that appears first in the text
-            # and is not a title
-            if len(names) > 1:
-                # Find the position of each name in the contact_text
-                name_positions = []
-                for name in names:
-                    pos = contact_text.find(name)
-                    if pos >= 0:
-                        name_positions.append((pos, name))
-                # Sort by position and take the first one
-                if name_positions:
-                    name_positions.sort(key=lambda x: x[0])
-                    names = [name_positions[0][1]]
-            
-            # Extract phone (pattern: T. (040) 8998-XXXX or +49 (0)40 8998-XXXX)
-            # More flexible pattern to handle various phone formats
-            phone_pattern = r'(?:T\.|Phone:?|Tel\.?)\s*[+\d\s\-\(\)]{8,}|\(\d{3,4}\)\s*\d{4,}[\s\-]?\d+|[\+\d\s\-\(\)]{10,}'
-            phones = re.findall(phone_pattern, contact_text)
-            # Clean up phone numbers (remove extra spaces, normalize)
-            phones = [re.sub(r'\s+', ' ', p.strip()) for p in phones if len(p.strip()) >= 8]
-            
-            # Extract title (pattern: Head of..., Manager..., etc.)
-            # More comprehensive pattern to catch various title formats
-            # Stop at phone numbers (T. or E.) to avoid capturing them
-            # Pattern 1: Full title with "of/for" (e.g., "Head of Recruitment and Employer Branding")
-            # Stop before phone (T.) or email (E.) markers
-            title_pattern1 = r'\b(Head|Manager|Leader|Trainer|Assistant|Team|HR|Recruitment|Employer|Branding|Scientist|Technician|Clerk|Assistent)\s+(?:of|for)?\s+[^\.\(\)T]+?(?=\s+(?:T\.|E\.|\(he/him\)|\(she/her\))|$)'
-            # Pattern 2: Title without "of/for" (e.g., "HR Manager Recruitment Technical & Scientific Staff")
-            # Stop before phone/email markers
-            title_pattern2 = r'\b(Head|Manager|Leader|Trainer|Assistant|Team|HR|Recruitment|Employer|Branding|Scientist|Technician|Clerk|Assistent)\s+[A-Z][^\.\(\)T]+?(?=\s+(?:T\.|E\.|\(he/him\)|\(she/her\))|$)'
-            # Pattern 3: Multi-word titles (e.g., "Team Leader Recruitment", "HR Team Assistent Recruitment")
-            title_pattern3 = r'\b(Team\s+(?:Leader|Assistent|Manager)\s+[^\.\(\)T]+?|HR\s+(?:Manager|Team|Assistent)\s+[^\.\(\)T]+?|Head\s+of\s+[^\.\(\)T]+?)(?=\s+(?:T\.|E\.|\(he/him\)|\(she/her\))|$)'
-            
-            titles = []
-            # Try all patterns
-            titles.extend(re.findall(title_pattern1, contact_text, re.IGNORECASE))
-            titles.extend(re.findall(title_pattern2, contact_text, re.IGNORECASE))
-            titles.extend(re.findall(title_pattern3, contact_text, re.IGNORECASE))
-            
-            # Remove duplicates and clean up titles
-            seen_titles = set()
-            unique_titles = []
-            for title in titles:
-                title_clean = re.sub(r'\s+', ' ', title.strip())
-                # Remove trailing punctuation and normalize
-                title_clean = re.sub(r'[\.\,]+$', '', title_clean).strip()
-                # Remove phone number patterns that might be captured (e.g., "T" at the end)
-                title_clean = re.sub(r'\s+T\.?\s*$', '', title_clean, flags=re.IGNORECASE)
-                title_clean = re.sub(r'\s+E\.?\s*$', '', title_clean, flags=re.IGNORECASE)
-                # Remove phone numbers that might be in the title
-                title_clean = re.sub(r'\s*T\.\s*\(?\d+\)?.*$', '', title_clean, flags=re.IGNORECASE)
-                title_clean = re.sub(r'\s*E\.\s*[a-zA-Z0-9._%+-]+@.*$', '', title_clean, flags=re.IGNORECASE)
-                # Remove email addresses
-                title_clean = re.sub(r'\s+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}.*$', '', title_clean)
-                title_clean = title_clean.strip()
-                if title_clean and title_clean.lower() not in seen_titles and len(title_clean) > 5:
-                    seen_titles.add(title_clean.lower())
-                    unique_titles.append(title_clean)
-            
-            titles = unique_titles
-            
-            # Extract pronoun (pattern: (he/him), (she/her))
-            pronoun_pattern = r'\((he|she|they)/(him|her|them)\)'
-            pronouns = re.findall(pronoun_pattern, contact_text)
-            
-            # Only add if we have at least email (required) and either name or phone (at least one other field)
-            # BUT: Don't use titles as names - if we only have titles and no proper names, set name to None
-            final_name = None
-            if names:
-                # Make absolutely sure the name is not a title
-                name_candidate = names[0]
-                name_lower = name_candidate.lower()
-                # Double-check: if it contains title keywords, it's not a name
-                if not any(keyword in name_lower for keyword in title_keywords):
-                    final_name = name_candidate
-                else:
-                    # Name candidate is actually a title, don't use it
-                    print(f"[DEBUG] Rejected name candidate '{name_candidate}' - it's a title, not a name")
-            
-            if email and (final_name or phones or titles):
-                contact_blocks.append({
-                    'email': email,
-                    'name': final_name,
-                    'phone': phones[0] if phones else None,
-                    'title': titles[0] if titles else None,
-                    'pronoun': pronouns[0] if pronouns else None,
-                    'full_text': contact_text
-                })
-                print(f"[DEBUG] Extracted contact block: email={email}, name={final_name if final_name else 'None'}, phone={phones[0] if phones else 'None'}, title={titles[0] if titles else 'None'}")
-            else:
-                print(f"[DEBUG] Skipped contact block: email={email}, has_name={bool(final_name)}, has_phone={bool(phones)}, has_title={bool(titles)}")
-    
-    return contact_blocks
+    """Delegate to content_extraction."""
+    return _content_extraction.extract_contact_blocks(html_soup)
 
 
 def reconstruct_contact_structure(contact_blocks, page_title=None):
-    """
-    Reconstruct markdown structure from extracted contact blocks.
-    
-    Creates:
-    - Page title from URL or content
-    - Section headings
-    - List structure for contact entries
-    """
-    markdown = []
-    
-    # Add page title
-    if page_title:
-        markdown.append(f"# {page_title}")
-    else:
-        markdown.append("# Contact Information")
-    markdown.append("")
-    
-    # Add section heading
-    markdown.append("## Contact Details")
-    markdown.append("")
-    
-    # Add contact entries as structured list
-    for contact in contact_blocks:
-        entry = []
-        
-        # Name with pronoun if available
-        # Always include name if available, even if it's None (will use email as fallback)
-        if contact['name']:
-            name_line = f"- **{contact['name']}**"
-            if contact['pronoun']:
-                name_line += f" ({contact['pronoun'][0]}/{contact['pronoun'][1]})"
-            entry.append(name_line)
-        elif contact['email']:
-            # If no name, use email address as identifier
-            email_local = contact['email'].split('@')[0].replace('.', ' ').title()
-            name_line = f"- **{email_local}**"
-            if contact['pronoun']:
-                name_line += f" ({contact['pronoun'][0]}/{contact['pronoun'][1]})"
-            entry.append(name_line)
-        
-        # Title
-        if contact['title']:
-            # Clean title: remove any trailing phone/email markers
-            title = contact['title'].strip()
-            # Remove trailing "T", "E", or phone/email patterns
-            title = re.sub(r'\s+[TE]\.?\s*$', '', title, flags=re.IGNORECASE)
-            title = re.sub(r'\s+T\.\s*\(.*$', '', title)
-            title = re.sub(r'\s+E\.\s*[a-zA-Z0-9._%+-]+@.*$', '', title)
-            entry.append(f"  - Title: {title}")
-        
-        # Phone
-        if contact['phone']:
-            # Fix phone format: ensure space after colon and normalize
-            phone = contact['phone'].strip()
-            # Normalize phone format: "T. (040) 8998-4219" or "T.(040) 8998-4219" -> "T. (040) 8998-4219"
-            phone = re.sub(r'T\.\s*\(', 'T. (', phone)
-            phone = re.sub(r'T\.\(', 'T. (', phone)
-            # Remove "T." prefix if it's duplicated (e.g., "T. T. (040)")
-            phone = re.sub(r'^T\.\s+T\.\s+', 'T. ', phone)
-            entry.append(f"  - Phone: {phone}")
-        
-        # Email (always include if available)
-        if contact['email']:
-            entry.append(f"  - Email: [{contact['email']}](mailto:{contact['email']})")
-        
-        if entry:
-            markdown.extend(entry)
-            markdown.append("")
-    
-    return '\n'.join(markdown)
+    """Delegate to content_extraction."""
+    return _content_extraction.reconstruct_contact_structure(contact_blocks, page_title)
 
 
 def clean_markdown_links_post_process(markdown_text):
-    """
-    Post-process markdown to clean link syntax by removing whitespace.
-    
-    This should be run after HTML→Markdown conversion.
-    """
-    if not markdown_text:
-        return markdown_text
-    
-    # Remove spaces in link brackets
-    markdown_text = re.sub(r'\[\s+', '[', markdown_text)
-    markdown_text = re.sub(r'\s+\]', ']', markdown_text)
-    
-    # Remove spaces in link parentheses
-    markdown_text = re.sub(r'\(\s+', '(', markdown_text)
-    markdown_text = re.sub(r'\s+\)', ')', markdown_text)
-    
-    # Remove spaces after colons in URLs/mailto
-    markdown_text = re.sub(r':\s+', ':', markdown_text)
-    
-    # Remove spaces before/after email addresses in links (more specific)
-    # Pattern: [ space email space ] -> [email]
-    markdown_text = re.sub(r'\[\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s+\]', r'[\1]', markdown_text)
-    
-    return markdown_text
+    """Delegate to content_extraction."""
+    return _content_extraction.clean_markdown_links_post_process(markdown_text)
 
 
 
@@ -5041,90 +869,25 @@ def clean_markdown_links_post_process(markdown_text):
     # This ensures consistent behavior across all 200k+ URLs without domain whitelisting
 
 
-async def crawl_site():
+from collections import namedtuple
+
+CrawlSetup = namedtuple('CrawlSetup', [
+    'browser_config',
+    'deep_crawl_strategy',
+    'exclusion_patterns',
+    'excluded_selector_str',
+    'inactive_selectors',
+    'markdown_generator',
+    'table_extraction_strategy',
+    'dedup_enabled',
+])
+
+def _build_crawl_setup():
+    """Build browser config, URL filters, crawl strategy, and content pipeline.
+
+    Centralises Steps 2-4 of crawl_site() — everything that creates
+    configuration objects for the crawl run.  Returns a CrawlSetup namedtuple.
     """
-    Main crawling function that orchestrates the entire crawling process.
-    
-    HOW IT WORKS:
-    1. Configure browser with anti-bot and JavaScript support
-    2. Configure the deep crawling strategy (how to follow links)
-    3. Create a crawler instance
-    4. Process each URL in ROOT_URLS list
-    5. Process and save all crawled pages
-    6. Log all errors to a JSON file
-    """
-    import time
-    start_time = time.time()  # Track start time for elapsed time calculation
-    
-    # ========================================================================
-    # DOMAIN-SPECIFIC FILTERING CONFIGURATION
-    # ========================================================================
-    # Strategy: Apply .inactive CSS selectors ONLY to domains where "inactive" 
-    # means "disabled/non-clickable" (semantic meaning). Skip filtering for 
-    # domains where "inactive" is part of structural class naming.
-    #
-    # Verified behavior:
-    # - particle-physics.desy.de: .inactive = truly disabled items (filter ✓)
-    # - cms.desy.de: .inactive = structural class (skip ✗)
-    # - www.desy.de: mostly safe (skip ✗ - conservative approach)
-    
-    # PHASE 2 FIX: Removed DOMAINS_REQUIRING_INACTIVE_FILTERING dict
-    # .inactive selectors now apply universally to all domains
-    # This simplifies code and works for 200k+ diverse URLs without domain-specific tuning
-    
-    # ========================================================================
-    # STEP 1: Initialize Error Tracking and Load Checkpoint
-    # ========================================================================
-    # PHASE 1 FIX: Stream results instead of accumulating in memory
-    # These variables track metadata only - results are processed immediately
-    # and saved to disk, then discarded to prevent memory exhaustion.
-    
-    # Load checkpoint if resuming from previous run
-    checkpoint = load_checkpoint()
-    if checkpoint:
-        print(f"[CHECKPOINT] Resuming from checkpoint with {checkpoint.get('pages_processed', 0)} pages already processed")
-    
-    all_errors = checkpoint.get('all_errors', [])
-    all_successful_urls = checkpoint.get('all_successful_urls', [])
-    all_urls_by_depth = checkpoint.get('all_urls_by_depth', {})  # Track URLs by depth level
-    
-    # GROUP 1: Initialize statistics tracking for login/auth/admin URL filtering
-    group1_skipped_count = 0  # Count of URLs skipped by GROUP 1 filter
-    
-    # GROUP 2: Initialize statistics tracking for error page URL filtering
-    group2_skipped_count = 0  # Count of URLs skipped by GROUP 2 filter
-    
-    # GROUP 4: Initialize statistics tracking for query parameter deduplication
-    group4_skipped_count = 0  # Count of URLs skipped due to query param duplicates
-    seen_normalized_urls = set()  # Track normalized URLs (without UI-only params) to detect duplicates
-    # FIX 1d: duplicate_urls was referenced in GROUP 1/2/4 filter blocks (.add() called in 3 places)
-    # but was never initialised, causing NameError at runtime for every filtered URL.
-    duplicate_urls: set = set()  # Tracks all URLs skipped by any GROUP filter (for diagnostics)
-    
-    # PHASE 1 FIX: all_results is now a temporary buffer that gets cleared after processing
-    # Results are accumulated during crawling, then processed and saved to disk,
-    # and finally cleared to free memory. This prevents OOM at 200k URLs.
-    # For true streaming at very large scale, refactor to process each result immediately.
-    all_results = []  # Temporary buffer - cleared after processing to free memory
-    total_results_crawled = 0  # Track total count (survives clear() for final summary)
-    
-    pages_processed_count = checkpoint.get('pages_processed', 0)  # Counter for checkpoint frequency
-    seed_urls_processed = checkpoint.get('seed_urls_processed', set())  # Track which seed URLs were processed
-    max_depth_crawled = checkpoint.get('max_depth_crawled', 0)  # Track the deepest level crawled
-    
-    # C1: Initialize so they exist in finally (checkpoint on interrupt/time limit)
-    seen_final_urls = checkpoint.get('seen_final_urls', set())
-    additional_urls_with_depth = checkpoint.get('additional_urls_with_depth', {})
-    crawled_urls_with_depth = checkpoint.get('crawled_urls_with_depth', {})
-    # Solution 1 Option A: merged dict (current run overwrites checkpoint) for depth lookup and checkpoint save
-    additional_urls_with_depth_merged = None
-    # Section 4.2: merged "crawled URL -> depth" (current overwrites checkpoint) for depth precedence
-    crawled_urls_with_depth_merged = None
-    
-    # Clear redirect-resolution cache so we re-check redirects each run
-    global _redirect_resolution_cache
-    _redirect_resolution_cache.clear()
-    
     # ========================================================================
     # STEP 2: Configure Browser with Anti-Bot and JavaScript Support
     # ========================================================================
@@ -5143,6 +906,9 @@ async def crawl_site():
         # False = visible browser window (useful for debugging and seeing what's happening)
         # Headless mode is recommended for production but can make debugging harder
         headless=HEADLESS,
+
+        # Honest identifying User-Agent so DESY WebOffice logs show the crawler identity
+        user_agent=CRAWLER_USER_AGENT,
         
         # JavaScript rendering: Automatically enabled via Playwright
         # Crawl4AI uses Playwright by default, which fully supports JavaScript.
@@ -5348,11 +1114,15 @@ async def crawl_site():
         print(f"[PATH A] GROUP 3 (printversion/siteview): 2 patterns will block @@siteview and ?printversion= URLs")
         print(f"[PATH A] GROUP 3b (rss/feed/logoff): 4 patterns will block RSS, feed, and logoff URLs")
         print(f"[PATH A] BFSDeepCrawlStrategy will skip matching URLs BEFORE crawling them")
+    else:
+        # URL filtering not available — define empty pattern list so references
+        # in the additional-URL extraction loops (lines ~1766, ~2019) don't crash.
+        exclusion_patterns = []
+        filter_chain = None
+        print("[PATH A] ⚠ URL filter classes not available — exclusion_patterns empty")
     
-    # DOMAIN RESTRICTION: BFSDeepCrawlStrategy's include_external=False only allows exact domain match
-    # We need to manually filter links to allow *.desy.de subdomains in link extraction
-    # The filter_chain above handles file extensions, but domain restriction is handled separately
-    # Note: include_external=False will restrict to www.desy.de, but we manually allow *.desy.de in link extraction
+    # DOMAIN RESTRICTION: BFSDeepCrawlStrategy's include_external=False only allows exact domain match.
+    # Additional manual extraction paths below are restricted by ALLOWED_URL_PREFIXES.
     
     # BFSDeepCrawlStrategy uses Breadth-First Search algorithm:
     # - Crawls all pages at depth 1 before moving to depth 2
@@ -5636,56 +1406,7 @@ async def crawl_site():
         )
         print(f"[INFO] Table extraction enabled (links may not be preserved)")
     
-    # ========================================================================
-    # Helper function: Identify invisible links in HTML (disabled/inactive menus)
-    # ========================================================================
-    def get_invisible_link_urls(html_content, excluded_selector_list):
-        """
-        Extract URLs of links that match disabled/inactive/hidden selectors.
-        These are links that should NOT be crawled because they're not visible to users.
-        
-        Args:
-            html_content: HTML string of the page
-            excluded_selector_list: List of CSS selectors matching invisible elements
-            
-        Returns:
-            Set of URLs that are invisible/inactive and should be skipped
-        """
-        if not html_content or not BEAUTIFULSOUP_AVAILABLE:
-            return set()
-        
-        try:
-            soup = BeautifulSoup(html_content, 'lxml')
-            invisible_urls = set()
-            
-            # For each CSS selector, find matching links and extract their href
-            for selector in excluded_selector_list:
-                try:
-                    # Try to use CSS selector
-                    matching_elements = soup.select(selector)
-                    for elem in matching_elements:
-                        # Get all links in this element
-                        if elem.name == 'a':
-                            href = elem.get('href', '')
-                            if href:
-                                invisible_urls.add(href)
-                        else:
-                            # Element is not a link, find links inside it
-                            for link in elem.find_all('a', href=True):
-                                href = link.get('href', '')
-                                if href:
-                                    invisible_urls.add(href)
-                except Exception:
-                    # Skip malformed selectors
-                    continue
-            
-            return invisible_urls
-        except Exception as e:
-            print(f"[WARNING] Error detecting invisible links: {e}")
-            return set()
-    
-    # Info: This function is now available for use in link filtering
-    # It can be called on each crawled page to identify links in disabled/inactive sections
+    # Info: Invisible link detection available via _content_extraction.get_invisible_link_urls()
     print("[INFO] Invisible link detection enabled - will skip inactive menu links (display:none, disabled, etc.)")
     
     # ========================================================================
@@ -5703,110 +1424,1268 @@ async def crawl_site():
     # - Faster crawl by skipping redundant pages
     # - Solves Sara Taheri duplication problem directly
     
-    seen_content_hashes = {}  # {content_hash: original_url} - track seen content
-    duplicate_count = 0  # Track how many duplicates were skipped
     dedup_enabled = CONTENT_HASH_AVAILABLE
     
-    def get_content_hash(content_str):
-        """
-        Generate a hash of page content for deduplication.
-        Uses Crawl4AI's ContentHash if available, else fallback to SHA256.
-        
-        Args:
-            content_str: Markdown or HTML content to hash
-            
-        Returns:
-            Hash string representing the content
-        """
-        if not content_str:
-            return None
-        
-        if CONTENT_HASH_AVAILABLE:
-            try:
-                # Use Crawl4AI's ContentHash for deduplication
-                hasher = ContentHash()
-                return hasher.hash(content_str)
-            except Exception:
-                # Fallback if ContentHash fails
-                pass
-        
-        # Fallback: Use SHA256 hash of content
-        import hashlib
-        return hashlib.sha256(content_str.encode('utf-8')).hexdigest()
-    
-    def is_duplicate_content(content_str, url=None):
-        """
-        Check if content is duplicate (seen before).
-        
-        Args:
-            content_str: Markdown or HTML content to check
-            url: Current URL (for logging)
-            
-        Returns:
-            Tuple (is_duplicate: bool, original_url: str or None, hash: str)
-        """
-        if not content_str or not dedup_enabled:
-            return False, None, None
-        
-        try:
-            content_hash = get_content_hash(content_str)
-            if not content_hash:
-                return False, None, None
-            
-            if content_hash in seen_content_hashes:
-                # Duplicate found
-                original_url = seen_content_hashes[content_hash]
-                return True, original_url, content_hash
-            else:
-                # New content - track it
-                seen_content_hashes[content_hash] = url or "unknown"
-                return False, None, content_hash
-        except Exception as e:
-            # Deduplication failed - continue without it
-            return False, None, None
-    
-    def filter_inactive_elements_from_html(html_content, selectors_to_remove):
-        """
-        GROUP 6 Option B fallback: Remove elements matching CSS selectors from HTML.
-        This function is used if PruningContentFilter doesn't support excluded_selectors.
-        
-        Args:
-            html_content: Raw HTML string from crawl
-            selectors_to_remove: List of CSS selectors to filter out
-            
-        Returns:
-            Filtered HTML string with matching elements removed
-        """
-        if not html_content or not selectors_to_remove or not BEAUTIFULSOUP_AVAILABLE:
-            return html_content
-        
-        try:
-            soup = BeautifulSoup(html_content, 'lxml')
-            
-            # Remove elements matching each selector
-            removed_count = 0
-            for selector in selectors_to_remove:
-                try:
-                    for element in soup.select(selector):
-                        element.decompose()  # Remove element and its contents
-                        removed_count += 1
-                except Exception:
-                    # Invalid selector or parsing error - skip this selector
-                    pass
-            
-            if removed_count > 0:
-                print(f"[GROUP 6 FALLBACK] Removed {removed_count} elements matching {len(selectors_to_remove)} CSS selectors from HTML")
-            
-            return str(soup)
-        except Exception as e:
-            # Filtering failed - return original HTML
-            print(f"[GROUP 6 FALLBACK] Warning: Could not filter inactive elements: {str(e)[:100]}")
-            return html_content
+    # Content deduplication and HTML filtering available via _content_extraction module
     
     # Info: Content deduplication is available
     if CONTENT_HASH_AVAILABLE:
         print("[INFO] ContentHash enabled - will detect and skip duplicate content (page-level deduplication)")
+
+    return CrawlSetup(
+        browser_config=browser_config,
+        deep_crawl_strategy=deep_crawl_strategy,
+        exclusion_patterns=exclusion_patterns,
+        excluded_selector_str=excluded_selector_str,
+        inactive_selectors=INACTIVE_SELECTORS,
+        markdown_generator=markdown_generator,
+        table_extraction_strategy=table_extraction_strategy,
+        dedup_enabled=dedup_enabled,
+    )
+
+
+def _print_crawl_summary(state, dedup_enabled):
+    """Print final crawl statistics (extracted from crawl_site for readability)."""
+    print("-" * 60)
+    print(f"[SUMMARY]")
+    print(f"  URLs processed: {len(ROOT_URLS)}")
+    print(f"  Successful: {len(state.all_successful_urls)} pages")
+    print(f"  Errors: {len(state.all_errors)} pages")
+    print(f"  Total crawled: {state.total_results_crawled} pages")
+
+    # GROUP 1: Report login/auth/admin filtering statistics
+    print("-" * 60)
+    print(f"[GROUP 1 STATISTICS]")
+    print(f"  URLs skipped (login/auth/admin): {state.group1_skipped_count}")
+    total_queue_urls = (len(state.all_successful_urls) + state.group1_skipped_count
+                        + state.group2_skipped_count
+                        + (len(state.all_errors) if state.all_errors else 0))
+    if total_queue_urls > 0:
+        group1_reduction_pct = (state.group1_skipped_count / total_queue_urls) * 100
+        print(f"  Reduction: {group1_reduction_pct:.1f}%")
+
+    # GROUP 2: Report error page filtering statistics
+    print("-" * 60)
+    print(f"[GROUP 2 STATISTICS]")
+    print(f"  URLs skipped (error/maintenance): {state.group2_skipped_count}")
+    if total_queue_urls > 0:
+        group2_reduction_pct = (state.group2_skipped_count / total_queue_urls) * 100
+        print(f"  Reduction: {group2_reduction_pct:.1f}%")
+
+    # GROUP 4: Report query parameter deduplication statistics
+    print("-" * 60)
+    print(f"[GROUP 4 STATISTICS]")
+    print(f"  URLs skipped (query param duplicates): {state.group4_skipped_count}")
+    if total_queue_urls > 0:
+        group4_reduction_pct = (state.group4_skipped_count / total_queue_urls) * 100
+        print(f"  Reduction: {group4_reduction_pct:.1f}%")
+    if state.group4_skipped_count > 0:
+        print(f"  Note: These URLs had identical content with only query param variations")
+        print(f"        (e.g., ?printversion=1 vs ?embed=1 - prevented redundant crawls)")
+
+    # Combined filtering statistics
+    print("-" * 60)
+    total_filtered = state.group1_skipped_count + state.group2_skipped_count + state.group4_skipped_count
+    print(f"[COMBINED FILTERING (GROUP 1 + GROUP 2 + GROUP 4)]")
+    print(f"  Total URLs filtered: {total_filtered}")
+    if total_queue_urls > 0:
+        combined_reduction_pct = (total_filtered / total_queue_urls) * 100
+        print(f"  Combined reduction: {combined_reduction_pct:.1f}%")
+        print(f"  Crawl efficiency: {(len(state.all_successful_urls) / total_queue_urls) * 100:.1f}% of URLs were useful")
+
+    if dedup_enabled:
+        print(f"  Duplicates skipped: {state.duplicate_count} pages (identical content)")
+        print(f"  Unique content: {len(state.seen_content_hashes)} pages")
+    print(f"  Files saved to: {OUTPUT_DIR}/")
+    if state.all_errors:
+        print(f"  Error log: {ERROR_LOG_FILE}")
+    print("-" * 60)
+
+
+
+def _resolve_markdown_content(result, result_is_pdf):
+    """Select best markdown from fit/raw, falling back to HTML extraction.
+
+    Encapsulates Steps G6-G7 of crawl_site(): fit-vs-raw markdown selection,
+    table detection, HTML fallback via BeautifulSoup (link conversion, contact
+    block merging, paragraph extraction, noise filtering, dedup), and
+    full-page last-resort extraction.
+
+    Returns the resolved markdown content string (may be empty).
+    """
+    markdown_content = ""
+    if hasattr(result, 'markdown'):
+        # Check if result has fit_markdown (cleaned version)
+        if hasattr(result.markdown, 'fit_markdown'):
+            if result_is_pdf:
+                # For PDFs, prefer raw_markdown (extracted PDF text)
+                markdown_content = result.markdown.raw_markdown or result.markdown.fit_markdown or ""
+            else:
+                # For HTML: Use fit_markdown as primary (cleaned, navigation removed)
+                # But if it's significantly shorter than raw_markdown, combine both
+                # This ensures lists and structured content aren't lost
+                fit_content = result.markdown.fit_markdown or ""
+                raw_content = result.markdown.raw_markdown or ""
+
+                # CRITICAL: For pages with tables, prefer raw_markdown to preserve table structure
+                # Also use raw if fit is empty or much shorter
+                if fit_content and raw_content:
+                    fit_len = len(fit_content.strip())
+                    raw_len = len(raw_content.strip())
+
+                    # Use raw if:
+                    # 1. fit is empty or very short (< 100 chars)
+                    # 2. fit is less than 50% of raw (too aggressive filtering)
+                    # 3. raw contains table markers (|) but fit doesn't (tables were filtered out)
+                    has_tables_in_raw = '|' in raw_content and len([l for l in raw_content.split('\n') if '|' in l]) >= 3
+                    has_tables_in_fit = '|' in fit_content and len([l for l in fit_content.split('\n') if '|' in l]) >= 3
+
+                    if fit_len < 100 or (raw_len > 0 and (fit_len / raw_len) < 0.5) or (has_tables_in_raw and not has_tables_in_fit):
+                        markdown_content = raw_content
+                        if fit_len < 100:
+                            print(f"[INFO] Using raw_markdown (fit_markdown was empty/too short: {fit_len} chars)")
+                        elif has_tables_in_raw and not has_tables_in_fit:
+                            print(f"[INFO] Using raw_markdown (tables were filtered out from fit_markdown)")
+                        else:
+                            print(f"[INFO] Using raw_markdown (fit_markdown was {fit_len}/{raw_len} chars, may have lost content)")
+                    else:
+                        markdown_content = fit_content
+                elif raw_content:
+                    # If only raw is available, use it
+                    markdown_content = raw_content
+                    print(f"[INFO] Using raw_markdown (fit_markdown not available)")
+                else:
+                    # Fallback to fit if raw not available
+                    markdown_content = fit_content
+
+                # CRITICAL: Check if markdown has meaningful content (not just headers/URLs)
+                # If it's mostly empty or just has URL/headers, extract from HTML
+                markdown_meaningful = markdown_content.strip()
+                # Remove URL header and separators to check actual content
+                markdown_meaningful = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', markdown_meaningful, flags=re.IGNORECASE | re.MULTILINE)
+                markdown_meaningful = markdown_meaningful.strip()
+
+                # Count actual table rows (not separators)
+                table_rows_in_markdown = [l for l in markdown_content.split('\n') if '|' in l and not re.match(r'^\s*\|[\s\-:]+\|', l) and l.strip()]
+                has_tables_in_markdown = len(table_rows_in_markdown) >= 2
+
+                # General signal: HTML contains many contact/profile tables, but markdown reflects far fewer.
+                # Use mailto count in markdown (strong proxy for "person rows extracted").
+                html_contact_table_count = 0
+                html_total_table_count = 0
+                markdown_mailto_count = len(re.findall(r'\(mailto:[^)]+\)', markdown_content or '', flags=re.IGNORECASE))
+                if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
+                    try:
+                        # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
+                        soup_probe = _get_cached_soup(result)
+                        probe_tables = soup_probe.find_all('table', recursive=True) if soup_probe else []
+                        html_total_table_count = len(probe_tables)
+                        for t in probe_tables:
+                            if t.find('a', href=lambda x: x and x.startswith('mailto:')):
+                                html_contact_table_count += 1
+                    except Exception:
+                        html_contact_table_count = 0
+                        html_total_table_count = 0
+
+                tables_missing_vs_html = (
+                    html_contact_table_count >= 3 and
+                    markdown_mailto_count < html_contact_table_count
+                )
+
+                # ALWAYS check HTML if markdown is empty or has no tables
+                # This ensures we extract content even if PruningContentFilter removed everything
+                # Also check if HTML exists and has content (might be JavaScript-loaded)
+                html_has_content = False
+                html_length = 0
+                if hasattr(result, 'html') and result.html:
+                    html_length = len(result.html.strip())
+                    html_has_content = html_length > 1000  # HTML has substantial content
+
+                # Check HTML if:
+                # 1. Markdown is empty/meaningless
+                # 2. Markdown has no tables but HTML might have them
+                # 3. HTML has substantial content but markdown doesn't (JavaScript-loaded content)
+                should_check_html = (not markdown_meaningful or 
+                                    len(markdown_meaningful) < 100 or 
+                                    not has_tables_in_markdown or
+                                    tables_missing_vs_html or
+                                    (html_has_content and len(markdown_meaningful) < 50))
+
+
+                if should_check_html:
+                    print(f"[DEBUG] Will check HTML - markdown: {len(markdown_meaningful)} chars, html: {html_length} chars, has_tables: {has_tables_in_markdown}")
+                    if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
+                        try:
+                            # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
+                            soup = _get_cached_soup(result)
+                            if not soup:
+                                raise ValueError('No soup')
+
+
+                            # SIMPLIFIED: Always extract from HTML if markdown is empty or too short
+                            # No complex contact block extraction - just extract all content properly
+                            should_extract = (not markdown_meaningful or 
+                                            len(markdown_meaningful) < 100 or
+                                            tables_missing_vs_html)
+
+                            if should_extract:
+                                # Count HTML tables for debug output
+                                html_table_count = len(soup.find_all('table', recursive=True)) if soup else 0
+                                print(f"[DEBUG] Will use Crawl4AI tables - markdown_meaningful: {len(markdown_meaningful)} chars, html_tables: {html_table_count}, markdown_tables: {has_tables_in_markdown}, html_length: {html_length}")
+
+                                # Use only Crawl4AI's table extraction - skip all custom HTML parsing
+                                # Tables will be extracted from result.tables later in the code
+                                html_fallback_tables = ""
+
+                                # Now remove script and style elements, plus navigation/UI elements
+                                # This is critical to avoid extracting dropdown menus, navigation, and UI noise
+                                for element in soup(["script", "style", "nav", "header", "footer",
+                                                    "select", "option",  # Dropdown menus
+                                                    "noscript", "iframe",
+                                                    "form"]):  # Forms often contain search UI
+                                    element.decompose()
+
+                                # Remove elements with common navigation/UI classes/IDs
+                                # These often contain dropdown menus and navigation that get flattened into text
+                                ui_patterns = [
+                                    r'nav', r'menu', r'dropdown', r'select', r'option',
+                                    r'breadcrumb', r'sidebar', r'cookie', r'privacy',
+                                    r'search', r'filter', r'pagination', r'toolbar',
+                                    r'header', r'footer', r'aside'
+                                ]
+                                for pattern in ui_patterns:
+                                    # Remove by class
+                                    for elem in soup.find_all(class_=re.compile(pattern, re.I)):
+                                        elem.decompose()
+                                    # Remove by ID
+                                    for elem in soup.find_all(id=re.compile(pattern, re.I)):
+                                        elem.decompose()
+
+                                # Remove elements that are likely navigation/UI (have many links but little text)
+                                # This catches navigation menus that weren't caught by the above
+                                # GENERAL: More aggressive filtering for navigation patterns
+                                for elem in soup.find_all(['div', 'ul', 'ol', 'li']):
+                                    links = elem.find_all('a')
+                                    text = elem.get_text(strip=True)
+                                    # If element has many links but short text, it's likely navigation
+                                    # Also check for spacer images (common in navigation)
+                                    spacer_imgs = elem.find_all('img', src=re.compile(r'spacer|blank|pixel', re.I))
+                                    if (len(links) > 3 and len(text) < 200) or (len(spacer_imgs) > 0 and len(links) > 2):
+                                        elem.decompose()
+
+                                # Try to find main content - check multiple possible containers
+                                # Also check for iframes (content might be loaded in iframe)
+                                main_content = None
+
+                                # Check for iframes first (content might be loaded in iframe)
+                                iframes = soup.find_all('iframe')
+                                if iframes:
+                                    print(f"[DEBUG] Found {len(iframes)} iframe(s) - content might be in iframe")
+                                    for iframe in iframes:
+                                        iframe_src = iframe.get('src', '')
+                                        if iframe_src:
+                                            print(f"[DEBUG] Iframe src: {iframe_src}")
+                                            # Note: Cross-origin iframe content cannot be accessed directly
+                                            # But we can note the iframe URL for reference
+
+                                # Try standard containers
+                                main_content = (soup.find('main') or 
+                                              soup.find('article') or 
+                                              soup.find('div', class_=re.compile(r'content|main|body', re.I)) or
+                                              soup.find('div', id=re.compile(r'content|main|body', re.I)))
+
+                                # If main_content is too small or not found, try body
+                                # RELAXED: Lower threshold from 50 to 20 chars to catch contact pages
+                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
+                                    main_content = soup.find('body')
+                                    if main_content:
+                                        print(f"[DEBUG] Using body as main content ({len(main_content.get_text(strip=True))} chars)")
+
+                                # If still no good content, check for common content divs with substantial text
+                                # RELAXED: Lower threshold and check for contact info patterns
+                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
+                                    # Look for any div with text content (lowered threshold)
+                                    all_divs = soup.find_all('div')
+                                    best_div = None
+                                    best_score = 0
+                                    for div in all_divs:
+                                        div_text = div.get_text(strip=True)
+                                        # Score divs based on text length and contact info presence
+                                        score = len(div_text)
+                                        # Boost score if contains contact info patterns
+                                        if re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', div_text):
+                                            score += 500  # Big boost for contact info
+                                        if re.search(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+', div_text):
+                                            score += 100  # Boost for names
+                                        # If div has substantial text or contact info, consider it
+                                        if score > best_score:
+                                            best_score = score
+                                            best_div = div
+
+                                    if best_div and best_score > 50:  # Lower threshold
+                                        main_content = best_div
+                                        print(f"[DEBUG] Using div with score {best_score} as main content")
+
+                                # CRITICAL FIX: If still no main_content found, but we have tables, use body anyway
+                                # This handles pages where content structure is non-standard
+                                if not main_content:
+                                    body = soup.find('body')
+                                    if body:
+                                        main_content = body
+                                        print(f"[DEBUG] No main content found, using body as fallback ({len(body.get_text(strip=True))} chars)")
+                                    else:
+                                        # Last resort: use entire soup
+                                        main_content = soup
+                                        print(f"[DEBUG] No body found, using entire soup as fallback")
+
+                                # Tables are extracted by Crawl4AI and will be processed from result.tables later
+                                print(f"[DEBUG] Skipping custom HTML table extraction - using Crawl4AI tables from result.tables")
+
+                                # Now extract text if we have main_content
+                                if main_content:
+
+                                    # RELAXED: If main_content text is very short, try extracting from paragraphs directly
+                                    # This helps with contact pages where content is in paragraphs
+                                    main_content_text_preview = main_content.get_text(strip=True)
+                                    if len(main_content_text_preview) < 100:
+                                        # Try extracting from all paragraphs in the page
+                                        all_paragraphs = soup.find_all(['p', 'div'])
+                                        # FIX 1b: Collect filtered paragraphs in ONE pass.
+                                        # The original code applied the same filter twice — once to build
+                                        # paragraph_texts (for the length check), then again to build para_soup.
+                                        # Now we iterate all_paragraphs once, store the elements, and reuse them.
+                                        filtered_paras = []
+                                        for para in all_paragraphs:
+                                            para_text = para.get_text(strip=True)
+                                            # Check if paragraph has contact info or substantial content
+                                            if para_text and (len(para_text) > 20 or re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', para_text)):
+                                                # Skip if it's clearly navigation/noise
+                                                if para_text.count('](') < 10 and not re.match(r'^https?://', para_text):
+                                                    filtered_paras.append(para)
+                                        paragraph_texts = [p.get_text(strip=True) for p in filtered_paras]
+
+                                        if paragraph_texts:
+                                            para_joined = '\n'.join(paragraph_texts)
+                                            if len(para_joined) > len(main_content_text_preview):
+                                                # Use paragraphs instead
+                                                print(f"[DEBUG] Using {len(paragraph_texts)} paragraphs for extraction (total {len(para_joined)} chars)")
+                                            # Create a temporary soup with just these paragraphs
+                                            para_soup = BeautifulSoup('', 'lxml')
+                                            for para in filtered_paras:
+                                                para_soup.append(para)
+                                            if len(para_soup.get_text(strip=True)) > len(main_content_text_preview):
+                                                main_content = para_soup
+                                                print(f"[DEBUG] Switched to paragraph-based extraction")
+
+                                    # Table extraction is handled by Crawl4AI - no need to search for div-based tables
+
+                                    # SIMPLIFIED: Convert all links (including emails) to markdown format
+                                    # This preserves emails and all links in the output
+                                    from bs4 import NavigableString
+                                    for link in main_content.find_all('a', href=True):
+                                        href = link.get('href', '').strip()
+                                        href_no_frag = href.split('#', 1)[0].rstrip('/')
+                                        link_text = link.get_text(strip=True) or ""
+
+                                        # Skip empty/anchor links (just #)
+                                        if not href or (href == '#' or (href.startswith('#') and len(href) == 1)):
+                                            link.decompose()
+                                            continue
+
+                                        # Issue #1 fix: drop self-referencing links (often have empty text and become []())
+                                        if result.url:
+                                            url_norm = result.url.split('#', 1)[0].rstrip('/')
+                                            if href_no_frag == url_norm:
+                                                link.decompose()
+                                                continue
+                                            # Handle relative self-links like "/career/contact/index_eng.html"
+                                            if href.startswith('/') and url_norm.endswith(href_no_frag):
+                                                link.decompose()
+                                                continue
+                                            # Also drop same-page anchors if they have no visible text
+                                            if href.startswith(result.url) and ('#' in href) and not link_text:
+                                                link.decompose()
+                                                continue
+
+                                        # Drop empty-text non-email links (prevents [](...))
+                                        if not link_text and not href.startswith('mailto:'):
+                                            link.decompose()
+                                            continue
+
+                                        # Convert email links to markdown
+                                        if href.startswith('mailto:'):
+                                            email = unescape(href[7:])
+                                            if not email:
+                                                link.decompose()
+                                                continue
+
+                                            # GENERAL: If link contains a lot of text (like contact info blocks),
+                                            # preserve all the text and just convert the email part to markdown
+                                            # Check if this is a contact info block (has name pattern and phone/email)
+                                            # GENERAL: For LinkElementMailto links, get_text() should get all child content
+                                            # But if it doesn't, try getting from the link's parent or check if children exist
+                                            link_full_text = link.get_text(separator=' ', strip=True)
+                                            # If link text is very short but link has class LinkElementMailto, it might be a contact block
+                                            # Try getting text from parent if link text is suspiciously short
+                                            if len(link_full_text) < 30 and 'LinkElementMailto' in str(link.get('class', [])):
+                                                # Check parent for full text
+                                                parent = link.find_parent(['div', 'section'])
+                                                if parent:
+                                                    parent_text = parent.get_text(separator=' ', strip=True)
+                                                    # If parent has contact info and is not too large, use it
+                                                    if (re.search(r'[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+.*\([^)]+\)', parent_text) and
+                                                        (re.search(r'T\.\s*\(?\d+|\(?\d{3,4}\)?\s*[\-]?\s*\d{3,4}', parent_text) or '@' in parent_text) and
+                                                        len(parent_text) < 500):  # Not too large
+                                                        link_full_text = parent_text
+                                            is_contact_block = (
+                                                len(link_full_text) > 50 and
+                                                re.search(r'[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+.*\([^)]+\)', link_full_text) and
+                                                (re.search(r'T\.\s*\(?\d+|\(?\d{3,4}\)?\s*[\-]?\s*\d{3,4}', link_full_text) or '@' in link_full_text)
+                                            )
+
+
+                                            if is_contact_block:
+                                                # This is a contact info block - replace the entire <a> tag with a
+                                                # paragraph containing the formatted contact block text.
+                                                # FIX 1c: The original code mutated text nodes inside the link
+                                                # (replacing the email string with a markdown link), but then
+                                                # immediately replaced the entire link element via link.replace_with(),
+                                                # discarding all those DOM mutations. The email is already replaced
+                                                # correctly below via re.sub() on link_content (derived from
+                                                # link_full_text). The wasted text_node loop is removed.
+                                                email_pattern = re.escape(email)
+
+                                                # GENERAL: Replace link with a paragraph containing all its text content
+                                                # This ensures the contact block is extracted as a single paragraph
+                                                link_content = link_full_text
+                                                # Replace email with markdown link
+                                                link_content = re.sub(f'\\b{email_pattern}\\b', f'[{email}](mailto:{email})', link_content)
+                                                # Create a new paragraph element (Fix #2: use callable() guard - hasattr passes for NavigableString
+                                                # because new_tag exists as an attribute but is None, causing TypeError on call)
+                                                tag_parent = main_content if main_content is not None else soup
+                                                if tag_parent is not None and callable(getattr(tag_parent, 'new_tag', None)):
+                                                    new_para = tag_parent.new_tag('p')
+                                                    new_para['class'] = 'contact-block-extracted'
+                                                    new_para.string = link_content
+                                                    link.replace_with(new_para)
+                                                else:
+                                                    link.replace_with(NavigableString(link_content))
+                                                continue  # Skip the rest of link processing since we replaced it
+                                            else:
+                                                # Simple email link - use email as link text if link text is generic
+                                                if not link_text or link_text.lower() in ['email', 'e-mail', 'mail', 'contact']:
+                                                    link_text = email
+                                                # Replace with markdown: [email](mailto:email)
+                                                link.replace_with(NavigableString(f"[{link_text}](mailto:{email})"))
+                                        # Convert regular links to markdown
+                                        elif href:
+                                            if not link_text:
+                                                link_text = href
+                                            link.replace_with(NavigableString(f"[{link_text}]({href})"))
+
+                                    # Get the text (links are already in markdown format)
+                                    # IMPORTANT: We remove table elements before extracting paragraphs to
+                                    # avoid duplicating table content. BUT headings can sometimes live
+                                    # inside layout tables, so extract headings first, then drop tables.
+                                    main_content_for_text = BeautifulSoup(str(main_content), 'lxml')
+
+                                    # SIMPLIFIED: Extract all paragraphs and text, preserving structure
+                                    # No complex contact block extraction - just extract everything properly
+                                    lines = []
+
+                                    # FIX 1: Disable old heading extraction - headings are now extracted in DOM order
+                                    # via extract_headings_and_tables_in_dom_order() and added to tables_markdown
+                                    # This prevents duplicate headings and wrong ordering from navigation elements
+                                    # Headings will be extracted separately with proper DOM order and table associations
+
+                                    # Remove all table elements since we've already extracted them
+                                    for table_elem in main_content_for_text.find_all('table'):
+                                        table_elem.decompose()
+
+                                    # Extract all paragraphs and divs (preserves structure, INCLUDES FIRST PARAGRAPH)
+                                    all_paras = main_content_for_text.find_all(['p', 'div'], recursive=True)
+                                    i = 0
+                                    while i < len(all_paras):
+                                        para = all_paras[i]
+                                        # Skip if inside a table (already extracted)
+                                        if para.find_parent('table'):
+                                            i += 1
+                                            continue
+
+                                        # Skip if it's a heading (already extracted)
+                                        if para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                                            i += 1
+                                            continue
+
+                                        # Get text from this paragraph (links already converted to markdown, INCLUDING EMAILS)
+                                        para_text = para.get_text(separator=' ', strip=True)
+                                        if para_text and len(para_text.strip()) > 2:
+                                            # Normalize whitespace but keep structure
+                                            para_text = re.sub(r'\s+', ' ', para_text, flags=re.UNICODE).strip()
+
+                                            # GENERAL: Merge contact info split across multiple short paragraphs
+                                            # Contact info is often split like: "Name (pronouns)" -> "Title" -> "T. phone" -> "E. email"
+                                            # If paragraph has name pattern but no contact info, merge with next short paragraphs until contact info is found
+                                            if para_text and re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', para_text) and not re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', para_text, re.I):
+                                                merged = para_text
+                                                j = i + 1
+                                                # Merge up to 5 consecutive short paragraphs
+                                                while j < len(all_paras) and j - i <= 5:
+                                                    next_para = all_paras[j]
+                                                    if next_para.find_parent('table') or next_para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                                                        break
+                                                    next_text = next_para.get_text(separator=' ', strip=True)
+                                                    if next_text and len(next_text.strip()) > 2:
+                                                        next_text = re.sub(r'\s+', ' ', next_text, flags=re.UNICODE).strip()
+                                                        # Stop if next paragraph is another name
+                                                        if re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', next_text):
+                                                            break
+                                                        # Merge short paragraphs (< 80 chars) or paragraphs with contact info
+                                                        if len(next_text) < 80 or re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', next_text, re.I):
+                                                            merged = f"{merged} {next_text}"
+                                                            j += 1
+                                                            # Stop if we found contact info
+                                                            if re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', merged, re.I):
+                                                                break
+                                                        else:
+                                                            break
+                                                    else:
+                                                        j += 1
+                                                para_text = merged
+                                                i = j  # Skip merged paragraphs
+                                            else:
+                                                i += 1
+
+                                            # Skip if it's just a URL or navigation
+                                            if not re.match(r'^URL:\s*https?://', para_text, re.IGNORECASE):
+                                                if not re.match(r'^Breadcrumb\s+Navigation', para_text, re.IGNORECASE):
+                                                    # Skip navigation/footer patterns
+                                                    nav_keywords = ['data privacy', 'declaration of accessibility', 'impressum', 
+                                                                   'datenschutz', 'cookie policy', 'accessibility statement']
+                                                    if not any(keyword in para_text.lower() for keyword in nav_keywords):
+                                                        lines.append(para_text)
+                                        else:
+                                            i += 1
+
+                                    # If no paragraphs found, fall back to line-by-line extraction
+                                    if not lines:
+                                        text = main_content_for_text.get_text(separator='\n', strip=True)
+                                        lines = [l for l in text.split('\n') if l.strip() and len(l.strip()) > 2]
+
+                                    text = '\n'.join(lines)
+
+
+                                    # SIMPLIFIED: Basic filtering - only remove obvious noise
+                                    # Keep all content, including first paragraph and emails
+                                    lines = text.split('\n')
+                                    filtered_lines = []
+                                    seen_lines = set()  # Track seen lines to avoid duplicates
+
+                                    # Collect content from tables to filter duplicates
+                                    # This includes: research areas, parameter names, table headers, table cell content
+                                    table_content_signatures = set()
+                                    research_areas_in_tables = set()
+
+                                    if html_fallback_tables:
+                                        # Extract all table cell content as signatures for deduplication
+                                        # Split by table rows and cells
+                                        table_lines = html_fallback_tables.split('\n')
+                                        for line in table_lines:
+                                            line_stripped = line.strip()
+                                            if not line_stripped or '|' not in line_stripped:
+                                                continue
+
+                                            # Extract individual cells from table row
+                                            cells = [c.strip() for c in line_stripped.split('|') if c.strip() and not c.strip().startswith('---')]
+                                            for cell in cells:
+                                                cell_normalized = re.sub(r'\s+', ' ', cell.lower()).strip()
+                                                if cell_normalized and len(cell_normalized) > 2:
+                                                    table_content_signatures.add(cell_normalized)
+
+                                                    # Also extract individual words/phrases from cells for more aggressive matching
+                                                    # This helps catch research areas, parameter names, etc. that appear as standalone lines
+                                                    words = cell_normalized.split()
+                                                    for word in words:
+                                                        if len(word) > 3:  # Only meaningful words
+                                                            table_content_signatures.add(word)
+
+                                                    # Extract phrases (2-4 word combinations) for better matching
+                                                    # This catches "Electron energy", "Fermi, Group Leader IceCube", etc.
+                                                    if len(words) >= 2:
+                                                        # 2-word phrases
+                                                        for i in range(len(words) - 1):
+                                                            phrase = ' '.join(words[i:i+2])
+                                                            if len(phrase) > 5:
+                                                                table_content_signatures.add(phrase)
+                                                        # 3-word phrases (for longer research areas)
+                                                        if len(words) >= 3:
+                                                            for i in range(len(words) - 2):
+                                                                phrase = ' '.join(words[i:i+3])
+                                                                if len(phrase) > 8:
+                                                                    table_content_signatures.add(phrase)
+                                                        # 4-word phrases (for very long research areas)
+                                                        if len(words) >= 4:
+                                                            for i in range(len(words) - 3):
+                                                                phrase = ' '.join(words[i:i+4])
+                                                                if len(phrase) > 12:
+                                                                    table_content_signatures.add(phrase)
+
+                                        # Extract research area patterns from table content
+                                        # Common patterns: "IceCube", "IceCube, Radio", "Fermi, Group Leader IceCube", etc.
+                                        research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
+                                        research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
+                                        research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
+
+                                        # Extract complete research area lines from table rows
+                                        for line in table_lines:
+                                            line_stripped = line.strip()
+                                            # If line is a research area (contains known keywords and is short)
+                                            if (any(keyword.lower() in line_stripped.lower() for keyword in ['IceCube', 'Radio', 'Fermi', 'Baikal', 'Tunka']) 
+                                                and len(line_stripped) < 100 
+                                                and '|' not in line_stripped):
+                                                research_areas_in_tables.add(line_stripped)
+
+                                        # Extract research areas from table cell content (more comprehensive)
+                                        cell_pattern = r'([^|]*?(?:IceCube|Radio|Fermi|Baikal|Tunka)[^|]*)'
+                                        cell_matches = re.findall(cell_pattern, html_fallback_tables, re.IGNORECASE)
+                                        for match in cell_matches:
+                                            research_part = re.search(r'(?:Location:\s*[^,]+,\s*)?([^,]*?(?:IceCube|Radio|Fermi|Baikal|Tunka)[^,]*?)(?:\s*\||\s*$)', match, re.IGNORECASE)
+                                            if research_part:
+                                                research_text = research_part.group(1).strip()
+                                                if len(research_text) < 100 and research_text:
+                                                    research_areas_in_tables.add(research_text)
+
+                                    # SIMPLIFIED FILTERING: Keep all content, only remove obvious noise
+                                    for line in lines:
+                                        line_stripped = line.strip()
+
+                                        # Skip empty lines
+                                        if not line_stripped:
+                                            continue
+
+                                        # Issue #4: Drop empty/separator-only table rows that leaked into text
+                                        # (e.g. "---|---" or "|   |")
+                                        if re.match(r'^\s*\|?\s*(---|—|–)\s*(\|\s*(---|—|–)\s*)+\|?\s*$', line_stripped):
+                                            continue
+                                        if line_stripped.startswith('|') and line_stripped.replace('|', '').strip() == '':
+                                            continue
+
+                                        # Only remove obvious noise:
+                                        # 1. URL header duplicates
+                                        if re.match(r'^URL:\s*https?://', line_stripped, re.IGNORECASE):
+                                            continue
+                                        if re.match(r'^Breadcrumb\s+Navigation', line_stripped, re.IGNORECASE):
+                                            continue
+                                        # 2. Lines that are just bare URLs (no text)
+                                        if re.match(r'^https?://[^\s]+$', line_stripped):
+                                            continue
+                                        # 3. Very short lines (< 3 chars) that aren't headings
+                                        if len(line_stripped) < 3 and not line_stripped.startswith('#'):
+                                            continue
+                                        # 4. Exact duplicates (keep first occurrence)
+                                        line_signature = re.sub(r'\s+', ' ', line_stripped.lower()).strip()
+                                        if line_signature in seen_lines:
+                                            continue
+                                        seen_lines.add(line_signature)
+
+                                        # Keep everything else (including first paragraph, emails, all content)
+                                        filtered_lines.append(line)
+
+                                    text = '\n'.join(filtered_lines)
+
+                                    # Apply enhanced duplication detection
+                                    lines_list = text.split('\n')
+                                    duplicates = detect_enhanced_repetition(lines_list)
+
+                                    # Remove duplicate lines (keep first occurrence)
+                                    deduplicated_lines = []
+                                    for i, line in enumerate(lines_list):
+                                        if i not in duplicates:
+                                            deduplicated_lines.append(line)
+
+                                    text = '\n'.join(deduplicated_lines)
+
+                                    # Clean markdown link syntax (remove whitespace from links)
+                                    text = clean_markdown_links_post_process(text)
+
+                                    # If text is still very short, try getting from entire body (but apply same filtering)
+                                    # RELAXED: Lower threshold from 100 to 50, and check for contact info
+                                    text_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', text))
+                                    if len(text.strip()) < 50 and not text_has_contact:
+                                        body_text = soup.find('body')
+                                        if body_text:
+                                            body_text_clean = body_text.get_text(separator='\n', strip=True)
+                                            # Apply same filtering to body text
+                                            body_lines = body_text_clean.split('\n')
+                                            filtered_body_lines = []
+                                            for line in body_lines:
+                                                line_stripped = line.strip()
+                                                if not line_stripped:
+                                                    continue
+
+                                                # RELAXED: Check for contact info FIRST - always keep it
+                                                has_contact_pattern = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)|\b[A-Z][a-z]+\s+[A-Z][a-z]+.*(Head|Manager|Leader|Trainer|Recruitment)', line_stripped))
+                                                if has_contact_pattern:
+                                                    filtered_body_lines.append(line)
+                                                    continue
+
+                                                if len(line_stripped) < 2:  # RELAXED: from 3 to 2
+                                                    continue
+                                                if line_stripped.count('](') > 8:  # RELAXED: from 5 to 8
+                                                    continue
+                                                if re.match(r'^https?://[^\s]+$', line_stripped) or (line_stripped.count('/') > 8 and 'http' in line_stripped):  # RELAXED
+                                                    continue
+                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.2:  # RELAXED: from 0.3 to 0.2
+                                                    continue
+                                                filtered_body_lines.append(line)
+                                            body_text_filtered = '\n'.join(filtered_body_lines)
+                                            if len(body_text_filtered) > len(text):
+                                                text = body_text_filtered
+                                                print(f"[DEBUG] Using filtered body text ({len(text)} chars)")
+
+                                    # Combine tables and text
+                                    # IMPORTANT: If we extracted tables from HTML fallback, use them
+                                    # Store tables separately so they don't get filtered out
+                                    #
+                                    # Tables are extracted by Crawl4AI - no need for DOM-order extraction
+                                    # html_fallback_tables is empty since we're using Crawl4AI tables
+
+                                    # RELAXED: Check for contact info in text - if present, use it even if short
+                                    if True:
+                                        text_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', text))
+                                        if text and (len(text.strip()) > 30 or text_has_contact):  # RELAXED: from 50 to 30, or if has contact info
+                                            # Don't add URL header here - it will be added later
+                                            markdown_content = text
+                                            print(f"[INFO] Extracted content directly from HTML ({len(text)} chars, {len(html_tables_found) if 'html_tables_found' in locals() else 0} tables)")
+                                    else:
+                                        # Last resort: try to get ANY text from the page
+                                        print(f"[WARNING] Extracted text too short ({len(text)} chars) - trying full page extraction")
+                                        full_page_text = soup.get_text(separator='\n', strip=True)
+                                        # RELAXED: Lower threshold and check for contact info
+                                        full_page_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', full_page_text))
+                                        if full_page_text and (len(full_page_text.strip()) > 50 or full_page_has_contact):  # RELAXED: from 100 to 50
+                                            # Apply aggressive filtering to remove navigation/UI noise
+                                            lines = full_page_text.split('\n')
+                                            filtered_lines = []
+                                            for line in lines:
+                                                line_stripped = line.strip()
+                                                if not line_stripped:
+                                                    continue
+
+                                                # RELAXED: Check for contact info FIRST - always keep it
+                                                has_contact_pattern = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)|\b[A-Z][a-z]+\s+[A-Z][a-z]+.*(Head|Manager|Leader|Trainer|Recruitment)', line_stripped))
+                                                if has_contact_pattern:
+                                                    filtered_lines.append(line)
+                                                    continue
+
+                                                if len(line_stripped) < 2:  # RELAXED: from 5 to 2
+                                                    continue
+                                                if line_stripped.count('](') > 8:  # RELAXED: from 5 to 8
+                                                    continue
+                                                if re.match(r'^https?://[^\s]+$', line_stripped) or (line_stripped.count('/') > 8 and 'http' in line_stripped):  # RELAXED
+                                                    continue
+                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.2:  # RELAXED: from 0.3 to 0.2
+                                                    continue
+                                                if len(line_stripped.split()) == 1 and line_stripped.isupper() and len(line_stripped) < 10:  # RELAXED: only short all-caps
+                                                    continue
+                                                filtered_lines.append(line)
+                                            meaningful_text = '\n'.join(filtered_lines)
+                                            # RELAXED: Lower threshold and check for contact info
+                                            meaningful_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', meaningful_text))
+                                            if len(meaningful_text) > 30 or meaningful_has_contact:  # RELAXED: from 100 to 30
+                                                # Don't add URL header here - it will be added later
+                                                markdown_content = meaningful_text
+                                                print(f"[INFO] Extracted filtered full page content ({len(meaningful_text)} chars)")
+                                        else:
+                                            print(f"[WARNING] Page appears to be empty or content is loaded via JavaScript/iframe")
+                                            print(f"[WARNING] HTML length: {len(result.html) if hasattr(result, 'html') and result.html else 0} chars")
+                                # If main_content was not found, extract text from body/soup
+                                # (Tables are already extracted above, regardless of main_content)
+                                if not main_content:
+                                    print(f"[WARNING] Could not find main content area in HTML - extracting text from body directly")
+                                    # Tables are already extracted above, so we just need to extract text
+
+                                    # Try to get text from entire body as last resort
+                                    body = soup.find('body')
+                                    if body:
+                                        body_text = body.get_text(separator='\n', strip=True)
+                                        if body_text and len(body_text.strip()) > 100:
+                                            # Apply aggressive filtering to remove navigation/UI noise
+                                            body_lines = body_text.split('\n')
+                                            filtered_body_lines = []
+                                            # Collect research areas from tables to filter duplicates
+                                            research_areas_in_tables = set()
+                                            if html_fallback_tables:
+                                                research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
+                                                research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
+                                                research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
+
+                                            for line in body_lines:
+                                                line_stripped = line.strip()
+                                                if not line_stripped or len(line_stripped) < 5:
+                                                    continue
+                                                if line_stripped.count('](') > 5:
+                                                    continue
+                                                if re.match(r'^https?://', line_stripped) or line_stripped.count('/') > 5:
+                                                    continue
+                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.3:
+                                                    continue
+                                                if len(line_stripped.split()) == 1 and line_stripped.isupper():
+                                                    continue
+                                                # Skip dropdown content: lines with many consecutive capitalized abbreviations
+                                                abbrev_pattern = re.compile(r'\b[A-Z]{2,}(?:[-_][A-Z0-9]{2,})+\b')
+                                                abbrev_matches = abbrev_pattern.findall(line_stripped)
+                                                if len(abbrev_matches) > 10 and len(line_stripped) > 100:
+                                                    continue
+                                                # Skip research area lines that are already in tables
+                                                if research_areas_in_tables:
+                                                    line_lower = line_stripped.lower()
+                                                    for research_area in research_areas_in_tables:
+                                                        if research_area.lower() in line_lower and len(line_stripped) < 100:
+                                                            continue
+                                                filtered_body_lines.append(line)
+                                            meaningful_body_text = '\n'.join(filtered_body_lines)
+                                            # Combine with tables, but avoid duplication
+                                            if html_fallback_tables and html_fallback_tables.strip() not in meaningful_body_text:
+                                                meaningful_body_text = html_fallback_tables + "\n\n" + meaningful_body_text
+                                            if len(meaningful_body_text) > 100:
+                                                # Don't add URL header here - it will be added later
+                                                markdown_content = meaningful_body_text
+                                                print(f"[INFO] Extracted filtered body content as fallback ({len(meaningful_body_text)} chars)")
+                                    else:
+                                        # Absolute last resort: get any text from soup
+                                        all_text = soup.get_text(separator='\n', strip=True)
+                                        if all_text and len(all_text.strip()) > 100:
+                                            # Apply aggressive filtering
+                                            lines = all_text.split('\n')
+                                            filtered_lines = []
+                                            # Collect research areas from tables to filter duplicates
+                                            research_areas_in_tables = set()
+                                            if html_fallback_tables:
+                                                research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
+                                                research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
+                                                research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
+
+                                            for line in lines:
+                                                line_stripped = line.strip()
+                                                if not line_stripped or len(line_stripped) < 5:
+                                                    continue
+                                                if line_stripped.count('](') > 5:
+                                                    continue
+                                                if re.match(r'^https?://', line_stripped) or line_stripped.count('/') > 5:
+                                                    continue
+                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.3:
+                                                    continue
+                                                if len(line_stripped.split()) == 1 and line_stripped.isupper():
+                                                    continue
+                                                # Skip dropdown content: lines with many consecutive capitalized abbreviations
+                                                abbrev_pattern = re.compile(r'\b[A-Z]{2,}(?:[-_][A-Z0-9]{2,})+\b')
+                                                abbrev_matches = abbrev_pattern.findall(line_stripped)
+                                                if len(abbrev_matches) > 10 and len(line_stripped) > 100:
+                                                    continue
+                                                # Skip research area lines that are already in tables
+                                                if research_areas_in_tables:
+                                                    line_lower = line_stripped.lower()
+                                                    for research_area in research_areas_in_tables:
+                                                        if research_area.lower() in line_lower and len(line_stripped) < 100:
+                                                            continue
+                                                filtered_lines.append(line)
+                                            meaningful_all_text = '\n'.join(filtered_lines)
+                                            # Combine with tables, but avoid duplication
+                                            if html_fallback_tables and html_fallback_tables.strip() not in meaningful_all_text:
+                                                meaningful_all_text = html_fallback_tables + "\n\n" + meaningful_all_text
+                                            if len(meaningful_all_text) > 100:
+                                                # Don't add URL header here - it will be added later
+                                                markdown_content = meaningful_all_text
+                                                print(f"[INFO] Extracted filtered all page text as last resort ({len(meaningful_all_text)} chars)")
+                        except Exception as e:
+                            print(f"[WARNING] Failed to extract from HTML: {e}")
+                            import traceback
+                            traceback.print_exc()
+        else:
+            # Fallback if markdown is just a string
+            markdown_content = result.markdown or ""
+
+    # ============================================================
+
+    return markdown_content
+
+
+def _final_memory_cleanup(state, results_metadata):
+    """Save final checkpoint and aggressively free memory after processing."""
+    print(f"[MEMORY] Starting final cleanup after processing {state.pages_processed} pages...")
+    print(f"[MEMORY] Preserved lightweight metadata for {len(results_metadata)} results (heavy data freed)")
+    total_html_bytes = sum(m.get('html_length', 0) for m in results_metadata)
+    total_md_bytes = sum(m.get('markdown_length', 0) for m in results_metadata)
+    print(f"[MEMORY] Freed approximately {(total_html_bytes + total_md_bytes) / (1024*1024):.1f} MB of HTML+markdown data")
+    final_checkpoint_data = state.to_checkpoint()
+    if save_checkpoint(final_checkpoint_data):
+        print(f"[CHECKPOINT] Final checkpoint saved: {state.pages_processed} total pages processed")
+    state.total_results_crawled = len(state.all_results)
+    print(f"[MEMORY] Clearing {state.total_results_crawled} result objects from memory...")
+    state.all_results = None
+    state.crawled_urls_with_depth = None
+    state.additional_urls_with_depth = None
+    state.crawled_urls_with_depth_merged = None
+    state.additional_urls_with_depth_merged = None
+    import gc
+    gc.collect()
+    _clear_soup_cache()
+    print(f"[MEMORY] Memory cleanup complete - freed {state.total_results_crawled} result objects")
+
+
+def _save_error_log_and_exit_checkpoint(state):
+    """Save the error log to disk and optionally save a checkpoint on exit/interrupt."""
+    import json as json_module
+    try:
+        timeout_errors = [e for e in state.all_errors if e.get('is_timeout', False)]
+        other_errors = [e for e in state.all_errors if not e.get('is_timeout', False)]
+        crawled_count = (
+            state.total_results_crawled
+            if state.total_results_crawled > 0
+            else (len(state.all_results) if state.all_results else 0)
+        )
+        error_log = {
+            'timestamp': datetime.now().isoformat(),
+            'total_errors': len(state.all_errors),
+            'total_successful': len(state.all_successful_urls),
+            'total_crawled': crawled_count,
+            'timeout_errors': len(timeout_errors),
+            'other_errors': len(other_errors),
+            'timeout_urls': [
+                {'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')}
+                for e in timeout_errors
+            ],
+            'errors': state.all_errors,
+        }
+        ERROR_LOG_FILE.write_text(json_module.dumps(error_log, indent=2), encoding="utf-8")
+        if state.all_errors:
+            print(f"\n[ERROR LOG] Saved {len(state.all_errors)} errors to {ERROR_LOG_FILE}")
+    except Exception as log_error:
+        print(f"\n[WARNING] Failed to save error log: {log_error}")
+
+    # Save checkpoint on exit (interrupt/time limit) so a new job can resume.
+    # Skip if memory cleanup already ran (fields are None) — final checkpoint was
+    # already saved in the main flow; re-saving would overwrite valid data with None.
+    try:
+        if state.crawled_urls_with_depth is not None or state.additional_urls_with_depth is not None:
+            checkpoint_data = state.to_checkpoint()
+            if save_checkpoint(checkpoint_data):
+                print(f"[CHECKPOINT] Checkpoint saved on exit (interrupt/time limit)")
+        else:
+            print(f"[CHECKPOINT] Skipped — memory cleanup already ran; final checkpoint was saved earlier")
+    except Exception as cp_error:
+        print(f"\n[WARNING] Failed to save checkpoint on exit: {cp_error}")
+
+
+def _process_result_worker(work_item):
+    """Module-level worker for ProcessPoolExecutor (Issue 3 fix).
+
+    Runs the CPU-heavy per-result pipeline in a separate process:
+    markdown extraction, table/image extraction, cleanup, file write.
+
+    Receives a plain dict (picklable) with all needed data.
+    Returns a lightweight result dict for the main process to merge into state.
+    """
+    import types as _types
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+    import traceback as _tb
+
+    try:
+        # Reconstruct result proxy from plain dict
+        if work_item['markdown_is_object']:
+            md_proxy = _types.SimpleNamespace(
+                fit_markdown=work_item['markdown_fit'],
+                raw_markdown=work_item['markdown_raw'],
+            )
+        else:
+            md_proxy = work_item['markdown_str']
+
+        result = _types.SimpleNamespace(
+            html=work_item['html'],
+            url=work_item['url'],
+            markdown=md_proxy,
+            metadata=work_item['metadata'],
+            redirected_url=work_item['redirected_url'],
+            success=work_item['success'],
+            tables=work_item['tables'],
+            media=work_item['media'],
+            cleaned_html=work_item['cleaned_html'],
+            error_message=work_item['error_message'],
+        )
+
+        result_is_pdf = work_item['result_is_pdf']
+        depth_str = work_item['depth_str']
+        final_url = work_item['final_url']
+        original_url = work_item['original_url']
+        url_entry = work_item['url_entry']
+        filename = _Path(work_item['filename'])
+        bs_available = work_item['bs_available']
+        pdf_support = work_item['pdf_support']
+
+        # --- Heavy pipeline ---
+        markdown_content = ""
+        tables_markdown = ""
+        if hasattr(result, "markdown") or (hasattr(result, "html") and result.html):
+            markdown_content = _resolve_markdown_content(result, result_is_pdf)
+
+        # Inject links into markdown tables
+        if markdown_content and not result_is_pdf and result.html and bs_available:
+            try:
+                markdown_content = inject_links_into_markdown_tables(markdown_content, result.html)
+            except Exception:
+                pass
+
+        # Check for crawl errors
+        if hasattr(result, 'success') and not result.success:
+            error_msg = getattr(result, 'error_message', 'Unknown error')
+            return {
+                'saved': False, 'is_error': True, 'url': result.url,
+                'error': {'url': result.url, 'error': error_msg,
+                          'timestamp': _dt.now().isoformat()},
+            }
+
+        # Extract tables and images
+        tables_markdown, image_refs_markdown = _content_extraction.extract_tables_and_images(
+            result, result_is_pdf, pdf_support
+        )
+
+        # Build content_to_save
+        source_url_for_header = None
+        try:
+            if final_url and isinstance(final_url, str) and final_url.strip():
+                source_url_for_header = final_url.strip()
+        except Exception:
+            pass
+        if not source_url_for_header:
+            if result.url:
+                url_val = result.url
+                if isinstance(url_val, str) and url_val.strip():
+                    source_url_for_header = url_val.strip()
+                else:
+                    source_url_for_header = str(url_val) if url_val else "Unknown URL"
+            else:
+                source_url_for_header = "Unknown URL"
+        if not source_url_for_header or not source_url_for_header.strip():
+            source_url_for_header = "Unknown URL"
+
+        url_header = f"# Source URL\n\n{source_url_for_header}\n\n"
+
+        if markdown_content or tables_markdown or image_refs_markdown:
+            if markdown_content:
+                markdown_content = _markdown_cleanup.clean_raw_markdown(markdown_content, result.url)
+
+        content_to_save = url_header
+        text_only_content = ""
+
+        if tables_markdown:
+            if markdown_content:
+                text_only_content = _markdown_cleanup.deduplicate_markdown_against_tables(
+                    markdown_content, tables_markdown,
+                    result.url, result.html
+                )
+            content_to_save += tables_markdown
+            if text_only_content:
+                content_to_save += "\n\n" + text_only_content
+        else:
+            if markdown_content:
+                content_to_save += markdown_content
+
+        if image_refs_markdown:
+            content_to_save += image_refs_markdown
+
+        # External links
+        if not result_is_pdf and result.html:
+            external_links_markdown = extract_external_links(result.html, result.url)
+            if external_links_markdown:
+                content_to_save += external_links_markdown
+
+        # Fill empty Name columns and post-process
+        content_to_save = _markdown_cleanup.fill_empty_name_columns(content_to_save)
+        content_to_save = _markdown_cleanup.post_process_markdown(content_to_save, tables_markdown)
+
+        # Skip empty pages
+        if _markdown_cleanup.is_empty_page(content_to_save):
+            return {'saved': False, 'is_empty': True,
+                    'url': final_url or original_url}
+
+        # Write file
+        filename.parent.mkdir(exist_ok=True)
+        filename.write_text(content_to_save, encoding="utf-8")
+
+        # Collect return data
+        num_tables = len(result.tables) if result.tables else 0
+        file_type = "PDF" if result_is_pdf else "HTML"
+
+        pdf_info = []
+        if result_is_pdf and pdf_support and result.metadata:
+            if result.metadata.get('title'):
+                pdf_info.append(f"Title: {result.metadata.get('title')}")
+            if result.metadata.get('author'):
+                pdf_info.append(f"Author: {result.metadata.get('author')}")
+
+        metadata = _checkpoint.extract_result_metadata(result)
+
+        return {
+            'saved': True,
+            'url': result.url,
+            'filename': str(filename),
+            'depth_str': depth_str,
+            'url_entry': url_entry,
+            'metadata': metadata,
+            'file_type': file_type,
+            'num_tables': num_tables,
+            'pdf_info': pdf_info,
+            'markdown_len': len(markdown_content) if markdown_content else 0,
+            'final_url': final_url,
+            'original_url': original_url,
+            'result_is_pdf': result_is_pdf,
+        }
+    except Exception as e:
+        return {
+            'saved': False, 'is_error': True,
+            'url': work_item.get('url', 'Unknown URL'),
+            'error': {'url': work_item.get('url', 'Unknown URL'),
+                      'error': f'Exception: {str(e)}',
+                      'traceback': _tb.format_exc(),
+                      'timestamp': _dt.now().isoformat()},
+        }
+
+
+async def _preseed_from_parent_urls(parent_urls):
+    """
+    Fetch a list of parent URLs sequentially and return all child links found in them.
+
+    Each URL is requested with a plain HTTP GET (no browser, no JavaScript) and parsed
+    for <a href> links.  Requests are spaced 1 s apart to avoid bursty load.
+    Links that are anchors, javascript: or mailto: are skipped.  All returned URLs
+    are absolute and deduplicated by their normalised form.
+
+    Any page that cannot be fetched is skipped with a warning; the rest are still
+    processed.  Returns an empty list immediately when parent_urls is empty.
+    """
+    if not parent_urls:
+        return []
+
+    import urllib.request
+    from urllib.parse import urljoin
+    from html.parser import HTMLParser
+
+    class _LinkExtractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.links = []
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                for attr, val in attrs:
+                    if attr == 'href' and val:
+                        self.links.append(val)
+
+    headers = {
+        'User-Agent': CRAWLER_USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+
+    collected = []
+    seen_normalized = set()
+
+    print(f"[PRESEED] Fetching {len(parent_urls)} parent page(s) to discover child links...")
+    for page_url in parent_urls:
+        try:
+            req = urllib.request.Request(page_url, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=15)
+            html_content = resp.read().decode('utf-8', errors='replace')
+            parser = _LinkExtractor()
+            parser.feed(html_content)
+            new_count = 0
+            for raw_href in parser.links:
+                if (not raw_href
+                        or raw_href.startswith('#')
+                        or raw_href.startswith('javascript:')
+                        or raw_href.startswith('mailto:')):
+                    continue
+                abs_url = urljoin(page_url, raw_href)
+                norm = _normalize_url(abs_url)
+                if norm and norm not in seen_normalized:
+                    seen_normalized.add(norm)
+                    collected.append(abs_url)
+                    new_count += 1
+            print(f"[PRESEED]   {page_url} -> {new_count} new links (total: {len(collected)})")
+        except Exception as e:
+            print(f"[PRESEED]   WARNING: Could not fetch {page_url}: {e}")
+        await asyncio.sleep(1)
+
+    print(f"[PRESEED] Collected {len(collected)} unique child URLs from {len(parent_urls)} parent page(s).")
+    return collected
+
+
+async def crawl_site():
+    """
+    Main crawling function that orchestrates the entire crawling process.
     
+    HOW IT WORKS:
+    1. Configure browser with anti-bot and JavaScript support
+    2. Configure the deep crawling strategy (how to follow links)
+    3. Create a crawler instance
+    4. Process each URL in ROOT_URLS list
+    5. Process and save all crawled pages
+    6. Log all errors to a JSON file
+    """
+    import time
+    start_time = time.time()  # Track start time for elapsed time calculation
+    
+    # ========================================================================
+    # DOMAIN-SPECIFIC FILTERING CONFIGURATION
+    # ========================================================================
+    # Strategy: Apply .inactive CSS selectors ONLY to domains where "inactive" 
+    # means "disabled/non-clickable" (semantic meaning). Skip filtering for 
+    # domains where "inactive" is part of structural class naming.
+    #
+    # Verified behavior:
+    # - particle-physics.desy.de: .inactive = truly disabled items (filter ✓)
+    # - cms.desy.de: .inactive = structural class (skip ✗)
+    # - www.desy.de: mostly safe (skip ✗ - conservative approach)
+    
+    # PHASE 2 FIX: Removed DOMAINS_REQUIRING_INACTIVE_FILTERING dict
+    # .inactive selectors now apply universally to all domains
+    # This simplifies code and works for 200k+ diverse URLs without domain-specific tuning
+    
+    # ========================================================================
+    # STEP 1: Initialize Error Tracking and Load Checkpoint
+    # ========================================================================
+    # PHASE 1 FIX: Stream results instead of accumulating in memory
+    # These variables track metadata only - results are processed immediately
+    # and saved to disk, then discarded to prevent memory exhaustion.
+    
+    # Load checkpoint if resuming from previous run
+    checkpoint = load_checkpoint()
+    if checkpoint:
+        print(f"[CHECKPOINT] Resuming from checkpoint with {checkpoint.get('pages_processed', 0)} pages already processed")
+    
+    state = _checkpoint.CrawlState.from_checkpoint(checkpoint)
+    
+    # Clear redirect-resolution cache so we re-check redirects each run
+    global _redirect_resolution_cache
+    _redirect_resolution_cache.clear()
+    
+    # ========================================================================
+    # STEPS 2-4: Build browser config, URL filters, crawl strategy, pipeline
+    # ========================================================================
+    setup = _build_crawl_setup()
+    browser_config = setup.browser_config
+    deep_crawl_strategy = setup.deep_crawl_strategy
+    exclusion_patterns = setup.exclusion_patterns
+    excluded_selector_str = setup.excluded_selector_str
+    INACTIVE_SELECTORS = setup.inactive_selectors
+    markdown_generator = setup.markdown_generator
+    table_extraction_strategy = setup.table_extraction_strategy
+    dedup_enabled = setup.dedup_enabled
+
+    # Reset content dedup tracking for this run
+    state.seen_content_hashes = {}
+    state.duplicate_count = 0
+
     # ========================================================================
     # STEP 5: Initialize and Run the Crawler
     # ========================================================================
@@ -5834,8 +2713,12 @@ async def crawl_site():
             print(f"[START] Processing {len(ROOT_URLS)} URL(s)")
             print(f"[CONFIG] Max depth: {MAX_DEPTH}, Concurrent tasks: {CONCURRENT_TASKS}")
             print("-" * 60)
-            
-            
+
+            # Fetch PRESEED_PARENT_URLS sequentially before BFS starts and collect all
+            # child links from them.  These will be injected into the first seed's crawl
+            # batch so they are always visited, even if their parent pages fail under load.
+            _preseeded_urls = await _preseed_from_parent_urls(PRESEED_PARENT_URLS)
+
             for url_idx, root_url in enumerate(ROOT_URLS, 1):
                 print(f"\n{'='*60}")
                 print(f"[URL {url_idx}/{len(ROOT_URLS)}] Processing: {root_url}")
@@ -5920,7 +2803,7 @@ async def crawl_site():
                 # Note: crawl4ai may apply excluded_tags during link extraction, so we minimize it here
                 link_extraction_excluded_tags = ['script', 'style', 'noscript'] if not is_pdf else None  # Minimal filtering for link extraction
                 
-                config = CrawlerRunConfig(
+                _main_crawl_config = CrawlerRunConfig(
                     # deep_crawl_strategy: Tells crawler to follow links using our strategy
                     deep_crawl_strategy=deep_crawl_strategy,
                     
@@ -5973,7 +2856,10 @@ async def crawl_site():
                     cache_mode='read_write',
                     
                     # verbose: Print progress information while crawling
-                    verbose=False  # Disable verbose mode - reduces log by ~33%
+                    verbose=False,  # Disable verbose mode - reduces log by ~33%
+
+                    # Per-page delay to space requests within arun_many (WebOffice-friendly)
+                    delay_before_return_html=PAGE_DELAY_MS,
                 )
                 
                 # Update crawler's strategy for this URL (if PDF)
@@ -6021,17 +2907,17 @@ async def crawl_site():
                 # GROUP 1 FILTER: Check if URL is a login/auth/admin page before crawling
                 if should_skip_login_auth_url(crawl_url):
                     print(f'[GROUP 1 FILTER] Skipping login/auth/admin URL: {crawl_url}')
-                    group1_skipped_count += 1
-                    duplicate_urls.add(crawl_url)
-                    crawled_urls_with_depth[crawl_url] = (current_depth, "SKIPPED_GROUP1_LOGIN_AUTH")
+                    state.group1_skipped_count += 1
+                    state.duplicate_urls.add(crawl_url)
+                    state.crawled_urls_with_depth[_normalize_url(crawl_url) or crawl_url] = current_depth
                     continue
                 
                 # GROUP 2 FILTER: Check if URL is an error page before crawling
                 if should_skip_error_url(crawl_url):
                     print(f'[GROUP 2 FILTER] Skipping error/maintenance URL: {crawl_url}')
-                    group2_skipped_count += 1
-                    duplicate_urls.add(crawl_url)
-                    crawled_urls_with_depth[crawl_url] = (current_depth, "SKIPPED_GROUP2_ERROR_PAGE")
+                    state.group2_skipped_count += 1
+                    state.duplicate_urls.add(crawl_url)
+                    state.crawled_urls_with_depth[_normalize_url(crawl_url) or crawl_url] = current_depth
                     continue
                 
                 # GROUP 4 FILTER: Check if URL is a duplicate due to query parameter variations
@@ -6040,19 +2926,19 @@ async def crawl_site():
                 # Seed URLs must ALWAYS get full BFS traversal, even if they were seen as
                 # navigation links during an earlier seed's crawl. Without this exemption,
                 # the English homepage (index_eng.html) was skipped because it was discovered
-                # as a nav link from index_ger.html and added to seen_normalized_urls.
+                # as a nav link from index_ger.html and added to state.seen_normalized_urls.
                 is_seed_url = crawl_url in ROOT_URLS or any(_normalize_url(crawl_url) == _normalize_url(seed) for seed in ROOT_URLS)
-                if not is_seed_url and should_skip_query_param_duplicate(crawl_url, seen_normalized_urls):
+                if not is_seed_url and should_skip_query_param_duplicate(crawl_url, state.seen_normalized_urls):
                     print(f'[GROUP 4 FILTER] Skipping query-param duplicate URL: {crawl_url}')
-                    group4_skipped_count += 1
-                    duplicate_urls.add(crawl_url)
-                    crawled_urls_with_depth[crawl_url] = (current_depth, "SKIPPED_GROUP4_QUERY_PARAM_DUPLICATE")
+                    state.group4_skipped_count += 1
+                    state.duplicate_urls.add(crawl_url)
+                    state.crawled_urls_with_depth[_normalize_url(crawl_url) or crawl_url] = current_depth
                     continue
                 
                 # First, crawl the page to get initial results
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
                 try:
-                    results = await crawler.arun(crawl_url, config=config)
+                    results = await crawler.arun(crawl_url, config=_main_crawl_config)
                     
                     # Track progress (replaces verbose output)
                     total_urls_crawled = len(results) if isinstance(results, list) else (1 if results else 0)
@@ -6071,10 +2957,10 @@ async def crawl_site():
                         'timestamp': datetime.now().isoformat(),
                         'note': 'Timeout errors can be retried with PAGE_TIMEOUT_EXTENDED in future runs'
                     }
-                    all_errors.append(error_entry)
+                    state.all_errors.append(error_entry)
                     
                     if is_timeout:
-                        print(f"[TIMEOUT] {crawl_url}")  # Full details in all_errors JSON
+                        print(f"[TIMEOUT] {crawl_url}")  # Full details in state.all_errors JSON
                     else:
                         print(f"[ERROR] {crawl_url}: {error_msg[:50]}")  # Shorter message
                     
@@ -6088,7 +2974,38 @@ async def crawl_site():
                 # This ensures links like "desy.de/desy_in_leichter_sprache/index_ger.html" are crawled
                 # CRITICAL: Only extract additional URLs if MAX_DEPTH > 0 (depth 0 = seed pages only)
                 additional_urls_to_crawl = []
-                
+
+                # PRESEED: On the first seed iteration, inject child URLs gathered from
+                # PRESEED_PARENT_URLS.  Each URL is filtered through the same guards as
+                # any other discovered link (scope, login, exclusion patterns).
+                # Also checks checkpoint seen_final_urls to avoid re-crawling on resume.
+                if url_idx == 1 and _preseeded_urls:
+                    _ps_already_seen = set()
+                    for _ps_r in (results if isinstance(results, list) else [results]):
+                        if _ps_r and getattr(_ps_r, 'url', None):
+                            _ps_n = _normalize_url(_ps_r.url)
+                            if _ps_n:
+                                _ps_already_seen.add(_ps_n)
+                    # Also exclude URLs already saved in a previous run (checkpoint)
+                    _ps_checkpoint_seen = state.seen_final_urls if hasattr(state, 'seen_final_urls') else set()
+                    for _ps_url in _preseeded_urls:
+                        if (not should_skip_login_auth_url(_ps_url)
+                                and _is_allowed_crawl_url(_ps_url)
+                                and not any(re.search(pat, _ps_url) for pat in exclusion_patterns)):
+                            _ps_norm = _normalize_url(_ps_url)
+                            _ps_dedup_key = normalize_url_for_dedup(_ps_norm) if _ps_norm else _ps_norm
+                            if (_ps_norm
+                                    and _ps_norm not in _ps_already_seen
+                                    and _ps_dedup_key not in _ps_checkpoint_seen
+                                    and not should_skip_query_param_duplicate(_ps_url, state.seen_normalized_urls)):
+                                additional_urls_to_crawl.append(_ps_url)
+                    if additional_urls_to_crawl:
+                        print(f"[PRESEED] Injected {len(additional_urls_to_crawl)} pre-seeded URLs into crawl queue")
+
+                # Track how many preseed URLs were injected so we can exempt them
+                # from the [:100] batch cap applied to regular HTML-extracted links.
+                _n_preseed_injected = len(additional_urls_to_crawl)
+
                 if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
                     try:
                         from urllib.parse import urljoin, urlparse
@@ -6112,6 +3029,7 @@ async def crawl_site():
                         
                         # Extract ALL links from HTML (including nav/footer/header)
                         all_links = soup.find_all('a', href=True)
+                        _redirect_candidates = []
                         
                         for link in all_links:
                             href = link.get('href', '').strip()
@@ -6146,112 +3064,125 @@ async def crawl_site():
                             
                             parsed = urlparse(absolute_url)
                             
-                            # Only include internal links (same domain, no www mismatch)
+                            # Only include links inside the configured crawl scope.
                             link_domain = _normalize_domain(parsed.netloc)
-                            if link_domain == base_domain:
+                            if link_domain == base_domain and _is_allowed_crawl_url(absolute_url):
                                 # Never queue links to excluded domains (fater.desy.de, bib-pubdb1.desy.de)
                                 if link_domain in EXCLUDED_DOMAINS:
                                     continue
                                 # CRITICAL FIX: Keep original URL for crawling (don't normalize)
                                 normalized_link = _normalize_url(absolute_url)
                                 if normalized_link not in seen_urls:
-                                    # Resolve redirect: do not queue if URL redirects to excluded host (avoid fetching them)
-                                    if CHECK_REDIRECTS_TO_EXCLUDED:
-                                        final_host = await _resolve_redirect_final_host(absolute_url)
-                                        if final_host is not None and final_host in EXCLUDED_DOMAINS:
-                                            continue
-                                    # Store original URL (with www if present) for actual crawling
-                                    # GROUP 4 FILTER: Skip if URL is a UI-param duplicate of an already-seen URL.
-                                    # Catches @@siteview?printversion=1 and similar Plone parameterized URLs
-                                    # that BFS queues internally but should be deduplicated here before crawling.
-                                    if should_skip_query_param_duplicate(absolute_url, seen_normalized_urls):
+                                    # GROUP 4 FILTER: Skip UI-param duplicates (@@siteview?printversion=1, etc.)
+                                    if should_skip_query_param_duplicate(absolute_url, state.seen_normalized_urls):
                                         continue
                                     # FIX (Issues 6, 7, 8): Apply exclusion_patterns to additional_urls path.
-                                    # BFS filter_chain only guards the BFS-internal link queue; URLs queued
-                                    # via additional_urls_to_crawl bypass it entirely. Applying the same
-                                    # list here blocks printversion, RSS, logoff, and login URLs.
                                     if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
                                         continue
-                                    additional_urls_to_crawl.append(absolute_url)
-                                    seen_urls.add(normalized_link)  # Use normalized for deduplication
+                                    _redirect_candidates.append((absolute_url, normalized_link))
+                                    seen_urls.add(normalized_link)  # reserve early to avoid duplicates
                         
-                        # Crawl additional URLs found in HTML but missed by crawl4ai's link extraction
-                        if additional_urls_to_crawl:
-                            
-                            
-                            # Crawl each additional URL individually (they'll be at depth 1)
-                            # Limit to reasonable number to avoid excessive crawling
-                            # Create a config without deep_crawl_strategy to crawl single pages only
-                            # These URLs should be crawled at depth 1 (single page, no link following)
-                            single_page_config = CrawlerRunConfig(
-                                page_timeout=PAGE_TIMEOUT,
-                                wait_until='networkidle' if not is_pdf else None,
-                                scraping_strategy=scraping_strategy,
-                                table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
-                                markdown_generator=markdown_generator if not is_pdf else None,
-                                excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'] if not is_pdf else None,
-                                excluded_selector=excluded_selector_str if not is_pdf else None,
-                                word_count_threshold=5 if not is_pdf else None,
-                                remove_forms=True if not is_pdf else None,
-                                cache_mode='read_write',  # Enable caching for faster resumption
-                                locale=FORCE_LOCALE,
-                                verbose=True
-                                # NOTE: No deep_crawl_strategy - this ensures single page crawl only
+                        # Batch-resolve redirect checks for all link candidates (asyncio.gather)
+                        if CHECK_REDIRECTS_TO_EXCLUDED and _redirect_candidates:
+                            _hosts = await asyncio.gather(
+                                *[_resolve_redirect_final_host(u) for u, _ in _redirect_candidates],
+                                return_exceptions=True
                             )
-                            
-                            # ========================================================
-                            # Single-page URL crawling - PARALLEL with arun_many
-                            # ========================================================
-                            urls_to_crawl_batch = additional_urls_to_crawl[:100]
-                            
-                            # Pre-filter login/auth URLs before batch crawling
-                            filtered_urls_batch = []
-                            for additional_url in urls_to_crawl_batch:
-                                if should_skip_login_auth_url(additional_url):
-                                    print(f'[GROUP 1 FILTER] Skipping login/auth URL (additional): {additional_url}')
-                                    continue
-                                filtered_urls_batch.append(additional_url)
-                            
-                            if filtered_urls_batch:
-                                print(f"[INFO] Crawling {len(filtered_urls_batch)} single-page URLs with arun_many (parallel)")
-                                try:
-                                    # PERFORMANCE FIX: Use arun_many for parallel batch crawling
-                                    batch_results = await crawler.arun_many(filtered_urls_batch, config=single_page_config)
-                                    
-                                    # Process all batch results
-                                    for additional_result in batch_results:
-                                        if isinstance(additional_result, list):
-                                            all_results.extend(additional_result)
-                                        elif additional_result:
-                                            all_results.append(additional_result)
-                                except Exception as e:
-                                    # Fallback: log batch error
-                                    error_msg = str(e)
-                                    is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
-                                    
-                                    error_entry = {
-                                        'url': 'batch_crawl_additional_urls',
-                                        'error': error_msg,
-                                        'error_type': type(e).__name__,
-                                        'is_timeout': is_timeout,
-                                        'timestamp': datetime.now().isoformat(),
-                                        'note': 'Batch crawl failed - some URLs may not have been processed'
-                                    }
-                                    all_errors.append(error_entry)
+                            for (_cand_url, _cand_norm), _host in zip(_redirect_candidates, _hosts):
+                                if isinstance(_host, Exception) or _host is None or _host not in EXCLUDED_DOMAINS:
+                                    additional_urls_to_crawl.append(_cand_url)
+                        else:
+                            additional_urls_to_crawl.extend(u for u, _ in _redirect_candidates)
                     except Exception as e:
-                        # Log error but continue
+                        # HTML link extraction failed — log but continue (preseed URLs still queued)
                         pass
+
+                # Crawl additional URLs (preseed + HTML-extracted) — runs even if first_result was None.
+                # The [:100] cap applies only to HTML-extracted links; all preseed URLs are kept.
+                if additional_urls_to_crawl:
+                    _html_extracted = additional_urls_to_crawl[_n_preseed_injected:]
+                    urls_to_crawl_batch = additional_urls_to_crawl[:_n_preseed_injected] + _html_extracted[:100]
+                    
+                    single_page_config = CrawlerRunConfig(
+                        page_timeout=PAGE_TIMEOUT,
+                        wait_until='networkidle' if not is_pdf else None,
+                        scraping_strategy=scraping_strategy,
+                        table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
+                        markdown_generator=markdown_generator if not is_pdf else None,
+                        excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style', 'noscript', 'select', 'option'] if not is_pdf else None,
+                        excluded_selector=excluded_selector_str if not is_pdf else None,
+                        word_count_threshold=5 if not is_pdf else None,
+                        remove_forms=True if not is_pdf else None,
+                        cache_mode='read_write',
+                        locale=FORCE_LOCALE,
+                        verbose=True,
+                        delay_before_return_html=PAGE_DELAY_MS,
+                        # NOTE: No deep_crawl_strategy - this ensures single page crawl only
+                    )
+                    
+                    # Pre-filter login/auth URLs before batch crawling
+                    filtered_urls_batch = []
+                    for additional_url in urls_to_crawl_batch:
+                        if should_skip_login_auth_url(additional_url):
+                            print(f'[GROUP 1 FILTER] Skipping login/auth URL (additional): {additional_url}')
+                            continue
+                        filtered_urls_batch.append(additional_url)
+                    
+                    if filtered_urls_batch:
+                        print(f"[INFO] Crawling {len(filtered_urls_batch)} single-page URLs with arun_many (parallel)")
+                        try:
+                            _dispatcher = MemoryAdaptiveDispatcher(
+                                rate_limiter=RateLimiter(
+                                    base_delay=(1.0, 3.0), max_delay=60.0,
+                                    max_retries=3, rate_limit_codes=[429]
+                                )
+                            )
+                            batch_results = await crawler.arun_many(filtered_urls_batch, config=single_page_config, dispatcher=_dispatcher)
+                            
+                            def _passes_exclusion(url):
+                                return not any(re.search(p, url) for p in exclusion_patterns)
+                            for additional_result in batch_results:
+                                if isinstance(additional_result, list):
+                                    state.all_results.extend(
+                                        r for r in additional_result
+                                        if r and getattr(r, 'url', None) and _is_allowed_crawl_url(r.url) and _passes_exclusion(r.url)
+                                    )
+                                elif additional_result and getattr(additional_result, 'url', None) and _is_allowed_crawl_url(additional_result.url) and _passes_exclusion(additional_result.url):
+                                    state.all_results.append(additional_result)
+                        except Exception as e:
+                            error_msg = str(e)
+                            is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
+                            
+                            error_entry = {
+                                'url': 'batch_crawl_additional_urls',
+                                'error': error_msg,
+                                'error_type': type(e).__name__,
+                                'is_timeout': is_timeout,
+                                'timestamp': datetime.now().isoformat(),
+                                'note': 'Batch crawl failed - some URLs may not have been processed'
+                            }
+                            state.all_errors.append(error_entry)
                 
-                # Accumulate initial results
+                # Accumulate initial results — filter out pages outside the allowed scope.
+                # BFS with include_external=False may still return pages from other DESY
+                # subdomains.  Filtering here prevents those pages from being queued for
+                # link extraction in STEP 7 and from being written to disk in STEP 8.
+                # FIX (Root Cause 2, part 5): Also drop results matching exclusion_patterns.
+                def _passes_exclusion(url):
+                    return not any(re.search(p, url) for p in exclusion_patterns)
                 if isinstance(results, list):
-                    all_results.extend(results)
+                    state.all_results.extend(
+                        r for r in results
+                        if r and getattr(r, 'url', None) and _is_allowed_crawl_url(r.url) and _passes_exclusion(r.url)
+                    )
                 else:
-                    all_results.append(results)
+                    if results and getattr(results, 'url', None) and _is_allowed_crawl_url(results.url) and _passes_exclusion(results.url):
+                        state.all_results.append(results)
                 
                 # PHASE 1 FIX: Track that this seed URL was processed
-                seed_urls_processed.add(normalized_seed)
-                # Update max_depth_crawled to track the deepest level we've crawled
-                max_depth_crawled = max(max_depth_crawled, MAX_DEPTH)
+                state.seed_urls_processed.add(normalized_seed)
+                # Update state.max_depth_crawled to track the deepest level we've crawled
+                state.max_depth_crawled = max(state.max_depth_crawled, MAX_DEPTH)
                 print(f"[CHECKPOINT] Marked seed URL as processed: {root_url} (depth: {MAX_DEPTH})")
             
             # ====================================================================
@@ -6267,12 +3198,21 @@ async def crawl_site():
             all_additional_urls = {}  # {normalized_url: source_depth}
             seen_crawled_urls = set()
             # Track depth mapping for additional URLs (will be populated when crawling them)
-            additional_urls_with_depth = {}  # {normalized_url: depth} - populated during crawling
-            
+            state.additional_urls_with_depth = {}  # {normalized_url: depth} - populated during crawling
+
+            # Re-register pre-seeded child URLs with their explicit depth so that
+            # assign_page_depth() in STEP 8 places them in the correct output folder
+            # instead of defaulting to depth_1 (the fallback for pages without BFS metadata).
+            if _preseeded_urls:
+                for _ps_url in _preseeded_urls:
+                    _ps_norm = _normalize_url(_ps_url)
+                    if _ps_norm:
+                        state.additional_urls_with_depth[_ps_norm] = PRESEED_CHILD_DEPTH
+
             # First, collect all URLs that were already crawled AND their depths
             # This prevents us from reassigning depth to URLs that were already crawled by BFSDeepCrawlStrategy
-            crawled_urls_with_depth = {}  # {normalized_url: depth} - URLs already crawled with their depths
-            for result in all_results:
+            state.crawled_urls_with_depth = {}  # {normalized_url: depth} - URLs already crawled with their depths
+            for result in state.all_results:
                 if result:
                     # Get depth from result metadata
                     result_depth = 0
@@ -6307,313 +3247,20 @@ async def crawl_site():
                     if hasattr(result, 'url') and result.url:
                         normalized = _normalize_url(result.url)
                         seen_crawled_urls.add(normalized)
-                        existing_depth = crawled_urls_with_depth.get(normalized)
-                        crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
+                        existing_depth = state.crawled_urls_with_depth.get(normalized)
+                        state.crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
                     if hasattr(result, 'redirected_url') and result.redirected_url:
                         normalized = _normalize_url(result.redirected_url)
                         seen_crawled_urls.add(normalized)
-                        existing_depth = crawled_urls_with_depth.get(normalized)
-                        crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
+                        existing_depth = state.crawled_urls_with_depth.get(normalized)
+                        state.crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
             
-            # Extract links from ALL results' HTML
-            # Track source page depth to assign correct depth to additional URLs
-            # IMPORTANT: Only assign depth to URLs that are NOT already in seen_crawled_urls
-            # If a URL was already crawled by BFSDeepCrawlStrategy, it already has correct depth
-            # CRITICAL: Skip link extraction when MAX_DEPTH == 0 (only seed pages should be crawled)
-            
-            for result in all_results:
-                # Guard: Skip link extraction if MAX_DEPTH == 0
-                if MAX_DEPTH == 0:
-                    
-                    break  # Exit loop entirely for depth 0
-                if not result or not hasattr(result, 'html') or not result.html or not BEAUTIFULSOUP_AVAILABLE:
-                    continue
-                
-                try:
-                    # Determine source page depth
-                    source_depth = 0
-                    source_url = result.url if hasattr(result, 'url') and result.url else None
-                    if hasattr(result, 'metadata') and result.metadata:
-                        source_depth = result.metadata.get('depth', 0)
-                    elif hasattr(result, 'depth'):
-                        source_depth = result.depth
-                    
-                    # Check if this is a seed URL
-                    if source_url:
-                        normalized_source = _normalize_url(source_url)
-                        for root_url in ROOT_URLS:
-                            normalized_seed = _normalize_url(root_url) or root_url
-                            if normalized_source == normalized_seed:
-                                source_depth = 0
-                                break
-                    
-                    # If source_depth is still 0 and it's not a seed URL, it's likely from a single-page crawl
-                    # In that case, we need to determine depth from the result's final URL
-                    if source_depth == 0 and source_url:
-                        normalized_source = _normalize_url(source_url)
-                        # Check if redirected URL is different
-                        if hasattr(result, 'redirected_url') and result.redirected_url:
-                            normalized_final = _normalize_url(result.redirected_url)
-                            for root_url in ROOT_URLS:
-                                normalized_seed = _normalize_url(root_url) or root_url
-                                if normalized_final == normalized_seed:
-                                    source_depth = 0
-                                    break
-                        # If still 0 and not seed, default to 1
-                        if source_depth == 0:
-                            is_seed = False
-                            for root_url in ROOT_URLS:
-                                normalized_seed = _normalize_url(root_url) or root_url
-                                if normalized_source == normalized_seed:
-                                    is_seed = True
-                                    break
-                            if not is_seed:
-                                source_depth = 1
-                    
-                    from urllib.parse import urljoin, urlparse
-                    # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
-                    soup = _get_cached_soup(result)
-                    if not soup:
-                        continue
-                    base_url = result.url if hasattr(result, 'url') and result.url else None
-                    if not base_url:
-                        continue
-                    
-                    base_domain = _normalize_domain(urlparse(base_url).netloc)
-                    
-                    # Extract ALL links from HTML (including nav/footer/header)
-                    all_links = soup.find_all('a', href=True)
-                    
-                    for link in all_links:
-                        href = link.get('href', '').strip()
-                        if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
-                            continue
-                        
-                        # Resolve relative URLs
-                        absolute_url = urljoin(base_url, href)
-                        parsed = urlparse(absolute_url)
-                        
-                        # DOMAIN RESTRICTION: Only include *.desy.de subdomains
-                        # Exclude EXCLUDED_DOMAINS (fater.desy.de, bib-pubdb1.desy.de) at all depth levels
-                        link_domain = _normalize_domain(parsed.netloc)
-                        if link_domain in EXCLUDED_DOMAINS:
-                            continue
-                        if not _is_desy_domain(link_domain):
-                            continue
-                        # Normalize URL consistently with seen_crawled_urls (remove www, fragment, trailing slash)
-                        normalized_link = _normalize_url(absolute_url) or absolute_url.replace('://www.', '://')
-                        if normalized_link not in seen_crawled_urls:
-                            # Do not queue if this URL redirects to an excluded host (avoid fetching them)
-                            if CHECK_REDIRECTS_TO_EXCLUDED:
-                                final_host = await _resolve_redirect_final_host(absolute_url)
-                                if final_host is not None and final_host in EXCLUDED_DOMAINS:
-                                    continue
-                            # Track source depth: additional URL should be at source_depth + 1
-                            assigned_depth = source_depth + 1
-                            if assigned_depth > MAX_DEPTH:
-                                continue  # Skip URLs that would exceed max depth
-                            
-                            # FIX (Issues 6, 7, 8): Apply exclusion_patterns to all_additional_urls path.
-                            # Same bypass as first batch — BFS filter_chain is not in scope here.
-                            if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
-                                continue
-                            if normalized_link not in all_additional_urls:
-                                all_additional_urls[normalized_link] = assigned_depth
-                            else:
-                                # Keep minimum depth (closest to seed) - but don't go below source_depth + 1
-                                all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
-                        else:
-                            # URL was already crawled by BFS, but the link graph may give
-                            # a shallower depth (e.g., seed links directly to a URL that
-                            # BFS discovered via a longer path). Update crawled_urls_with_depth
-                            # to keep the minimum depth so depth stays stable across MAX_DEPTH values.
-                            link_depth = source_depth + 1
-                            if link_depth <= MAX_DEPTH:
-                                existing = crawled_urls_with_depth.get(normalized_link)
-                                if existing is None or link_depth < existing:
-                                    crawled_urls_with_depth[normalized_link] = link_depth
-                except Exception as e:
-                    # Log but continue
-                    pass
-            
-            # Crawl all additional URLs found in HTML but missed by crawl4ai's link extraction
-            if all_additional_urls:
-                # Debug: Count URLs by assigned depth
-                depth_counts = {}
-                for url, depth in all_additional_urls.items():
-                    depth_counts[depth] = depth_counts.get(depth, 0) + 1
-                print(f"[INFO] Found {len(all_additional_urls)} additional URLs in HTML (nav/footer/header) from all pages")
-                print(f"[INFO] Additional URLs by assigned depth: {depth_counts}")
-                
-                # Build additional-url crawl configs by REMAINING depth budget.
-                # FIX (Issue 11.10.4): Remaining depth must be computed per additional URL as:
-                # remaining_depth = max(0, MAX_DEPTH - assigned_depth)
-                # This prevents over-expansion and keeps depth semantics stable.
-                # In MAX_DEPTH=1 canary mode this naturally enforces inner BFS depth 0
-                # (only the additional URL itself, no one-hop expansion).
-                additional_urls_config_by_remaining_depth = {}
-                for _remaining_depth in range(MAX_DEPTH + 1):
-                    _additional_deep_crawl_strategy = BFSDeepCrawlStrategy(
-                        max_depth=_remaining_depth,
-                        include_external=False,
-                        max_pages=MAX_PAGES,
-                        filter_chain=filter_chain if 'filter_chain' in locals() else None
-                    )
-                    additional_urls_config_by_remaining_depth[_remaining_depth] = CrawlerRunConfig(
-                        deep_crawl_strategy=_additional_deep_crawl_strategy,
-                        page_timeout=PAGE_TIMEOUT,
-                        wait_until='networkidle',
-                        scraping_strategy=None,  # Additional URLs are HTML, not PDF
-                        table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
-                        markdown_generator=markdown_generator if PRUNING_FILTER_AVAILABLE else None,
-                        excluded_tags=['script', 'style', 'noscript'],  # Minimal filtering for link extraction
-                        excluded_selector=excluded_selector_str,
-                        word_count_threshold=5,
-                        remove_forms=True,
-                        cache_mode='read_write',  # Enable caching for faster resumption
-                        locale=FORCE_LOCALE,
-                        verbose=True
-                    )
-                
-                # ================================================================
-                # Additional URL Crawling - SEQUENTIAL with arun() for BFS results
-                # ================================================================
-                # REVERTED from arun_many (Run 19 regression fix):
-                # arun_many() does NOT return BFS sub-results - only top-level pages.
-                # With deep_crawl_strategy, arun() returns ALL pages discovered via BFS
-                # (could be hundreds per URL), but arun_many() loses these results.
-                # Evidence: Run 19 had 34,900 COMPLETE operations but only 769 in all_results.
-                additional_urls_list = list(all_additional_urls.items())[:10000]  # Limit to 10,000
-                print(f"[INFO] Starting crawl of {len(additional_urls_list)} additional URLs (sequential with BFS)")
-                
-                additional_count = 0
-                canary_depth1_mode_logged = False
-                for additional_url, assigned_depth in additional_urls_list:
-                    try:
-                        remaining_depth = max(0, MAX_DEPTH - assigned_depth)
-                        additional_urls_config = additional_urls_config_by_remaining_depth.get(remaining_depth)
-                        if additional_urls_config is None:
-                            # Defensive fallback (should never happen)
-                            additional_urls_config = additional_urls_config_by_remaining_depth[0]
+            # ================================================================
 
-                        if MAX_DEPTH == 1 and remaining_depth == 0 and not canary_depth1_mode_logged:
-                            print("[INFO] MAX_DEPTH=1 canary mode: additional URL inner BFS expansion disabled (effective max_depth=0)")
-                            canary_depth1_mode_logged = True
-
-                        # Use sequential arun() to capture ALL BFS-discovered pages
-                        additional_result = await crawler.arun(additional_url, config=additional_urls_config)
-                        
-                        if isinstance(additional_result, list):
-                            for res in additional_result:
-                                if res:
-                                    # Look up depth from original URL or result URL
-                                    result_url = getattr(res, 'url', None)
-                                    normalized_result = _normalize_url(result_url) if result_url else None
-                                    
-                                    # FIX (Issue 4): Calculate absolute depth = starting URL depth + BFS-relative depth
-                                    # BFS returns pages at relative depths 0, 1, 2, ... from the starting URL.
-                                    # Without this fix, ALL sub-pages get stamped with assigned_depth (flattening).
-                                    bfs_relative_depth = 0
-                                    if hasattr(res, 'metadata') and res.metadata:
-                                        bfs_relative_depth = res.metadata.get('depth', 0)
-                                    absolute_depth = min(assigned_depth + bfs_relative_depth, MAX_DEPTH)
-                                    
-                                    # Store depth mapping for this result
-                                    if normalized_result:
-                                        existing_depth = additional_urls_with_depth.get(normalized_result)
-                                        additional_urls_with_depth[normalized_result] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
-                                    if hasattr(res, 'redirected_url') and res.redirected_url:
-                                        normalized = _normalize_url(res.redirected_url)
-                                        existing_depth = additional_urls_with_depth.get(normalized)
-                                        additional_urls_with_depth[normalized] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
-                            all_results.extend(additional_result)
-                        else:
-                            if additional_result:
-                                result_url = getattr(additional_result, 'url', None)
-                                normalized_result = _normalize_url(result_url) if result_url else None
-                                
-                                # FIX (Issue 4): Calculate absolute depth = starting URL depth + BFS-relative depth
-                                bfs_relative_depth = 0
-                                if hasattr(additional_result, 'metadata') and additional_result.metadata:
-                                    bfs_relative_depth = additional_result.metadata.get('depth', 0)
-                                absolute_depth = min(assigned_depth + bfs_relative_depth, MAX_DEPTH)
-                                
-                                # Store depth mapping for this result
-                                if normalized_result:
-                                    existing_depth = additional_urls_with_depth.get(normalized_result)
-                                    additional_urls_with_depth[normalized_result] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
-                                if hasattr(additional_result, 'redirected_url') and additional_result.redirected_url:
-                                    normalized = _normalize_url(additional_result.redirected_url)
-                                    existing_depth = additional_urls_with_depth.get(normalized)
-                                    additional_urls_with_depth[normalized] = absolute_depth if existing_depth is None else min(existing_depth, absolute_depth)
-                            all_results.append(additional_result)
-                        additional_count += 1
-                    except Exception as e:
-                        # Log error and continue to next URL
-                        error_msg = str(e)
-                        is_timeout = 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower() or 'TimeoutError' in str(type(e).__name__)
-                        
-                        error_entry = {
-                            'url': additional_url,
-                            'error': error_msg,
-                            'error_type': type(e).__name__,
-                            'is_timeout': is_timeout,
-                            'timestamp': datetime.now().isoformat(),
-                            'note': 'Error during additional URL crawl'
-                        }
-                        all_errors.append(error_entry)
-                        
-                        if is_timeout:
-                            print(f"[TIMEOUT] {additional_url}: {error_msg[:100]}")
-                
-                print(f"[INFO] Crawled {additional_count} additional URLs from HTML links (sequential with BFS)")
-            
-            # ====================================================================
-            # STEP 8: Process All Results
-            # ====================================================================
-            # Process accumulated results from all URLs
-            results = all_results
-
-            print("-" * 60)
-            print(f"[INFO] Crawling complete! Found {len(results)} pages")
-            print("-" * 60)
-            
-            
-            
-            # ====================================================================
-            # STEP 8: Process and Save Each Page
-            # ====================================================================
-            # Loop through each crawled page and save its content
-            # Track successes and failures
-            
-            def extract_result_metadata(result):
-                """Extract lightweight metadata from a crawl result.
-                
-                This function extracts only essential data (URLs, depth, status)
-                and is used to keep a record after discarding heavy data (HTML, markdown).
-                
-                At 200k URLs with 100KB-5MB markdown per page, not clearing
-                would consume 20GB+ in RAM. This enables streaming processing.
-                
-                Returns:
-                    dict with url, redirected_url, status_code, success flag
-                """
-                if not result:
-                    return None
-                
-                try:
-                    return {
-                        'url': getattr(result, 'url', None),
-                        'redirected_url': getattr(result, 'redirected_url', None),
-                        'status_code': getattr(result, 'status_code', None),
-                        'success': getattr(result, 'success', None),
-                        'html_length': len(result.html) if hasattr(result, 'html') and result.html else 0,
-                        'markdown_length': len(result.markdown) if hasattr(result, 'markdown') and result.markdown else 0,
-                    }
-                except Exception:
-                    return {'url': getattr(result, 'url', 'unknown'), 'error': 'metadata_extraction_failed'}
-            
-            # Store lightweight metadata for all processed results (for logging/analysis)
+            # ================================================================
+            # STEP 8 shared state — initialised early so results can be
+            # processed incrementally during STEP 7 (Option B memory fix).
+            # ================================================================
             results_metadata = []
             
             # Track seed URLs (normalized) to ensure they get depth 0
@@ -6622,26 +3269,26 @@ async def crawl_site():
                 normalized_seed = _normalize_url(root_url) or root_url
                 seed_urls_normalized.add(normalized_seed)
             
-            # PHASE 1 FIX: Load seen_final_urls from checkpoint for crash recovery
+            # PHASE 1 FIX: Load state.seen_final_urls from checkpoint for crash recovery
             # If resuming, skip URLs already processed in previous run
-            seen_final_urls = checkpoint.get('seen_final_urls', set())
-            if seen_final_urls:
-                print(f"[CHECKPOINT] Loaded {len(seen_final_urls)} already-processed URLs from checkpoint")
+            state.seen_final_urls = checkpoint.get('seen_final_urls', set())
+            if state.seen_final_urls:
+                print(f"[CHECKPOINT] Loaded {len(state.seen_final_urls)} already-processed URLs from checkpoint")
             
-            # additional_urls_with_depth is defined in the link extraction section above
+            # state.additional_urls_with_depth is defined in the link extraction section above
             # It maps normalized URLs to their assigned depths
             # Build merged dict using minimum depth per URL across checkpoint and current run.
             # This preserves the shallowest known path from seed when duplicates are rediscovered.
-            additional_urls_with_depth_merged = dict(checkpoint.get('additional_urls_with_depth', {}))
-            for url_key, depth_value in additional_urls_with_depth.items():
-                existing_depth = additional_urls_with_depth_merged.get(url_key)
-                additional_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
-            # Section 4.1/4.2: Build crawled_urls_with_depth_merged using minimum depth per URL across checkpoint and current run.
+            state.additional_urls_with_depth_merged = dict(checkpoint.get('additional_urls_with_depth', {}))
+            for url_key, depth_value in state.additional_urls_with_depth.items():
+                existing_depth = state.additional_urls_with_depth_merged.get(url_key)
+                state.additional_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
+            # Section 4.1/4.2: Build state.crawled_urls_with_depth_merged using minimum depth per URL across checkpoint and current run.
             # This preserves the shallowest known path from seed when the same URL is rediscovered at a deeper level.
-            crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
-            for url_key, depth_value in crawled_urls_with_depth.items():
-                existing_depth = crawled_urls_with_depth_merged.get(url_key)
-                crawled_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
+            state.crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
+            for url_key, depth_value in state.crawled_urls_with_depth.items():
+                existing_depth = state.crawled_urls_with_depth_merged.get(url_key)
+                state.crawled_urls_with_depth_merged[url_key] = depth_value if existing_depth is None else min(existing_depth, depth_value)
             
             # Track links found vs URLs crawled for analysis
             links_found_vs_crawled = {
@@ -6658,150 +3305,61 @@ async def crawl_site():
             # "Varnish cache server" never appears in real DESY page content, so these
             # markers are safe to use as a content-level filter.
             _varnish_503_markers = ('Varnish cache server', 'Backend fetch failed', 'Guru Meditation')
-            _varnish_503_retry_queue = []  # URLs that returned a 503 Varnish page
+            state.varnish_503_retry_queue = []  # URLs that returned a 503 Varnish page
+            _process_cursor = 0  # tracks how far we have processed
 
-            for result in results:
-                # Skip if result is invalid or URL is empty/whitespace
-                if not result or not result.url or _is_empty_or_whitespace(str(result.url)):
-                    continue
-                
-                # GROUP 1 POST-CRAWL FILTER: Skip login/auth/admin pages.
-                # BFS filter_chain may silently fail (when FilterChain is unavailable,
-                # a raw list is passed and BFS ignores it), so we ALWAYS filter here
-                # to guarantee login/admin pages are never saved no matter what BFS crawls.
-                # Also check redirected_url: a page that redirects to /login_form is a login page.
-                _redirected = getattr(result, 'redirected_url', None)
-                if should_skip_login_auth_url(result.url) or (_redirected and should_skip_login_auth_url(_redirected)):
-                    continue
+            def _rebuild_merged_depth_maps():
+                """Rebuild merged depth maps from checkpoint + current run."""
+                state.crawled_urls_with_depth_merged = dict(checkpoint.get('crawled_urls_with_depth', {}))
+                for _url_k, _dep_v in (state.crawled_urls_with_depth or {}).items():
+                    _ex = state.crawled_urls_with_depth_merged.get(_url_k)
+                    state.crawled_urls_with_depth_merged[_url_k] = _dep_v if _ex is None else min(_ex, _dep_v)
+                state.additional_urls_with_depth_merged = dict(checkpoint.get('additional_urls_with_depth', {}))
+                for _url_k, _dep_v in (state.additional_urls_with_depth or {}).items():
+                    _ex = state.additional_urls_with_depth_merged.get(_url_k)
+                    state.additional_urls_with_depth_merged[_url_k] = _dep_v if _ex is None else min(_ex, _dep_v)
 
-                # FIX 5b: Post-crawl binary extension filter (complement to Fix 5 in _is_valid_crawl_url).
-                # BFS bypasses _is_valid_crawl_url, so image/binary URLs are crawled and returned as results.
-                # Block them here before writing to disk — same belt-and-suspenders approach as Fix 1.
-                _url_path_lower = urlparse(result.url).path.lower()
-                _BINARY_EXTENSIONS_CHECK = (
-                    '.gif', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.bmp', '.ico', '.tiff',
-                    '.zip', '.tar', '.gz', '.rar', '.doc', '.docx', '.xls', '.xlsx',
-                    '.ppt', '.pptx', '.mp4', '.mp3', '.avi', '.mov', '.wmv', '.flv',
-                    # FIX (Problem 3): Academic source files from www-zeus.desy.de (156 .tex + 17 .eps + 2 .tgz in run 20)
-                    '.tex', '.eps', '.ps', '.tgz', '.bib', '.f90', '.f77', '.f',
-                    '.bbl', '.blg', '.cls', '.sty', '.dtx', '.ins', '.aux',
-                    # FIX (Problem 6): RSS/Atom feed files — machine-readable XML, not prose
-                    '.atom',
+            def _preprocess_one_result(result):
+                """Serial pre-pass: filter, dedup, depth-assign. Returns work_item dict or None."""
+                # 6-stage content filter: scope, login, binary, login-wall, blank, Varnish 503
+                _filter_action, _filter_reason = _content_extraction.filter_result_pre_save(
+                    result,
+                    scope_filter_fn=_is_allowed_crawl_url,
+                    login_filter_fn=should_skip_login_auth_url,
+                    varnish_503_markers=_varnish_503_markers,
                 )
-                if any(_url_path_lower.endswith(ext) for ext in _BINARY_EXTENSIONS_CHECK):
-                    continue
-
-                # FIX 4: Content-based login-wall filter (catches private Indico events
-                # and any page whose URL looks public but serves a login wall via JS/SSO).
-                # Condition: markdown is very short (<300 chars) AND contains a login keyword.
-                # Safe threshold: real content pages are always >300 chars; login walls are 80-150.
-                _md_raw = getattr(result, 'markdown', None)
-                if _md_raw is not None:
-                    if hasattr(_md_raw, 'raw_markdown'):
-                        _md_text = _md_raw.raw_markdown or ''
-                    elif isinstance(_md_raw, str):
-                        _md_text = _md_raw
-                    else:
-                        _md_text = ''
-                else:
-                    _md_text = ''
-                _md_stripped = _md_text.strip()
-                _LOGIN_CONTENT_KEYWORDS = (
-                    'please log in',
-                    'sign in to',
-                    'login required',
-                    'you must be logged in',
-                    'access denied',
-                    'enter your username',
-                    'forgot your password',
-                )
-                if len(_md_stripped) < 300 and any(kw in _md_stripped.lower() for kw in _LOGIN_CONTENT_KEYWORDS):
-                    print(f'[CONTENT FILTER] Skipping login-wall page (short + keywords): {result.url}')
-                    continue
-                
-                # FIX 7: Minimum-content guard — skip blank/JS-only pages with no extractable text.
-                # Strip the "# Source URL\nhttps://..." header that every file contains, then
-                # check whether any real body text remains. Threshold: 50 chars.
-                # Safe: no legitimate DESY content page has fewer than 50 chars of body text.
-                _body_text = re.sub(r'^#\s*Source\s*URL\s*\n+\S+\s*\n*', '', _md_stripped, flags=re.IGNORECASE).strip()
-                if len(_body_text) < 50:
-                    print(f'[CONTENT FILTER] Skipping blank/empty page (<50 chars body): {result.url}')
-                    continue
-
-                # FIX B: Varnish 503 detection — queue for retry, skip saving now.
-                # These pages pass the 50-char blank filter but contain zero useful content.
-                # Crucially we do NOT call seen_final_urls.add() here, so the URL remains
-                # available for a clean re-crawl in the retry pass below.
-                if any(marker in _body_text for marker in _varnish_503_markers):
-                    _varnish_503_retry_queue.append(result.url)
+                if _filter_action == 'skip':
+                    if _filter_reason == 'login_wall_content':
+                        print(f'[CONTENT FILTER] Skipping login-wall page (short + keywords): {result.url}')
+                    elif _filter_reason == 'blank_page':
+                        print(f'[CONTENT FILTER] Skipping blank/empty page (<50 chars body): {result.url}')
+                    return None
+                if _filter_action == 'varnish_503':
+                    state.varnish_503_retry_queue.append(result.url)
                     print(f'[503-RETRY] Queueing for retry (Varnish 503): {result.url}')
-                    continue
+                    return None
 
                 try:
-                    # Track both original and final URLs to handle redirects
-                    # crawl4ai provides: result.url (original) and result.redirected_url (final after redirects)
-                    original_url = result.url if hasattr(result, 'url') and result.url else None
-                    final_url = None
-                    is_redirect = False
+                    # Extract original/final URLs and normalise them
+                    original_url, final_url, is_redirect, normalized_original, normalized_final = (
+                        _content_extraction.extract_result_urls(result)
+                    )
                     
-                    # Check if redirect occurred
-                    if hasattr(result, 'redirected_url') and result.redirected_url:
-                        final_url = result.redirected_url
-                        is_redirect = (original_url != final_url)
-                    else:
-                        final_url = original_url
-                    
-                    # Normalize URLs for comparison (remove www)
-                    normalized_original = _normalize_url(original_url)
-                    normalized_final = _normalize_url(final_url)
-                    
-                    # Skip 404 pages ONLY if they have no meaningful content
-                    # If Playwright successfully extracted content, use it regardless of redirect URL
-                    # This ensures we don't skip successfully crawled pages just because they redirected
-                    is_404_page = False
-                    has_content = False
-                    
-                    # Check if result has meaningful content (HTML or markdown)
-                    if hasattr(result, 'html') and result.html and len(result.html.strip()) > 100:
-                        has_content = True
-                    elif hasattr(result, 'markdown'):
-                        markdown_content = None
-                        if hasattr(result.markdown, 'fit_markdown') and result.markdown.fit_markdown:
-                            markdown_content = result.markdown.fit_markdown
-                        elif hasattr(result.markdown, 'raw_markdown') and result.markdown.raw_markdown:
-                            markdown_content = result.markdown.raw_markdown
-                        elif isinstance(result.markdown, str):
-                            markdown_content = result.markdown
-                        
-                        if markdown_content and len(markdown_content.strip()) > 100:
-                            has_content = True
-                    
-                    # Only skip if it's a 404 AND has no content
-                    # If Playwright successfully extracted content, save it regardless of redirect
-                    if not has_content:
-                        if normalized_final and '/404/' in normalized_final:
-                            is_404_page = True
-                        elif hasattr(result, 'status_code') and result.status_code == 404:
-                            is_404_page = True
-                    
-                    if is_404_page:
-                        continue  # Skip 404 pages with no content - don't track or save them
+                    # Skip 404 pages with no meaningful content
+                    if _content_extraction.is_404_without_content(result, normalized_final):
+                        return None
                     
                     # Skip if we've already seen this final URL (deduplication).
                     # FIX 6b: Use normalize_url_for_dedup so that UI-param variants
                     # (?printversion=1, ?view=workWeek, ?two_columns=1, etc.) are
                     # recognised as duplicates of the already-saved base page.
                     _dedup_key = normalize_url_for_dedup(normalized_final) if normalized_final else normalized_final
-                    if _dedup_key and _dedup_key in seen_final_urls:
-                        continue
-                    seen_final_urls.add(_dedup_key if _dedup_key else normalized_final)
+                    if _dedup_key and _dedup_key in state.seen_final_urls:
+                        return None
+                    state.seen_final_urls.add(_dedup_key if _dedup_key else normalized_final)
                     
                     # FEATURE #4: Check for duplicate content (Sara Taheri issue)
-                    # This detects pages with identical content even if URLs are different
-                    # Example: news sidebar appears on every page - same content, different URLs
-                    # Early detection prevents accumulating duplicates
                     if dedup_enabled:
-                        # Get markdown content for deduplication
                         content_to_check = None
                         if hasattr(result, 'markdown'):
                             if hasattr(result.markdown, 'fit_markdown') and result.markdown.fit_markdown:
@@ -6811,101 +3369,42 @@ async def crawl_site():
                             elif isinstance(result.markdown, str):
                                 content_to_check = result.markdown
                         elif hasattr(result, 'html') and result.html:
-                            # Use HTML if markdown not available
                             content_to_check = result.html
                         
-                        # Check if this is duplicate content
                         if content_to_check:
-                            is_dup, original_dup_url, content_hash = is_duplicate_content(content_to_check, final_url)
+                            is_dup, original_dup_url, content_hash = _content_extraction.is_duplicate_content(content_to_check, state.seen_content_hashes, dedup_enabled, final_url)
                             if is_dup:
-                                # Skip duplicate - content already seen
-                                duplicate_count += 1
+                                state.duplicate_count += 1
                                 print(f"[DEDUP] Skipping duplicate content from {final_url} (same as {original_dup_url})")
-                                continue  # Skip this page entirely - it's a duplicate
-                            # If not duplicate, content_hash is stored in seen_content_hashes
+                                return None
                     
 
                     if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
                         depth = 0  # Seed URL - always depth 0
                     else:
-                        # Collect depth from map sources (these have correct absolute depths)
-                        # and take the minimum to ensure stable depth assignment.
-                        depth_candidates = []
-                        # 1) Crawled URL depth from merged map (BFS + single-page + additional crawl)
-                        if crawled_urls_with_depth_merged is not None:
-                            if normalized_final in crawled_urls_with_depth_merged:
-                                depth_candidates.append(crawled_urls_with_depth_merged[normalized_final])
-                            if normalized_original in crawled_urls_with_depth_merged:
-                                depth_candidates.append(crawled_urls_with_depth_merged[normalized_original])
-                        # 2) Additional URL with assigned depth (from manual link extraction)
-                        if additional_urls_with_depth_merged is not None:
-                            if normalized_final in additional_urls_with_depth_merged:
-                                depth_candidates.append(additional_urls_with_depth_merged[normalized_final])
-                            if normalized_original in additional_urls_with_depth_merged:
-                                depth_candidates.append(additional_urls_with_depth_merged[normalized_original])
-                        # Pick the shallowest depth from map sources (filter out 0 for non-seeds)
-                        non_zero = [d for d in depth_candidates if d > 0]
-                        if non_zero:
-                            depth = min(non_zero)
-                        else:
-                            # 3) Fallback: Result metadata (from BFSDeepCrawlStrategy)
-                            # NOTE: Only used when maps have no entry. metadata.depth may be
-                            # BFS-relative (not absolute) for additional-URL inner BFS results,
-                            # so it must NOT compete with map values via min().
-                            depth = 0
-                            if hasattr(result, 'metadata') and result.metadata:
-                                depth = result.metadata.get('depth', 0)
-                            elif hasattr(result, 'depth'):
-                                depth = getattr(result, 'depth', 0) or 0
-                            # 4) Fallback: non-seed with no map/metadata -> treat as depth 1
-                            if depth == 0:
-                                depth = 1
-                        # Cap depth at MAX_DEPTH
-                        if depth > MAX_DEPTH:
-                            depth = MAX_DEPTH
+                        depth = _content_extraction.assign_page_depth(
+                            normalized_original,
+                            normalized_final,
+                            seed_urls_normalized,
+                            state.crawled_urls_with_depth_merged,
+                            state.additional_urls_with_depth_merged,
+                            result,
+                            MAX_DEPTH,
+                        )
                     
-                    # Initialize depth list if needed
                     depth_str = str(depth)
-                    if depth_str not in all_urls_by_depth:
-                        all_urls_by_depth[depth_str] = []
+                    if depth_str not in state.all_urls_by_depth:
+                        state.all_urls_by_depth[depth_str] = []
                     
-                    # Store URL entry with redirect information (append only after successful file write - Fix #2)
                     url_entry = {
                         'original_url': original_url,
                         'final_url': final_url,
                         'is_redirect': is_redirect
                     }
-                    # Do NOT append here - append only after filename.write_text() so count matches files
                     
-                    # Track links found in HTML vs URLs crawled (for analysis)
-                    links_in_html = 0
-                    if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-                        try:
-                            from urllib.parse import urlparse
-                            # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
-                            soup = _get_cached_soup(result)
-                            if not soup:
-                                raise ValueError('No soup')
-                            base_url = final_url if final_url else original_url
-                            base_domain = _normalize_domain(urlparse(base_url).netloc) if base_url else ''
-                            
-                            # Count all internal links in HTML
-                            all_links = soup.find_all('a', href=True)
-                            for link in all_links:
-                                href = link.get('href', '').strip()
-                                if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
-                                    continue
-                                
-                                from urllib.parse import urljoin
-                                absolute_url = urljoin(base_url, href) if base_url else href
-                                parsed = urlparse(absolute_url)
-                                link_domain = _normalize_domain(parsed.netloc)
-                                
-                                # Count internal links only
-                                if link_domain == base_domain:
-                                    links_in_html += 1
-                        except:
-                            pass
+                    # Track links found in HTML vs URLs crawled
+                    _base_url_for_links = final_url if final_url else original_url
+                    links_in_html = _content_extraction.count_internal_links(result, _base_url_for_links)
                     
                     links_found_vs_crawled['total_links_found_in_html'] += links_in_html
                     links_found_vs_crawled['total_urls_crawled'] += 1
@@ -6915,2119 +3414,464 @@ async def crawl_site():
                         'links_found': links_in_html
                     })
                     
-                    # ============================================================
                     # Create a safe filename from the URL
-                    # ============================================================
-                    # URLs contain characters that aren't valid in filenames (/, :, etc.)
-                    # So we convert: https://www.desy.de/about → www_desy_de_about
-                    # Use final_url for filename (what was actually crawled)
-                    
-                    url_for_filename = final_url if final_url else original_url
+                    url_for_filename = _dedup_key if _dedup_key else (final_url if final_url else original_url)
                     url_safe = url_for_filename.replace("https://", "").replace("http://", "")
                     url_safe = url_safe.replace("/", "_").replace(":", "_")
-                    
-                    # Limit filename length (some URLs are very long)
                     if len(url_safe) > 200:
                         url_safe = url_safe[:200]
                     
-                    # Organize files by depth: create depth-specific subdirectory
                     depth_dir = OUTPUT_DIR / f"depth_{depth_str}"
-                    depth_dir.mkdir(exist_ok=True)  # Create depth directory if it doesn't exist
-                    
-                    # Create full file path in depth-specific directory
+                    depth_dir.mkdir(exist_ok=True)
                     filename = depth_dir / f"{url_safe}.md"
                     
-                    # ============================================================
-                    # Extract Markdown Content
-                    # ============================================================
-                    # For PDFs: PDFContentScrapingStrategy extracts text to raw_markdown
-                    # For HTML: Crawl4AI converts HTML to markdown
-                    # Strategy: Combine fit_markdown (cleaned) and raw_markdown (complete)
-                    # to ensure no content is lost, especially lists and structured content
                     result_is_pdf = is_pdf_url(result.url)
                     
-                    markdown_content = ""
-                    tables_markdown = ""  # Initialize tables_markdown at the top level
+                    # Build picklable work_item dict for the worker
+                    markdown_fit = None
+                    markdown_raw = None
+                    markdown_str_val = None
+                    markdown_is_object = False
                     if hasattr(result, 'markdown'):
-                        # Check if result has fit_markdown (cleaned version)
                         if hasattr(result.markdown, 'fit_markdown'):
-                            if result_is_pdf:
-                                # For PDFs, prefer raw_markdown (extracted PDF text)
-                                markdown_content = result.markdown.raw_markdown or result.markdown.fit_markdown or ""
-                            else:
-                                # For HTML: Use fit_markdown as primary (cleaned, navigation removed)
-                                # But if it's significantly shorter than raw_markdown, combine both
-                                # This ensures lists and structured content aren't lost
-                                fit_content = result.markdown.fit_markdown or ""
-                                raw_content = result.markdown.raw_markdown or ""
-                                
-                                # CRITICAL: For pages with tables, prefer raw_markdown to preserve table structure
-                                # Also use raw if fit is empty or much shorter
-                                if fit_content and raw_content:
-                                    fit_len = len(fit_content.strip())
-                                    raw_len = len(raw_content.strip())
-                                    
-                                    # Use raw if:
-                                    # 1. fit is empty or very short (< 100 chars)
-                                    # 2. fit is less than 50% of raw (too aggressive filtering)
-                                    # 3. raw contains table markers (|) but fit doesn't (tables were filtered out)
-                                    has_tables_in_raw = '|' in raw_content and len([l for l in raw_content.split('\n') if '|' in l]) >= 3
-                                    has_tables_in_fit = '|' in fit_content and len([l for l in fit_content.split('\n') if '|' in l]) >= 3
-                                    
-                                    if fit_len < 100 or (raw_len > 0 and (fit_len / raw_len) < 0.5) or (has_tables_in_raw and not has_tables_in_fit):
-                                        markdown_content = raw_content
-                                        if fit_len < 100:
-                                            print(f"[INFO] Using raw_markdown (fit_markdown was empty/too short: {fit_len} chars)")
-                                        elif has_tables_in_raw and not has_tables_in_fit:
-                                            print(f"[INFO] Using raw_markdown (tables were filtered out from fit_markdown)")
-                                        else:
-                                            print(f"[INFO] Using raw_markdown (fit_markdown was {fit_len}/{raw_len} chars, may have lost content)")
-                                    else:
-                                        markdown_content = fit_content
-                                elif raw_content:
-                                    # If only raw is available, use it
-                                    markdown_content = raw_content
-                                    print(f"[INFO] Using raw_markdown (fit_markdown not available)")
-                                else:
-                                    # Fallback to fit if raw not available
-                                    markdown_content = fit_content
-                                
-                                # CRITICAL: Check if markdown has meaningful content (not just headers/URLs)
-                                # If it's mostly empty or just has URL/headers, extract from HTML
-                                markdown_meaningful = markdown_content.strip()
-                                # Remove URL header and separators to check actual content
-                                markdown_meaningful = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', markdown_meaningful, flags=re.IGNORECASE | re.MULTILINE)
-                                markdown_meaningful = markdown_meaningful.strip()
-                                
-                                # Count actual table rows (not separators)
-                                table_rows_in_markdown = [l for l in markdown_content.split('\n') if '|' in l and not re.match(r'^\s*\|[\s\-:]+\|', l) and l.strip()]
-                                has_tables_in_markdown = len(table_rows_in_markdown) >= 2
-                                
-                                # General signal: HTML contains many contact/profile tables, but markdown reflects far fewer.
-                                # Use mailto count in markdown (strong proxy for "person rows extracted").
-                                html_contact_table_count = 0
-                                html_total_table_count = 0
-                                markdown_mailto_count = len(re.findall(r'\(mailto:[^)]+\)', markdown_content or '', flags=re.IGNORECASE))
-                                if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-                                    try:
-                                        # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
-                                        soup_probe = _get_cached_soup(result)
-                                        probe_tables = soup_probe.find_all('table', recursive=True) if soup_probe else []
-                                        html_total_table_count = len(probe_tables)
-                                        for t in probe_tables:
-                                            if t.find('a', href=lambda x: x and x.startswith('mailto:')):
-                                                html_contact_table_count += 1
-                                    except Exception:
-                                        html_contact_table_count = 0
-                                        html_total_table_count = 0
-                                
-                                tables_missing_vs_html = (
-                                    html_contact_table_count >= 3 and
-                                    markdown_mailto_count < html_contact_table_count
-                                )
-                                
-                                # ALWAYS check HTML if markdown is empty or has no tables
-                                # This ensures we extract content even if PruningContentFilter removed everything
-                                # Also check if HTML exists and has content (might be JavaScript-loaded)
-                                html_has_content = False
-                                html_length = 0
-                                if hasattr(result, 'html') and result.html:
-                                    html_length = len(result.html.strip())
-                                    html_has_content = html_length > 1000  # HTML has substantial content
-                                
-                                # Check HTML if:
-                                # 1. Markdown is empty/meaningless
-                                # 2. Markdown has no tables but HTML might have them
-                                # 3. HTML has substantial content but markdown doesn't (JavaScript-loaded content)
-                                should_check_html = (not markdown_meaningful or 
-                                                    len(markdown_meaningful) < 100 or 
-                                                    not has_tables_in_markdown or
-                                                    tables_missing_vs_html or
-                                                    (html_has_content and len(markdown_meaningful) < 50))
-                                
-                                
-                                if should_check_html:
-                                    print(f"[DEBUG] Will check HTML - markdown: {len(markdown_meaningful)} chars, html: {html_length} chars, has_tables: {has_tables_in_markdown}")
-                                    if hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-                                        try:
-                                            # PERFORMANCE FIX: Use cached soup to avoid redundant parsing
-                                            soup = _get_cached_soup(result)
-                                            if not soup:
-                                                raise ValueError('No soup')
-                                            
-                                            
-                                            # SIMPLIFIED: Always extract from HTML if markdown is empty or too short
-                                            # No complex contact block extraction - just extract all content properly
-                                            should_extract = (not markdown_meaningful or 
-                                                            len(markdown_meaningful) < 100 or
-                                                            tables_missing_vs_html)
-                                            
-                                            if should_extract:
-                                                # Count HTML tables for debug output
-                                                html_table_count = len(soup.find_all('table', recursive=True)) if soup else 0
-                                                print(f"[DEBUG] Will use Crawl4AI tables - markdown_meaningful: {len(markdown_meaningful)} chars, html_tables: {html_table_count}, markdown_tables: {has_tables_in_markdown}, html_length: {html_length}")
-                                                
-                                                # Use only Crawl4AI's table extraction - skip all custom HTML parsing
-                                                # Tables will be extracted from result.tables later in the code
-                                                html_fallback_tables = ""
-                                                
-                                                # Now remove script and style elements, plus navigation/UI elements
-                                                # This is critical to avoid extracting dropdown menus, navigation, and UI noise
-                                                for element in soup(["script", "style", "nav", "header", "footer",
-                                                                    "select", "option",  # Dropdown menus
-                                                                    "noscript", "iframe",
-                                                                    "form"]):  # Forms often contain search UI
-                                                    element.decompose()
-                                                
-                                                # Remove elements with common navigation/UI classes/IDs
-                                                # These often contain dropdown menus and navigation that get flattened into text
-                                                ui_patterns = [
-                                                    r'nav', r'menu', r'dropdown', r'select', r'option',
-                                                    r'breadcrumb', r'sidebar', r'cookie', r'privacy',
-                                                    r'search', r'filter', r'pagination', r'toolbar',
-                                                    r'header', r'footer', r'aside'
-                                                ]
-                                                for pattern in ui_patterns:
-                                                    # Remove by class
-                                                    for elem in soup.find_all(class_=re.compile(pattern, re.I)):
-                                                        elem.decompose()
-                                                    # Remove by ID
-                                                    for elem in soup.find_all(id=re.compile(pattern, re.I)):
-                                                        elem.decompose()
-                                                
-                                                # Remove elements that are likely navigation/UI (have many links but little text)
-                                                # This catches navigation menus that weren't caught by the above
-                                                # GENERAL: More aggressive filtering for navigation patterns
-                                                for elem in soup.find_all(['div', 'ul', 'ol', 'li']):
-                                                    links = elem.find_all('a')
-                                                    text = elem.get_text(strip=True)
-                                                    # If element has many links but short text, it's likely navigation
-                                                    # Also check for spacer images (common in navigation)
-                                                    spacer_imgs = elem.find_all('img', src=re.compile(r'spacer|blank|pixel', re.I))
-                                                    if (len(links) > 3 and len(text) < 200) or (len(spacer_imgs) > 0 and len(links) > 2):
-                                                        elem.decompose()
-                                                
-                                                # Try to find main content - check multiple possible containers
-                                                # Also check for iframes (content might be loaded in iframe)
-                                                main_content = None
-                                                
-                                                # Check for iframes first (content might be loaded in iframe)
-                                                iframes = soup.find_all('iframe')
-                                                if iframes:
-                                                    print(f"[DEBUG] Found {len(iframes)} iframe(s) - content might be in iframe")
-                                                    for iframe in iframes:
-                                                        iframe_src = iframe.get('src', '')
-                                                        if iframe_src:
-                                                            print(f"[DEBUG] Iframe src: {iframe_src}")
-                                                            # Note: Cross-origin iframe content cannot be accessed directly
-                                                            # But we can note the iframe URL for reference
-                                                
-                                                # Try standard containers
-                                                main_content = (soup.find('main') or 
-                                                              soup.find('article') or 
-                                                              soup.find('div', class_=re.compile(r'content|main|body', re.I)) or
-                                                              soup.find('div', id=re.compile(r'content|main|body', re.I)))
-                                                
-                                                # If main_content is too small or not found, try body
-                                                # RELAXED: Lower threshold from 50 to 20 chars to catch contact pages
-                                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
-                                                    main_content = soup.find('body')
-                                                    if main_content:
-                                                        print(f"[DEBUG] Using body as main content ({len(main_content.get_text(strip=True))} chars)")
-                                                
-                                                # If still no good content, check for common content divs with substantial text
-                                                # RELAXED: Lower threshold and check for contact info patterns
-                                                if not main_content or (main_content and len(main_content.get_text(strip=True)) < 20):
-                                                    # Look for any div with text content (lowered threshold)
-                                                    all_divs = soup.find_all('div')
-                                                    best_div = None
-                                                    best_score = 0
-                                                    for div in all_divs:
-                                                        div_text = div.get_text(strip=True)
-                                                        # Score divs based on text length and contact info presence
-                                                        score = len(div_text)
-                                                        # Boost score if contains contact info patterns
-                                                        if re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', div_text):
-                                                            score += 500  # Big boost for contact info
-                                                        if re.search(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+', div_text):
-                                                            score += 100  # Boost for names
-                                                        # If div has substantial text or contact info, consider it
-                                                        if score > best_score:
-                                                            best_score = score
-                                                            best_div = div
-                                                    
-                                                    if best_div and best_score > 50:  # Lower threshold
-                                                        main_content = best_div
-                                                        print(f"[DEBUG] Using div with score {best_score} as main content")
-                                                
-                                                # CRITICAL FIX: If still no main_content found, but we have tables, use body anyway
-                                                # This handles pages where content structure is non-standard
-                                                if not main_content:
-                                                    body = soup.find('body')
-                                                    if body:
-                                                        main_content = body
-                                                        print(f"[DEBUG] No main content found, using body as fallback ({len(body.get_text(strip=True))} chars)")
-                                                    else:
-                                                        # Last resort: use entire soup
-                                                        main_content = soup
-                                                        print(f"[DEBUG] No body found, using entire soup as fallback")
-                                                
-                                                # Tables are extracted by Crawl4AI and will be processed from result.tables later
-                                                print(f"[DEBUG] Skipping custom HTML table extraction - using Crawl4AI tables from result.tables")
-                                                
-                                                # Now extract text if we have main_content
-                                                if main_content:
-                                                    
-                                                    # RELAXED: If main_content text is very short, try extracting from paragraphs directly
-                                                    # This helps with contact pages where content is in paragraphs
-                                                    main_content_text_preview = main_content.get_text(strip=True)
-                                                    if len(main_content_text_preview) < 100:
-                                                        # Try extracting from all paragraphs in the page
-                                                        all_paragraphs = soup.find_all(['p', 'div'])
-                                                        # FIX 1b: Collect filtered paragraphs in ONE pass.
-                                                        # The original code applied the same filter twice — once to build
-                                                        # paragraph_texts (for the length check), then again to build para_soup.
-                                                        # Now we iterate all_paragraphs once, store the elements, and reuse them.
-                                                        filtered_paras = []
-                                                        for para in all_paragraphs:
-                                                            para_text = para.get_text(strip=True)
-                                                            # Check if paragraph has contact info or substantial content
-                                                            if para_text and (len(para_text) > 20 or re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', para_text)):
-                                                                # Skip if it's clearly navigation/noise
-                                                                if para_text.count('](') < 10 and not re.match(r'^https?://', para_text):
-                                                                    filtered_paras.append(para)
-                                                        paragraph_texts = [p.get_text(strip=True) for p in filtered_paras]
-                                                        
-                                                        if paragraph_texts:
-                                                            para_joined = '\n'.join(paragraph_texts)
-                                                            if len(para_joined) > len(main_content_text_preview):
-                                                                # Use paragraphs instead
-                                                                print(f"[DEBUG] Using {len(paragraph_texts)} paragraphs for extraction (total {len(para_joined)} chars)")
-                                                            # Create a temporary soup with just these paragraphs
-                                                            para_soup = BeautifulSoup('', 'lxml')
-                                                            for para in filtered_paras:
-                                                                para_soup.append(para)
-                                                            if len(para_soup.get_text(strip=True)) > len(main_content_text_preview):
-                                                                main_content = para_soup
-                                                                print(f"[DEBUG] Switched to paragraph-based extraction")
-                                                    
-                                                    # Table extraction is handled by Crawl4AI - no need to search for div-based tables
-                                                    
-                                                    # SIMPLIFIED: Convert all links (including emails) to markdown format
-                                                    # This preserves emails and all links in the output
-                                                    from bs4 import NavigableString
-                                                    for link in main_content.find_all('a', href=True):
-                                                        href = link.get('href', '').strip()
-                                                        href_no_frag = href.split('#', 1)[0].rstrip('/')
-                                                        link_text = link.get_text(strip=True) or ""
-                                                        
-                                                        # Skip empty/anchor links (just #)
-                                                        if not href or (href == '#' or (href.startswith('#') and len(href) == 1)):
-                                                            link.decompose()
-                                                            continue
-
-                                                        # Issue #1 fix: drop self-referencing links (often have empty text and become []())
-                                                        if result.url:
-                                                            url_norm = result.url.split('#', 1)[0].rstrip('/')
-                                                            if href_no_frag == url_norm:
-                                                                link.decompose()
-                                                                continue
-                                                            # Handle relative self-links like "/career/contact/index_eng.html"
-                                                            if href.startswith('/') and url_norm.endswith(href_no_frag):
-                                                                link.decompose()
-                                                                continue
-                                                            # Also drop same-page anchors if they have no visible text
-                                                            if href.startswith(result.url) and ('#' in href) and not link_text:
-                                                                link.decompose()
-                                                                continue
-
-                                                        # Drop empty-text non-email links (prevents [](...))
-                                                        if not link_text and not href.startswith('mailto:'):
-                                                            link.decompose()
-                                                            continue
-                                                        
-                                                        # Convert email links to markdown
-                                                        if href.startswith('mailto:'):
-                                                            email = unescape(href[7:])
-                                                            if not email:
-                                                                link.decompose()
-                                                                continue
-                                                            
-                                                            # GENERAL: If link contains a lot of text (like contact info blocks),
-                                                            # preserve all the text and just convert the email part to markdown
-                                                            # Check if this is a contact info block (has name pattern and phone/email)
-                                                            # GENERAL: For LinkElementMailto links, get_text() should get all child content
-                                                            # But if it doesn't, try getting from the link's parent or check if children exist
-                                                            link_full_text = link.get_text(separator=' ', strip=True)
-                                                            # If link text is very short but link has class LinkElementMailto, it might be a contact block
-                                                            # Try getting text from parent if link text is suspiciously short
-                                                            if len(link_full_text) < 30 and 'LinkElementMailto' in str(link.get('class', [])):
-                                                                # Check parent for full text
-                                                                parent = link.find_parent(['div', 'section'])
-                                                                if parent:
-                                                                    parent_text = parent.get_text(separator=' ', strip=True)
-                                                                    # If parent has contact info and is not too large, use it
-                                                                    if (re.search(r'[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+.*\([^)]+\)', parent_text) and
-                                                                        (re.search(r'T\.\s*\(?\d+|\(?\d{3,4}\)?\s*[\-]?\s*\d{3,4}', parent_text) or '@' in parent_text) and
-                                                                        len(parent_text) < 500):  # Not too large
-                                                                        link_full_text = parent_text
-                                                            is_contact_block = (
-                                                                len(link_full_text) > 50 and
-                                                                re.search(r'[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+.*\([^)]+\)', link_full_text) and
-                                                                (re.search(r'T\.\s*\(?\d+|\(?\d{3,4}\)?\s*[\-]?\s*\d{3,4}', link_full_text) or '@' in link_full_text)
-                                                            )
-                                                            
-                                                            
-                                                            if is_contact_block:
-                                                                # This is a contact info block - replace the entire <a> tag with a
-                                                                # paragraph containing the formatted contact block text.
-                                                                # FIX 1c: The original code mutated text nodes inside the link
-                                                                # (replacing the email string with a markdown link), but then
-                                                                # immediately replaced the entire link element via link.replace_with(),
-                                                                # discarding all those DOM mutations. The email is already replaced
-                                                                # correctly below via re.sub() on link_content (derived from
-                                                                # link_full_text). The wasted text_node loop is removed.
-                                                                email_pattern = re.escape(email)
-                                                                
-                                                                # GENERAL: Replace link with a paragraph containing all its text content
-                                                                # This ensures the contact block is extracted as a single paragraph
-                                                                link_content = link_full_text
-                                                                # Replace email with markdown link
-                                                                link_content = re.sub(f'\\b{email_pattern}\\b', f'[{email}](mailto:{email})', link_content)
-                                                                # Create a new paragraph element (Fix #2: use callable() guard - hasattr passes for NavigableString
-                                                                # because new_tag exists as an attribute but is None, causing TypeError on call)
-                                                                tag_parent = main_content if main_content is not None else soup
-                                                                if tag_parent is not None and callable(getattr(tag_parent, 'new_tag', None)):
-                                                                    new_para = tag_parent.new_tag('p')
-                                                                    new_para['class'] = 'contact-block-extracted'
-                                                                    new_para.string = link_content
-                                                                    link.replace_with(new_para)
-                                                                else:
-                                                                    link.replace_with(NavigableString(link_content))
-                                                                continue  # Skip the rest of link processing since we replaced it
-                                                            else:
-                                                                # Simple email link - use email as link text if link text is generic
-                                                                if not link_text or link_text.lower() in ['email', 'e-mail', 'mail', 'contact']:
-                                                                    link_text = email
-                                                                # Replace with markdown: [email](mailto:email)
-                                                                link.replace_with(NavigableString(f"[{link_text}](mailto:{email})"))
-                                                        # Convert regular links to markdown
-                                                        elif href:
-                                                            if not link_text:
-                                                                link_text = href
-                                                            link.replace_with(NavigableString(f"[{link_text}]({href})"))
-                                                    
-                                                    # Get the text (links are already in markdown format)
-                                                    # IMPORTANT: We remove table elements before extracting paragraphs to
-                                                    # avoid duplicating table content. BUT headings can sometimes live
-                                                    # inside layout tables, so extract headings first, then drop tables.
-                                                    main_content_for_text = BeautifulSoup(str(main_content), 'lxml')
-                                                    
-                                                    # SIMPLIFIED: Extract all paragraphs and text, preserving structure
-                                                    # No complex contact block extraction - just extract everything properly
-                                                    lines = []
-                                                    
-                                                    # FIX 1: Disable old heading extraction - headings are now extracted in DOM order
-                                                    # via extract_headings_and_tables_in_dom_order() and added to tables_markdown
-                                                    # This prevents duplicate headings and wrong ordering from navigation elements
-                                                    # Headings will be extracted separately with proper DOM order and table associations
-                                                    
-                                                    # Remove all table elements since we've already extracted them
-                                                    for table_elem in main_content_for_text.find_all('table'):
-                                                        table_elem.decompose()
-                                                    
-                                                    # Extract all paragraphs and divs (preserves structure, INCLUDES FIRST PARAGRAPH)
-                                                    all_paras = main_content_for_text.find_all(['p', 'div'], recursive=True)
-                                                    i = 0
-                                                    while i < len(all_paras):
-                                                        para = all_paras[i]
-                                                        # Skip if inside a table (already extracted)
-                                                        if para.find_parent('table'):
-                                                            i += 1
-                                                            continue
-                                                        
-                                                        # Skip if it's a heading (already extracted)
-                                                        if para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                                            i += 1
-                                                            continue
-                                                        
-                                                        # Get text from this paragraph (links already converted to markdown, INCLUDING EMAILS)
-                                                        para_text = para.get_text(separator=' ', strip=True)
-                                                        if para_text and len(para_text.strip()) > 2:
-                                                            # Normalize whitespace but keep structure
-                                                            para_text = re.sub(r'\s+', ' ', para_text, flags=re.UNICODE).strip()
-                                                            
-                                                            # GENERAL: Merge contact info split across multiple short paragraphs
-                                                            # Contact info is often split like: "Name (pronouns)" -> "Title" -> "T. phone" -> "E. email"
-                                                            # If paragraph has name pattern but no contact info, merge with next short paragraphs until contact info is found
-                                                            if para_text and re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', para_text) and not re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', para_text, re.I):
-                                                                merged = para_text
-                                                                j = i + 1
-                                                                # Merge up to 5 consecutive short paragraphs
-                                                                while j < len(all_paras) and j - i <= 5:
-                                                                    next_para = all_paras[j]
-                                                                    if next_para.find_parent('table') or next_para.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                                                        break
-                                                                    next_text = next_para.get_text(separator=' ', strip=True)
-                                                                    if next_text and len(next_text.strip()) > 2:
-                                                                        next_text = re.sub(r'\s+', ' ', next_text, flags=re.UNICODE).strip()
-                                                                        # Stop if next paragraph is another name
-                                                                        if re.search(r'^[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+\s+\([^)]+\)', next_text):
-                                                                            break
-                                                                        # Merge short paragraphs (< 80 chars) or paragraphs with contact info
-                                                                        if len(next_text) < 80 or re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', next_text, re.I):
-                                                                            merged = f"{merged} {next_text}"
-                                                                            j += 1
-                                                                            # Stop if we found contact info
-                                                                            if re.search(r'@|mailto:|T\.\s*\(?\d+|E\.\s*[a-z]', merged, re.I):
-                                                                                break
-                                                                        else:
-                                                                            break
-                                                                    else:
-                                                                        j += 1
-                                                                para_text = merged
-                                                                i = j  # Skip merged paragraphs
-                                                            else:
-                                                                i += 1
-                                                            
-                                                            # Skip if it's just a URL or navigation
-                                                            if not re.match(r'^URL:\s*https?://', para_text, re.IGNORECASE):
-                                                                if not re.match(r'^Breadcrumb\s+Navigation', para_text, re.IGNORECASE):
-                                                                    # Skip navigation/footer patterns
-                                                                    nav_keywords = ['data privacy', 'declaration of accessibility', 'impressum', 
-                                                                                   'datenschutz', 'cookie policy', 'accessibility statement']
-                                                                    if not any(keyword in para_text.lower() for keyword in nav_keywords):
-                                                                        lines.append(para_text)
-                                                        else:
-                                                            i += 1
-                                                    
-                                                    # If no paragraphs found, fall back to line-by-line extraction
-                                                    if not lines:
-                                                        text = main_content_for_text.get_text(separator='\n', strip=True)
-                                                        lines = [l for l in text.split('\n') if l.strip() and len(l.strip()) > 2]
-                                                    
-                                                    text = '\n'.join(lines)
-                                                    
-                                                    
-                                                    # SIMPLIFIED: Basic filtering - only remove obvious noise
-                                                    # Keep all content, including first paragraph and emails
-                                                    lines = text.split('\n')
-                                                    filtered_lines = []
-                                                    seen_lines = set()  # Track seen lines to avoid duplicates
-                                                    
-                                                    # Collect content from tables to filter duplicates
-                                                    # This includes: research areas, parameter names, table headers, table cell content
-                                                    table_content_signatures = set()
-                                                    research_areas_in_tables = set()
-                                                    
-                                                    if html_fallback_tables:
-                                                        # Extract all table cell content as signatures for deduplication
-                                                        # Split by table rows and cells
-                                                        table_lines = html_fallback_tables.split('\n')
-                                                        for line in table_lines:
-                                                            line_stripped = line.strip()
-                                                            if not line_stripped or '|' not in line_stripped:
-                                                                continue
-                                                            
-                                                            # Extract individual cells from table row
-                                                            cells = [c.strip() for c in line_stripped.split('|') if c.strip() and not c.strip().startswith('---')]
-                                                            for cell in cells:
-                                                                cell_normalized = re.sub(r'\s+', ' ', cell.lower()).strip()
-                                                                if cell_normalized and len(cell_normalized) > 2:
-                                                                    table_content_signatures.add(cell_normalized)
-                                                                    
-                                                                    # Also extract individual words/phrases from cells for more aggressive matching
-                                                                    # This helps catch research areas, parameter names, etc. that appear as standalone lines
-                                                                    words = cell_normalized.split()
-                                                                    for word in words:
-                                                                        if len(word) > 3:  # Only meaningful words
-                                                                            table_content_signatures.add(word)
-                                                                    
-                                                                    # Extract phrases (2-4 word combinations) for better matching
-                                                                    # This catches "Electron energy", "Fermi, Group Leader IceCube", etc.
-                                                                    if len(words) >= 2:
-                                                                        # 2-word phrases
-                                                                        for i in range(len(words) - 1):
-                                                                            phrase = ' '.join(words[i:i+2])
-                                                                            if len(phrase) > 5:
-                                                                                table_content_signatures.add(phrase)
-                                                                        # 3-word phrases (for longer research areas)
-                                                                        if len(words) >= 3:
-                                                                            for i in range(len(words) - 2):
-                                                                                phrase = ' '.join(words[i:i+3])
-                                                                                if len(phrase) > 8:
-                                                                                    table_content_signatures.add(phrase)
-                                                                        # 4-word phrases (for very long research areas)
-                                                                        if len(words) >= 4:
-                                                                            for i in range(len(words) - 3):
-                                                                                phrase = ' '.join(words[i:i+4])
-                                                                                if len(phrase) > 12:
-                                                                                    table_content_signatures.add(phrase)
-                                                        
-                                                        # Extract research area patterns from table content
-                                                        # Common patterns: "IceCube", "IceCube, Radio", "Fermi, Group Leader IceCube", etc.
-                                                        research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
-                                                        research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
-                                                        research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
-                                                        
-                                                        # Extract complete research area lines from table rows
-                                                        for line in table_lines:
-                                                            line_stripped = line.strip()
-                                                            # If line is a research area (contains known keywords and is short)
-                                                            if (any(keyword.lower() in line_stripped.lower() for keyword in ['IceCube', 'Radio', 'Fermi', 'Baikal', 'Tunka']) 
-                                                                and len(line_stripped) < 100 
-                                                                and '|' not in line_stripped):
-                                                                research_areas_in_tables.add(line_stripped)
-                                                        
-                                                        # Extract research areas from table cell content (more comprehensive)
-                                                        cell_pattern = r'([^|]*?(?:IceCube|Radio|Fermi|Baikal|Tunka)[^|]*)'
-                                                        cell_matches = re.findall(cell_pattern, html_fallback_tables, re.IGNORECASE)
-                                                        for match in cell_matches:
-                                                            research_part = re.search(r'(?:Location:\s*[^,]+,\s*)?([^,]*?(?:IceCube|Radio|Fermi|Baikal|Tunka)[^,]*?)(?:\s*\||\s*$)', match, re.IGNORECASE)
-                                                            if research_part:
-                                                                research_text = research_part.group(1).strip()
-                                                                if len(research_text) < 100 and research_text:
-                                                                    research_areas_in_tables.add(research_text)
-                                                    
-                                                    # SIMPLIFIED FILTERING: Keep all content, only remove obvious noise
-                                                    for line in lines:
-                                                        line_stripped = line.strip()
-                                                        
-                                                        # Skip empty lines
-                                                        if not line_stripped:
-                                                            continue
-
-                                                        # Issue #4: Drop empty/separator-only table rows that leaked into text
-                                                        # (e.g. "---|---" or "|   |")
-                                                        if re.match(r'^\s*\|?\s*(---|—|–)\s*(\|\s*(---|—|–)\s*)+\|?\s*$', line_stripped):
-                                                            continue
-                                                        if line_stripped.startswith('|') and line_stripped.replace('|', '').strip() == '':
-                                                            continue
-                                                        
-                                                        # Only remove obvious noise:
-                                                        # 1. URL header duplicates
-                                                        if re.match(r'^URL:\s*https?://', line_stripped, re.IGNORECASE):
-                                                            continue
-                                                        if re.match(r'^Breadcrumb\s+Navigation', line_stripped, re.IGNORECASE):
-                                                            continue
-                                                        # 2. Lines that are just bare URLs (no text)
-                                                        if re.match(r'^https?://[^\s]+$', line_stripped):
-                                                            continue
-                                                        # 3. Very short lines (< 3 chars) that aren't headings
-                                                        if len(line_stripped) < 3 and not line_stripped.startswith('#'):
-                                                            continue
-                                                        # 4. Exact duplicates (keep first occurrence)
-                                                        line_signature = re.sub(r'\s+', ' ', line_stripped.lower()).strip()
-                                                        if line_signature in seen_lines:
-                                                            continue
-                                                        seen_lines.add(line_signature)
-                                                        
-                                                        # Keep everything else (including first paragraph, emails, all content)
-                                                        filtered_lines.append(line)
-                                                    
-                                                    text = '\n'.join(filtered_lines)
-                                                    
-                                                    # Apply enhanced duplication detection
-                                                    lines_list = text.split('\n')
-                                                    duplicates = detect_enhanced_repetition(lines_list)
-                                                    
-                                                    # Remove duplicate lines (keep first occurrence)
-                                                    deduplicated_lines = []
-                                                    for i, line in enumerate(lines_list):
-                                                        if i not in duplicates:
-                                                            deduplicated_lines.append(line)
-                                                    
-                                                    text = '\n'.join(deduplicated_lines)
-                                                    
-                                                    # Clean markdown link syntax (remove whitespace from links)
-                                                    text = clean_markdown_links_post_process(text)
-                                                    
-                                                    # If text is still very short, try getting from entire body (but apply same filtering)
-                                                    # RELAXED: Lower threshold from 100 to 50, and check for contact info
-                                                    text_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', text))
-                                                    if len(text.strip()) < 50 and not text_has_contact:
-                                                        body_text = soup.find('body')
-                                                        if body_text:
-                                                            body_text_clean = body_text.get_text(separator='\n', strip=True)
-                                                            # Apply same filtering to body text
-                                                            body_lines = body_text_clean.split('\n')
-                                                            filtered_body_lines = []
-                                                            for line in body_lines:
-                                                                line_stripped = line.strip()
-                                                                if not line_stripped:
-                                                                    continue
-                                                                
-                                                                # RELAXED: Check for contact info FIRST - always keep it
-                                                                has_contact_pattern = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)|\b[A-Z][a-z]+\s+[A-Z][a-z]+.*(Head|Manager|Leader|Trainer|Recruitment)', line_stripped))
-                                                                if has_contact_pattern:
-                                                                    filtered_body_lines.append(line)
-                                                                    continue
-                                                                
-                                                                if len(line_stripped) < 2:  # RELAXED: from 3 to 2
-                                                                    continue
-                                                                if line_stripped.count('](') > 8:  # RELAXED: from 5 to 8
-                                                                    continue
-                                                                if re.match(r'^https?://[^\s]+$', line_stripped) or (line_stripped.count('/') > 8 and 'http' in line_stripped):  # RELAXED
-                                                                    continue
-                                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.2:  # RELAXED: from 0.3 to 0.2
-                                                                    continue
-                                                                filtered_body_lines.append(line)
-                                                            body_text_filtered = '\n'.join(filtered_body_lines)
-                                                            if len(body_text_filtered) > len(text):
-                                                                text = body_text_filtered
-                                                                print(f"[DEBUG] Using filtered body text ({len(text)} chars)")
-                                                    
-                                                    # Combine tables and text
-                                                    # IMPORTANT: If we extracted tables from HTML fallback, use them
-                                                    # Store tables separately so they don't get filtered out
-                                                    #
-                                                    # Tables are extracted by Crawl4AI - no need for DOM-order extraction
-                                                    # html_fallback_tables is empty since we're using Crawl4AI tables
-                                                    
-                                                    # RELAXED: Check for contact info in text - if present, use it even if short
-                                                    if True:
-                                                        text_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', text))
-                                                        if text and (len(text.strip()) > 30 or text_has_contact):  # RELAXED: from 50 to 30, or if has contact info
-                                                            # Don't add URL header here - it will be added later
-                                                            markdown_content = text
-                                                            print(f"[INFO] Extracted content directly from HTML ({len(text)} chars, {len(html_tables_found) if 'html_tables_found' in locals() else 0} tables)")
-                                                    else:
-                                                        # Last resort: try to get ANY text from the page
-                                                        print(f"[WARNING] Extracted text too short ({len(text)} chars) - trying full page extraction")
-                                                        full_page_text = soup.get_text(separator='\n', strip=True)
-                                                        # RELAXED: Lower threshold and check for contact info
-                                                        full_page_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', full_page_text))
-                                                        if full_page_text and (len(full_page_text.strip()) > 50 or full_page_has_contact):  # RELAXED: from 100 to 50
-                                                            # Apply aggressive filtering to remove navigation/UI noise
-                                                            lines = full_page_text.split('\n')
-                                                            filtered_lines = []
-                                                            for line in lines:
-                                                                line_stripped = line.strip()
-                                                                if not line_stripped:
-                                                                    continue
-                                                                
-                                                                # RELAXED: Check for contact info FIRST - always keep it
-                                                                has_contact_pattern = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)|\b[A-Z][a-z]+\s+[A-Z][a-z]+.*(Head|Manager|Leader|Trainer|Recruitment)', line_stripped))
-                                                                if has_contact_pattern:
-                                                                    filtered_lines.append(line)
-                                                                    continue
-                                                                
-                                                                if len(line_stripped) < 2:  # RELAXED: from 5 to 2
-                                                                    continue
-                                                                if line_stripped.count('](') > 8:  # RELAXED: from 5 to 8
-                                                                    continue
-                                                                if re.match(r'^https?://[^\s]+$', line_stripped) or (line_stripped.count('/') > 8 and 'http' in line_stripped):  # RELAXED
-                                                                    continue
-                                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.2:  # RELAXED: from 0.3 to 0.2
-                                                                    continue
-                                                                if len(line_stripped.split()) == 1 and line_stripped.isupper() and len(line_stripped) < 10:  # RELAXED: only short all-caps
-                                                                    continue
-                                                                filtered_lines.append(line)
-                                                            meaningful_text = '\n'.join(filtered_lines)
-                                                            # RELAXED: Lower threshold and check for contact info
-                                                            meaningful_has_contact = bool(re.search(r'@|mailto:|T\.\s*\(?\d+|\(he/him\)|\(she/her\)', meaningful_text))
-                                                            if len(meaningful_text) > 30 or meaningful_has_contact:  # RELAXED: from 100 to 30
-                                                                # Don't add URL header here - it will be added later
-                                                                markdown_content = meaningful_text
-                                                                print(f"[INFO] Extracted filtered full page content ({len(meaningful_text)} chars)")
-                                                        else:
-                                                            print(f"[WARNING] Page appears to be empty or content is loaded via JavaScript/iframe")
-                                                            print(f"[WARNING] HTML length: {len(result.html) if hasattr(result, 'html') and result.html else 0} chars")
-                                                # If main_content was not found, extract text from body/soup
-                                                # (Tables are already extracted above, regardless of main_content)
-                                                if not main_content:
-                                                    print(f"[WARNING] Could not find main content area in HTML - extracting text from body directly")
-                                                    # Tables are already extracted above, so we just need to extract text
-                                                    
-                                                    # Try to get text from entire body as last resort
-                                                    body = soup.find('body')
-                                                    if body:
-                                                        body_text = body.get_text(separator='\n', strip=True)
-                                                        if body_text and len(body_text.strip()) > 100:
-                                                            # Apply aggressive filtering to remove navigation/UI noise
-                                                            body_lines = body_text.split('\n')
-                                                            filtered_body_lines = []
-                                                            # Collect research areas from tables to filter duplicates
-                                                            research_areas_in_tables = set()
-                                                            if html_fallback_tables:
-                                                                research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
-                                                                research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
-                                                                research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
-                                                            
-                                                            for line in body_lines:
-                                                                line_stripped = line.strip()
-                                                                if not line_stripped or len(line_stripped) < 5:
-                                                                    continue
-                                                                if line_stripped.count('](') > 5:
-                                                                    continue
-                                                                if re.match(r'^https?://', line_stripped) or line_stripped.count('/') > 5:
-                                                                    continue
-                                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.3:
-                                                                    continue
-                                                                if len(line_stripped.split()) == 1 and line_stripped.isupper():
-                                                                    continue
-                                                                # Skip dropdown content: lines with many consecutive capitalized abbreviations
-                                                                abbrev_pattern = re.compile(r'\b[A-Z]{2,}(?:[-_][A-Z0-9]{2,})+\b')
-                                                                abbrev_matches = abbrev_pattern.findall(line_stripped)
-                                                                if len(abbrev_matches) > 10 and len(line_stripped) > 100:
-                                                                    continue
-                                                                # Skip research area lines that are already in tables
-                                                                if research_areas_in_tables:
-                                                                    line_lower = line_stripped.lower()
-                                                                    for research_area in research_areas_in_tables:
-                                                                        if research_area.lower() in line_lower and len(line_stripped) < 100:
-                                                                            continue
-                                                                filtered_body_lines.append(line)
-                                                            meaningful_body_text = '\n'.join(filtered_body_lines)
-                                                            # Combine with tables, but avoid duplication
-                                                            if html_fallback_tables and html_fallback_tables.strip() not in meaningful_body_text:
-                                                                meaningful_body_text = html_fallback_tables + "\n\n" + meaningful_body_text
-                                                            if len(meaningful_body_text) > 100:
-                                                                # Don't add URL header here - it will be added later
-                                                                markdown_content = meaningful_body_text
-                                                                print(f"[INFO] Extracted filtered body content as fallback ({len(meaningful_body_text)} chars)")
-                                                    else:
-                                                        # Absolute last resort: get any text from soup
-                                                        all_text = soup.get_text(separator='\n', strip=True)
-                                                        if all_text and len(all_text.strip()) > 100:
-                                                            # Apply aggressive filtering
-                                                            lines = all_text.split('\n')
-                                                            filtered_lines = []
-                                                            # Collect research areas from tables to filter duplicates
-                                                            research_areas_in_tables = set()
-                                                            if html_fallback_tables:
-                                                                research_pattern = r'\b(IceCube|Radio|Fermi|Baikal|Tunka|RADIO|Multimessenger School|Group Leader[^|]*?)(?:,|\s*$)'
-                                                                research_matches = re.findall(research_pattern, html_fallback_tables, re.IGNORECASE)
-                                                                research_areas_in_tables.update([m.strip() for m in research_matches if m.strip()])
-                                                            
-                                                            for line in lines:
-                                                                line_stripped = line.strip()
-                                                                if not line_stripped or len(line_stripped) < 5:
-                                                                    continue
-                                                                if line_stripped.count('](') > 5:
-                                                                    continue
-                                                                if re.match(r'^https?://', line_stripped) or line_stripped.count('/') > 5:
-                                                                    continue
-                                                                if len(re.sub(r'[^\w\s]', '', line_stripped)) < len(line_stripped) * 0.3:
-                                                                    continue
-                                                                if len(line_stripped.split()) == 1 and line_stripped.isupper():
-                                                                    continue
-                                                                # Skip dropdown content: lines with many consecutive capitalized abbreviations
-                                                                abbrev_pattern = re.compile(r'\b[A-Z]{2,}(?:[-_][A-Z0-9]{2,})+\b')
-                                                                abbrev_matches = abbrev_pattern.findall(line_stripped)
-                                                                if len(abbrev_matches) > 10 and len(line_stripped) > 100:
-                                                                    continue
-                                                                # Skip research area lines that are already in tables
-                                                                if research_areas_in_tables:
-                                                                    line_lower = line_stripped.lower()
-                                                                    for research_area in research_areas_in_tables:
-                                                                        if research_area.lower() in line_lower and len(line_stripped) < 100:
-                                                                            continue
-                                                                filtered_lines.append(line)
-                                                            meaningful_all_text = '\n'.join(filtered_lines)
-                                                            # Combine with tables, but avoid duplication
-                                                            if html_fallback_tables and html_fallback_tables.strip() not in meaningful_all_text:
-                                                                meaningful_all_text = html_fallback_tables + "\n\n" + meaningful_all_text
-                                                            if len(meaningful_all_text) > 100:
-                                                                # Don't add URL header here - it will be added later
-                                                                markdown_content = meaningful_all_text
-                                                                print(f"[INFO] Extracted filtered all page text as last resort ({len(meaningful_all_text)} chars)")
-                                        except Exception as e:
-                                            print(f"[WARNING] Failed to extract from HTML: {e}")
-                                            import traceback
-                                            traceback.print_exc()
-                        else:
-                            # Fallback if markdown is just a string
-                            markdown_content = result.markdown or ""
+                            markdown_fit = result.markdown.fit_markdown
+                            markdown_raw = getattr(result.markdown, 'raw_markdown', None)
+                            markdown_is_object = True
+                        elif isinstance(result.markdown, str):
+                            markdown_str_val = result.markdown
                     
-                    # ============================================================
-                    # Post-process markdown to inject links directly into tables
-                    # ============================================================
-                    # Crawl4AI's markdown generator loses links in table cells.
-                    # We extract tables from HTML with links preserved, then replace
-                    # the corresponding table sections in the markdown in-place.
-                    if markdown_content and not result_is_pdf and hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-                        try:
-                            # Check if we need to inject links (if markdown has tables but no email links)
-                            has_tables = '|' in markdown_content and len([l for l in markdown_content.split('\n') if '|' in l]) >= 3
-                            has_email_links = bool(re.search(r'\[[^\]]+\]\(mailto:[^\s@]+@[^\s@]+\.[^\s)]+\)', markdown_content))
-                            
-                            if has_tables and not has_email_links:
-                                print(f"[INFO] Injecting links into tables (found tables but no email links)")
-                            
-                            markdown_content = inject_links_into_markdown_tables(markdown_content, result.html)
-                        except Exception as e:
-                            # If post-processing fails, continue with original markdown
-                            print(f"[WARNING] Failed to inject links into markdown: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            pass
-                    
-                    # ============================================================
-                    # Check for Errors
-                    # ============================================================
-                    # Check if the crawl was successful
-                    if hasattr(result, 'success') and not result.success:
-                        # Crawl failed - log the error
-                        error_msg = getattr(result, 'error_message', 'Unknown error')
-                        all_errors.append({
-                            'url': result.url,
-                            'error': error_msg,
-                            'timestamp': datetime.now().isoformat()
-                        })
-                        
-                        print(f"[ERROR] {result.url}")
-                        print(f"        Reason: {error_msg}")
-                        continue
-                    
-                    # ============================================================
-                    # Hybrid Table Extraction: Crawl4AI for JS rendering + BeautifulSoup for table extraction
-                    # ============================================================
-                    # Strategy: Use Crawl4AI only for JS rendering, extract tables directly from result.html
-                    # This approach:
-                    # 1. Detects nested tables and prefers nested data tables over outer layout tables
-                    # 2. Extracts headings and tables in DOM order
-                    # 3. Preserves document structure and associations
-                    # 4. Avoids duplicate or flattened tables
-                        tables_markdown = ""
-                    
-                    if not result_is_pdf and hasattr(result, 'html') and result.html and BEAUTIFULSOUP_AVAILABLE:
-                        try:
-                            # ============================================================
-                            # INDICO EVENT PAGE HANDLING
-                            # ============================================================
-                            # Indico pages have a specific structure that requires custom extraction
-                            current_url = result.url if hasattr(result, 'url') else None
-                            if current_url and is_indico_url(current_url):
-                                print(f"[INFO] Detected Indico event page - using specialized extractor")
-                                indico_content = extract_indico_event(result.html, url=current_url)
-                                if indico_content:
-                                    tables_markdown = indico_content
-                                    print(f"[INFO] Indico extraction: {len(indico_content)} chars extracted")
-                                    # Skip general DOM extraction for Indico pages
-                                    dom_ordered_content = []
-                                else:
-                                    # Fallback to general extraction if Indico extraction fails
-                                    print(f"[WARNING] Indico extraction returned empty, using general extraction")
-                                    dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
-                            else:
-                                # Solution 4: Extract headings and tables in DOM order
-                                dom_ordered_content = extract_headings_and_tables_in_dom_order(result.html, url=result.url)
-                            
-                            # Only process DOM extraction if we didn't use Indico extractor
-                            if dom_ordered_content:
-                                print(f"[DEBUG] DOM-order extraction: Found {len(dom_ordered_content)} content items")
-                                
-                                # Format as markdown (only for non-Indico pages)
-                                tables_markdown = format_tables_with_headings_as_markdown(dom_ordered_content)
-                                
-                                if tables_markdown:
-                                    # Count tables and headings for logging
-                                    table_count = sum(1 for item in dom_ordered_content if item['type'] == 'table')
-                                    heading_count = sum(1 for item in dom_ordered_content if item['type'] == 'heading')
-                                    print(f"[INFO] DOM-order extraction: Formatted {table_count} table(s) and {heading_count} heading(s)")
-                                else:
-                                    print(f"[DEBUG] DOM-order extraction: No tables formatted (empty result)")
-                        except Exception as e:
-                            print(f"[WARNING] Hybrid table extraction failed: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            # Fallback: Use Crawl4AI tables if Hybrid extraction fails
-                            if hasattr(result, 'tables') and result.tables:
-                                print(f"[DEBUG] Falling back to Crawl4AI table extraction")
-                                for idx, crawl_table in enumerate(result.tables, 1):
-                                    if isinstance(crawl_table, dict):
-                                        headers = crawl_table.get('headers', [])
-                                        rows = crawl_table.get('rows', []) or crawl_table.get('data', [])
-                                        if rows:
-                                            if headers:
-                                                tables_markdown += "| " + " | ".join(str(h) for h in headers) + " |\n"
-                                                tables_markdown += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                                            for row in rows:
-                                                tables_markdown += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-                                            tables_markdown += "\n"
-                    
-                    # Fallback for PDFs: Use Crawl4AI tables
-                    if result_is_pdf and hasattr(result, 'tables') and result.tables:
-                            print(f"[DEBUG] PDF: Using Crawl4AI table extraction ({len(result.tables)} table(s))")
-                            for idx, crawl_table in enumerate(result.tables, 1):
-                                if isinstance(crawl_table, dict):
-                                    headers = crawl_table.get('headers', [])
-                                    rows = crawl_table.get('rows', []) or crawl_table.get('data', [])
-                                    if rows:
-                                        if headers:
-                                            tables_markdown += "| " + " | ".join(str(h) for h in headers) + " |\n"
-                                            tables_markdown += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                                        for row in rows:
-                                            tables_markdown += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-                                        tables_markdown += "\n"
-                    
-                    # ============================================================
-                    # Extract Image References (for PDFs)
-                    # ============================================================
-                    image_refs_markdown = ""
-                    if result_is_pdf and PDF_SUPPORT_AVAILABLE:
-                        # Check for extracted images
-                        if hasattr(result, 'media') and result.media:
-                            images = result.media.get("images", [])
-                            if images:
-                                print(f"[PDF] Extracted {len(images)} image(s) from {result.url}")
-                                # Add image references to markdown
-                                image_refs_markdown = "\n\n## Extracted Images\n\n"
-                                for idx, img_info in enumerate(images, 1):
-                                    img_path = img_info.get('path', '')
-                                    if img_path:
-                                        # Create relative path from markdown file
-                                        img_filename = Path(img_path).name
-                                        image_refs_markdown += f"![Image {idx}](extracted_images/{img_filename})\n\n"
-                    
-                    # ============================================================
-                    # Save to File
-                    # ============================================================
-                    
-                    try:
-                        # BUG FIX: Create header unconditionally using final_url (actual URL after redirects)
-                        # Always include source URL header, even if content is empty
-                        # Use final_url if available (actual URL after redirects), otherwise fallback to result.url
-                        # Note: final_url and original_url are defined earlier in this try block (lines 5339-5348)
-                        # We know result.url exists due to check at line 5333
-                        source_url_for_header = None
-                        
-                        # Try to use final_url (the actual URL that was crawled, after redirects)
-                        # This is defined earlier in the same try block
-                        try:
-                            # final_url is set at line 5345 or 5348, should be in scope here
-                            if final_url and isinstance(final_url, str) and final_url.strip():
-                                source_url_for_header = final_url.strip()
-                        except NameError:
-                            # final_url not in scope (shouldn't happen, but handle gracefully)
-                            pass
-                        
-                        # Fallback: use result.url (we know this exists and is non-empty due to check at line 5333)
-                        if not source_url_for_header:
-                            if hasattr(result, 'url') and result.url:
-                                url_val = result.url
-                                if isinstance(url_val, str) and url_val.strip():
-                                    source_url_for_header = url_val.strip()
-                                else:
-                                    # Non-string or empty - convert to string
-                                    source_url_for_header = str(url_val) if url_val else "Unknown URL"
-                            else:
-                                source_url_for_header = "Unknown URL"
-                        
-                        # Ensure we never have an empty header
-                        if not source_url_for_header or not source_url_for_header.strip():
-                            source_url_for_header = "Unknown URL"
-                        
-                        url_header = f"# Source URL\n\n{source_url_for_header}\n\n"
-                        
-                        if markdown_content or tables_markdown or image_refs_markdown:
-                            # Remove any existing URL header from markdown_content to avoid duplication
-                            if markdown_content:
-                                # Remove URL header pattern if it exists
-                                markdown_content = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
-                                # Also remove "URL: <url>" patterns and breadcrumb navigation
-                                markdown_content = re.sub(r'^URL:\s*https?://[^\s]+\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
-                                markdown_content = re.sub(r'^Breadcrumb\s+Navigation\s*\n?', '', markdown_content, flags=re.IGNORECASE | re.MULTILINE)
-                                # Remove lines that are just the current page URL
-                                markdown_content = re.sub(r'^' + re.escape(result.url) + r'\s*\n?', '', markdown_content, flags=re.MULTILINE)
-                                
-                                # Apply enhanced duplication detection to final markdown
-                                markdown_lines = markdown_content.split('\n')
-                                duplicates = detect_enhanced_repetition(markdown_lines)
-                                
-                                # Remove duplicate lines (keep first occurrence)
-                                deduplicated_lines = []
-                                for i, line in enumerate(markdown_lines):
-                                    if i not in duplicates:
-                                        deduplicated_lines.append(line)
-                                
-                                markdown_content = '\n'.join(deduplicated_lines)
-                                
-                                # Clean markdown link syntax (remove whitespace from links)
-                                markdown_content = clean_markdown_links_post_process(markdown_content)
-
-                                # Issue #1/#9: remove empty-text markdown links like [](...)
-                                # Keep images ![](...)
-                                markdown_content = re.sub(r'(?<!\!)\[\]\([^)]+\)', '', markdown_content)
-                                
-                                # GENERAL: Remove navigation patterns (lines with spacer images, navigation links, header images)
-                                # Pattern: Lines containing spacer images, header images, or navigation menu patterns
-                                lines = markdown_content.split('\n')
-                                cleaned_lines = []
-                                for line in lines:
-                                    # Skip lines with spacer images (common in navigation)
-                                    if re.search(r'spacer\.(gif|png|jpg)', line, re.I):
-                                        continue
-                                    # Skip lines with header images (header.jpg, desy.jpg, etc.)
-                                    if re.search(r'(header|desy|logo|banner)\.(jpg|png|gif)', line, re.I):
-                                        continue
-                                    # Skip lines that are just navigation links with images
-                                    if re.search(r'!\[\]\([^)]+(spacer|header|desy|logo|banner)[^)]+\)', line, re.I):
-                                        continue
-                                    # Skip navigation text patterns (common UI text)
-                                    if re.search(r'(To sort click|navigation|menu|breadcrumb)', line, re.I):
-                                        continue
-                                    # Skip lines that are navigation menu items (many links, short text)
-                                    link_count = len(re.findall(r'\[([^\]]+)\]\([^)]+\)', line))
-                                    if link_count > 3 and len(line.strip()) < 150:
-                                        continue
-                                    # Skip lines that are just image markdown with no text (header images)
-                                    if re.match(r'^!\[.*?\]\([^)]+\)\s*\|?\s*$', line.strip()):
-                                        continue
-                                    cleaned_lines.append(line)
-                                markdown_content = '\n'.join(cleaned_lines)
-                                
-                                # GENERAL: Remove broken table fragments (rows that look like table fragments but aren't part of proper tables)
-                                # Pattern: Lines like "| Name |" or multi-line fragments like "Name\n| Value |" that are not part of proper tables
-                                lines = markdown_content.split('\n')
-                                cleaned_lines = []
-                                i = 0
-                                in_proper_table = False
-                                fragment_start = -1
-                                
-                                while i < len(lines):
-                                    line = lines[i]
-                                    stripped = line.strip() if line else ""
-                                    
-                                    # Detect proper table start (header row with separator)
-                                    # Also handle case where separator comes first (missing header)
-                                    if re.match(r'^\|[\s\-:]+\|', stripped):
-                                        # Separator without header - check if previous line was a header or if next line has data
-                                        # If previous line is NOT a header, skip this orphaned separator
-                                        prev_is_header = False
-                                        if i > 0:
-                                            prev_stripped = lines[i - 1].strip()
-                                            if prev_stripped and re.match(r'^\|\s*[^|]+\s*\|', prev_stripped):
-                                                prev_is_header = True
-                                        
-                                        if not prev_is_header:
-                                            # Orphaned separator without header - skip it
-                                            i += 1
-                                            continue
-                                        
-                                        if i + 1 < len(lines):
-                                            next_line = lines[i + 1].strip()
-                                            if re.match(r'^\|\s*[^|]+\s*\|', next_line):
-                                                # This is a separator followed by data - treat as proper table
-                                                in_proper_table = True
-                                                fragment_start = -1
-                                                # Add the separator (it's part of a proper table)
-                                                cleaned_lines.append(line)
-                                                i += 1
-                                                continue
-                                    
-                                    if re.match(r'^\|\s*[^|]+\s*\|', stripped):
-                                        # Check if this is followed by a separator (proper table)
-                                        if i + 1 < len(lines):
-                                            next_line = lines[i + 1].strip()
-                                            if re.match(r'^\|[\s\-:]+\|', next_line):
-                                                in_proper_table = True
-                                                fragment_start = -1
-                                                cleaned_lines.append(line)
-                                                i += 1
-                                                continue
-                                    
-                                    # If we're in a proper table, keep all rows
-                                    if in_proper_table:
-                                        # Check if table ends (empty line or non-table line)
-                                        if not stripped or not re.match(r'^\|', stripped):
-                                            in_proper_table = False
-                                        cleaned_lines.append(line)
-                                        i += 1
-                                        continue
-                                    
-                                    # Detect broken fragment pattern: Name on one line, then table cells on next lines
-                                    # Pattern: "Name\n| Value |\n| Value |" where Name is not a table row
-                                    # Also handles: "Name\n\n|  Value |\n|  Value |" (with empty lines)
-                                    if not re.match(r'^\|', stripped) and stripped and not stripped.startswith('#'):
-                                        # Check if next few lines are table-like rows (single-cell or multi-cell)
-                                        fragment_lines = []
-                                        j = i + 1
-                                        consecutive_empty = 0
-                                        while j < len(lines) and j < i + 15:  # Check up to 15 lines ahead
-                                            next_stripped = lines[j].strip()
-                                            # Match single-cell rows (with or without closing |) or multi-cell table rows
-                                            # Pattern: "|  text  " or "|  text  |" or "| text | text |"
-                                            # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
-                                            if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped) or re.match(r'^\|\s*[^|]+\s*\|', next_stripped):
-                                                fragment_lines.append(j)
-                                                consecutive_empty = 0
-                                                j += 1
-                                            elif not next_stripped:
-                                                consecutive_empty += 1
-                                                # Allow up to 2 empty lines between fragments
-                                                if consecutive_empty <= 2:
-                                                    j += 1
-                                                else:
-                                                    break
-                                            else:
-                                                # Non-table line - check if we have enough fragments to consider this a pattern
-                                                if fragment_lines and len(fragment_lines) >= 2:
-                                                    # This is a name followed by fragments - skip them all
-                                                    break
-                                                else:
-                                                    # Not enough fragments, not a pattern
-                                                    break
-                                        
-                                        # If we found fragment pattern (name + 2+ table rows but no separator), skip them
-                                        if fragment_lines and len(fragment_lines) >= 2:
-                                            # Skip the name line and all fragment lines
-                                            i = fragment_lines[-1] + 1
-                                            continue
-                                    
-                                    # Check if this looks like a broken table fragment (table-like row but not in proper table)
-                                    # Single-cell rows (like "|  Value |" or "|  Krisztian  " or "|  Krisztian  |") are likely fragments
-                                    # Pattern: "|  text  " or "|  text  |" (single cell with spaces, may or may not end with |)
-                                    # After strip(), "|  text  " becomes "|  text" (no trailing spaces)
-                                    # Match: starts with |, has spaces, text, optionally has closing | and spaces
-                                    if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', stripped):
-                                        # Single-cell row - check if it's part of a fragment pattern
-                                        # Look ahead to see if there are more single-cell rows or if previous line was a name
-                                        fragment_count = 0
-                                        j = i + 1
-                                        while j < len(lines) and j < i + 10:
-                                            next_stripped = lines[j].strip()
-                                            if re.match(r'^\|\s+[^|]+(\s*\|)?\s*$', next_stripped):
-                                                fragment_count += 1
-                                                j += 1
-                                            elif not next_stripped:
-                                                j += 1
-                                            else:
-                                                break
-                                        
-                                        # Check if previous line was a name (not a table row, not empty, not a heading)
-                                        # Also check 2 lines back in case there's an empty line
-                                        prev_is_name = False
-                                        for check_idx in [i - 1, i - 2]:
-                                            if check_idx >= 0:
-                                                prev_stripped = lines[check_idx].strip()
-                                                if prev_stripped and not re.match(r'^\|', prev_stripped) and not prev_stripped.startswith('#'):
-                                                    prev_is_name = True
-                                                    break
-                                        
-                                        # If we have multiple single-cell rows in sequence OR previous line was a name, they're fragments
-                                        if fragment_count >= 1 or prev_is_name:
-                                            # Skip this fragment line
-                                            i += 1
-                                            continue
-                                    
-                                    # Multi-cell rows that aren't in proper tables
-                                    if re.match(r'^\|\s*[^|]+\s*\|', stripped):
-                                        # Check if next line is also a fragment (not a separator or proper table row)
-                                        if i + 1 < len(lines):
-                                            next_line = lines[i + 1].strip()
-                                            # If next line is not a separator (---) and not a proper table row, this is likely a fragment
-                                            if not re.match(r'^\|[\s\-:]+\|', next_line) and not re.match(r'^\|\s*[^|]+\s*\|', next_line):
-                                                # Skip this fragment line
-                                                i += 1
-                                                continue
-                                    
-                                    cleaned_lines.append(line)
-                                    i += 1
-                                markdown_content = '\n'.join(cleaned_lines)
-                                
-                                markdown_content = markdown_content.strip()
-                        
-                        # Combine header, markdown content, extracted tables, and images
-                        # GENERAL: If we have tables_markdown from DOM-order extraction, use it as primary source
-                        # to preserve DOM order. Remove headings and tables from markdown_content to avoid duplicates.
-                        content_to_save = url_header
-                        
-                        
-                        
-                        
-                        
-                        if tables_markdown:
-                            # tables_markdown contains headings and tables in correct DOM order
-                            # Remove headings and tables from markdown_content to avoid duplicates
-                            if markdown_content:
-                                lines = markdown_content.split('\n')
-                                cleaned_lines = []
-                                i = 0
-                                
-                                # Extract headings from tables_markdown to know what to remove
-                                tables_markdown_lines = tables_markdown.split('\n')
-                                headings_in_tables_markdown = set()
-                                for tm_line in tables_markdown_lines:
-                                    tm_stripped = tm_line.strip()
-                                    if tm_stripped.startswith('#'):
-                                        # Extract heading text (remove # and whitespace, normalize)
-                                        heading_text = tm_stripped.lstrip('#').strip()
-                                        # Normalize whitespace (multiple spaces -> single space)
-                                        heading_text_normalized = ' '.join(heading_text.split())
-                                        headings_in_tables_markdown.add(heading_text_normalized.lower())
-                                
-                                while i < len(lines):
-                                    line = lines[i]
-                                    stripped = line.strip()
-                                    
-                                    
-                                    
-                                    # Remove headings that are already in tables_markdown
-                                    if stripped.startswith('#'):
-                                        heading_text = stripped.lstrip('#').strip()
-                                        # Remove empty headings (just ## with spaces) or headings that match tables_markdown
-                                        if not heading_text or heading_text.lower() in headings_in_tables_markdown:
-                                            i += 1
-                                            continue
-                                    
-                                    # GENERAL: Remove text lines that match heading text in tables_markdown
-                                    # Some headings appear as plain text (not starting with #) in markdown_content
-                                    # Pattern: "Lattice Parameters  " (text that matches a heading)
-                                    if stripped and not stripped.startswith('#') and not stripped.startswith('|'):
-                                        # Check if this text matches a heading in tables_markdown (normalize whitespace)
-                                        stripped_normalized = ' '.join(stripped.split()).lower()  # Normalize whitespace
-                                        if stripped_normalized in headings_in_tables_markdown:
-                                            i += 1
-                                            continue
-                                    
-                                    # GENERAL: Remove broken label-value fragments (text with pipes, not proper tables)
-                                    # Pattern: "Label:---|---" or "Label:|  Value" - text line with colon and pipe
-                                    # These are malformed fragments from HTML conversion, not proper markdown tables
-                                    if ':' in stripped and '|' in stripped and not stripped.startswith('|'):
-                                        # Check if it's a broken fragment pattern:
-                                        # 1. Label ending with : followed by | (with optional dashes/spaces): "Label:---|---"
-                                        # 2. Label ending with : followed by | and value: "Label:|  Value"
-                                        # Match patterns like "Label:---|---" or "Label:| Value"
-                                        # Pattern 1: "Label:---|" or "Label:---|---" (colon, dashes, pipe at end)
-                                        # Pattern 2: "Label:| Value" (colon, pipe, then value)
-                                        # Match patterns like "Label:---|---" (colon, dashes, pipe) or "Label:| Value"
-                                        # Pattern 1: "Label:---|" or "Label:---|---" (colon, dashes, pipe - pipe is required)
-                                        # Pattern 2: "Label:| Value" (colon, pipe, then value)
-                                        is_broken_fragment = (
-                                            re.match(r'^[^|]+:\s*[-]+\|', stripped) or  # "Label:---|" or "Label:---|---"
-                                            re.match(r'^[^|]+:\s*\|', stripped)  # "Label:| Value"
-                                        )
-                                        if is_broken_fragment:
-                                            
-                                            # This is a broken fragment - skip it and any following separator lines
-                                            i += 1
-                                            # Skip following separator lines (---|---)
-                                            while i < len(lines):
-                                                next_stripped = lines[i].strip()
-                                                if not next_stripped:
-                                                    # Empty line - allow one, then break
-                                                    i += 1
-                                                    if i < len(lines) and lines[i].strip():
-                                                        # Check if next non-empty line is also a fragment
-                                                        if ':' in lines[i].strip() and '|' in lines[i].strip() and not lines[i].strip().startswith('|'):
-                                                            continue  # Continue skipping
-                                                    break
-                                                elif _is_separator_line(next_stripped):
-                                                    i += 1
-                                                elif next_stripped and ':' in next_stripped and '|' in next_stripped and not next_stripped.startswith('|'):
-                                                    # Another broken fragment - continue skipping
-                                                    i += 1
-                                                else:
-                                                    break
-                                            continue
-                                    
-                                    # Remove orphaned separator lines (---|---) that aren't part of proper tables
-                                    # GENERAL: These appear when broken fragments are removed, leaving orphaned separators
-                                    if _is_separator_line(stripped):
-                                        # Check if this separator is part of a proper table (has table row before and after)
-                                        # Look further back/forward to catch separators that are far from tables
-                                        has_table_before = any(re.match(r'^\|', lines[j].strip()) for j in range(max(0, i - 10), i) if lines[j].strip() and not lines[j].strip().startswith('#'))
-                                        has_table_after = any(re.match(r'^\|', lines[j].strip()) for j in range(i + 1, min(len(lines), i + 10)) if lines[j].strip() and not lines[j].strip().startswith('#'))
-                                        if not (has_table_before and has_table_after):
-                                            # Orphaned separator - skip it
-                                            i += 1
-                                            continue
-                                    
-                                    # Remove table sections from markdown_content
-                                    if re.match(r'^\|', stripped):
-                                        # PUBDB-specific filtering: Only filter UI tables on PUBDB pages
-                                        # Check both URL and content to handle redirects/embedded content
-                                        html_content = result.html if hasattr(result, 'html') else None
-                                        if _is_pubdb_page(result.url if hasattr(result, 'url') else None, html_content):
-                                            # Collect table lines to check (up to 20 lines, first 5 rows for analysis)
-                                            table_lines_to_check = []
-                                            table_end = i
-                                            while table_end < len(lines) and table_end < i + 20:  # Check up to 20 lines
-                                                next_line = lines[table_end].strip()
-                                                if re.match(r'^\|', next_line):
-                                                    table_lines_to_check.append(next_line)
-                                                    table_end += 1
-                                                elif not next_line:
-                                                    if table_end + 1 < len(lines) and re.match(r'^\|', lines[table_end + 1].strip()):
-                                                        table_end += 1
-                                                    else:
-                                                        break
-                                                else:
-                                                    break
-                                            
-                                            # Check for PUBDB UI keywords in table content (first 5 rows)
-                                            table_content = ' '.join(table_lines_to_check[:5]).lower()
-                                            
-                                            if is_pubdb_ui_table(table_content):
-                                                
-                                                # Skip this PUBDB UI table
-                                                i = table_end
-                                                continue
-                                        
-                                        # For non-PUBDB pages or non-UI tables on PUBDB pages:
-                                        # Remove table sections from markdown_content (they're already in tables_markdown)
-                                        
-                                        
-                                        # Find the end of this table section
-                                        table_end = i
-                                        while table_end < len(lines):
-                                            next_line = lines[table_end].strip()
-                                            if re.match(r'^\|', next_line):
-                                                table_end += 1
-                                            elif not next_line:
-                                                if table_end + 1 < len(lines) and re.match(r'^\|', lines[table_end + 1].strip()):
-                                                    table_end += 1
-                                                else:
-                                                    break
-                                            else:
-                                                break
-                                        # Skip this table section
-                                        i = table_end
-                                        continue
-                                    
-                                    # GENERAL: Remove text lines that duplicate table content
-                                    # Pattern: Lines with names, emails, phones, locations that appear in tables_markdown
-                                    # Check if this line contains structured data (name, email, phone, location) that's in tables
-                                    if stripped and not stripped.startswith('#') and not stripped.startswith('|'):
-                                        # Check if line contains field labels (E-Mail, Phone, Location) - likely duplicate of table content
-                                        has_field_labels = re.search(r'\b(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room):', stripped, re.I) is not None
-                                        
-                                        # Check if line is just a name (single word or two words, capitalized) followed by field labels
-                                        # Pattern: "Name\nE-Mail:..." or "FirstName\nLastName\nE-Mail:..."
-                                        is_name_line = False
-                                        words = stripped.split()
-                                        # Check if current line is a name (1-3 capitalized words, no punctuation except spaces)
-                                        if len(words) <= 3 and all(w and w[0].isupper() and w.replace('-', '').isalnum() for w in words if w):
-                                            # Check if next line has field labels
-                                            if i + 1 < len(lines):
-                                                next_line = lines[i + 1].strip()
-                                                if next_line and re.search(r'\b(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room):', next_line, re.I) is not None:
-                                                    is_name_line = True
-                                            # Also check if current line itself has field labels (e.g., "Andrey\nSiemens\nE-Mail:...")
-                                            if has_field_labels:
-                                                is_name_line = True
-                                            # Also check if this is a name line followed by another name line (split name like "Andrey\nSiemens")
-                                            # Look ahead 1-2 lines to see if there's a field label
-                                            if not is_name_line and i + 2 < len(lines):
-                                                next_next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
-                                                after_next = lines[i + 2].strip() if i + 2 < len(lines) else ""
-                                                # If next line is also a name and line after has field labels, this is part of a name
-                                                if (next_next_line and len(next_next_line.split()) <= 3 and 
-                                                    all(w and w[0].isupper() and w.replace('-', '').isalnum() for w in next_next_line.split() if w) and
-                                                    after_next and re.search(r'\b(E-Mail|Email|Phone|Tel|Telephone|Location|Office|Room):', after_next, re.I) is not None):
-                                                    is_name_line = True
-                                        
-                                        # Also check if line contains email/phone patterns (mailto:, @, phone numbers)
-                                        has_contact_patterns = bool(re.search(r'mailto:|@|phone|tel|\+?\d{2,}', stripped, re.I))
-                                        
-                                        # Also check if line contains location patterns (room numbers, building codes)
-                                        has_location_patterns = bool(re.search(r'\d+\s*[a-z]\s*/\s*\d+|location|office|room', stripped, re.I))
-                                        
-                                        # FIX: Only remove contact info if tables_markdown has content
-                                        # For pages without tables, contact info should be KEPT
-                                        tables_has_content = tables_markdown and len(tables_markdown.strip()) > 50
-                                        
-                                        # Only skip if tables actually have content that this might duplicate
-                                        if tables_has_content and (has_field_labels or is_name_line or has_contact_patterns or has_location_patterns):
-                                            # This line likely duplicates table content - skip it
-                                            i += 1
-                                            continue
-                                    
-                                    cleaned_lines.append(line)
-                                    i += 1
-                                
-                                # Only add non-empty text content from markdown_content (intro text, etc.)
-                                text_only_content = '\n'.join(cleaned_lines).strip()
-                            
-                            # Add tables_markdown FIRST (contains headings and tables in DOM order)
-                            # This preserves the correct DOM order where tables come before other content
-                            
-                            
-                            content_to_save += tables_markdown
-                            
-                            # Add text_only_content AFTER tables_markdown (for any remaining content not in tables_markdown)
-                            if text_only_content:
-                                
-                                content_to_save += "\n\n" + text_only_content
-                        else:
-                            # No DOM-order extraction, use markdown_content as-is
-                            if markdown_content:
-                                content_to_save += markdown_content
-                        if image_refs_markdown:
-                            content_to_save += image_refs_markdown
-                        
-                        
-                        
-                        # Extract and add external links
-                        if not result_is_pdf and hasattr(result, 'html') and result.html:
-                            external_links_markdown = extract_external_links(result.html, result.url)
-                            if external_links_markdown:
-                                content_to_save += external_links_markdown
-                        
-                        # FIX: Fill empty Name columns from email link text in tables
-                        # This handles tables where Name column is empty but email link has the name
-                        def fill_empty_name_columns(content):
-                            """Fill empty Name columns in tables by extracting name from email links.
-                            
-                            Handles table rows that start with || (empty first cell) by extracting
-                            the name from email link text and filling the empty cell.
-                            Only fills if the first cell is truly empty (just whitespace).
-                            """
-                            lines = content.split('\n')
-                            result_lines = []
-                            in_name_table = False  # Track if we're in a table with Name column
-                            in_any_table = False  # Track if we're in any table
-                            
-                            for line in lines:
-                                stripped = line.strip()
-                                
-                                # Detect table headers with Name column
-                                if stripped.startswith('|') and re.search(r'\|\s*Name\s*\|', stripped, re.I):
-                                    in_name_table = True
-                                    in_any_table = True
-                                    result_lines.append(line)
-                                    continue
-                                
-                                # Detect any table header (for tables without Name column)
-                                if stripped.startswith('|') and '---' not in stripped and not in_any_table:
-                                    # Check if it looks like a table header (has multiple columns)
-                                    cols = [c.strip() for c in stripped.split('|') if c.strip()]
-                                    if len(cols) >= 2:
-                                        in_any_table = True
-                                        
-                                
-                                # Reset when we leave the table (empty line or non-table line)
-                                if not stripped or not stripped.startswith('|'):
-                                    in_name_table = False
-                                    in_any_table = False
-                                    result_lines.append(line)
-                                    continue
-                                
-                                # Skip separator rows
-                                if '---' in stripped:
-                                    result_lines.append(line)
-                                    continue
-                                
-                                # Process table rows with empty first cell
-                                # Pattern: ||  | [Name](mailto:...) | ... OR |  | [Name](mailto:...) | ...
-                                # Process if: (1) in table with Name column OR (2) in any table with empty first cell
-                                if stripped.startswith('|'):
-                                    # Check if first cell is empty: || ... or |  |
-                                    # Match: |<empty or whitespace>| OR || (double pipe at start)
-                                    # FIX 1a: The original code used `or stripped.startswith('||')` as a fallback,
-                                    # but re.match(r'^\|\s*\|', ...) already handles '||' (zero whitespace between
-                                    # pipes). The fallback returned a bool True, which then had .group(0) called on
-                                    # it, raising AttributeError. Removed the redundant fallback entirely.
-                                    first_cell_empty = re.match(r'^\|\s*\|', stripped)
-                                    
-                                    
-                                    
-                                    if first_cell_empty:
-                                        # Look for email link in the row
-                                        email_match = re.search(r'\[([^\]]+)\]\(mailto:[^)]+\)', stripped)
-                                        if email_match:
-                                            link_text = email_match.group(1).strip()
-                                            # Validate it looks like a name (1-5 words, capitalized)
-                                            words = link_text.split()
-                                            if 1 <= len(words) <= 5:
-                                                # Check if words look like names (start with capital or umlaut)
-                                                is_name = all(
-                                                    w and (w[0].isupper() or w[0] in 'äöüÄÖÜ') 
-                                                    for w in words if w and not w.startswith('(')
-                                                )
-                                                # Check it's not a phone/number pattern
-                                                has_phone = bool(re.search(r'\d{3,}|T\.|Phone', link_text))
-                                                
-                                                # Check if name already exists in the row (outside the email link)
-                                                # Remove the email link part and check if name appears in remaining text
-                                                row_without_link = re.sub(r'\[[^\]]+\]\([^)]+\)', '', stripped)
-                                                name_already_exists = link_text.lower() in row_without_link.lower()
-                                                
-                                                # Fill if: (1) in table with Name column OR (2) in any table with empty first cell
-                                                if is_name and not has_phone and not name_already_exists and (in_name_table or in_any_table):
-                                                    
-                                                    # Replace the empty first cell with the name
-                                                    # |  | -> | Name |
-                                                    # FIX 1a: Use .end() for the slice offset instead of len(group(0)).
-                                                    # .end() gives the exact character position after the match,
-                                                    # correctly handling any prefix whitespace not in the match.
-                                                    line = '| ' + link_text + ' |' + stripped[first_cell_empty.end():]
-                                
-                                result_lines.append(line)
-                            
-                            return '\n'.join(result_lines)
-                        
-                        # Apply the fix
-                        
-                        content_to_save = fill_empty_name_columns(content_to_save)
-                        
-                        # FINAL CLEANUP: Remove artifacts and clean up content
-                        lines = content_to_save.split('\n')
-                        cleaned_lines = []
-                        seen_headings = {}
-                        consecutive_empty = 0
-                        EARLY_LINE_THRESHOLD = 30  # Lines in first N are likely artifacts
-                        
-                        # FIX: Track which lines came from tables_markdown to avoid filtering them as duplicates
-                        # url_header is 4 lines: "# Source URL", "", URL, ""
-                        url_header_lines = 4
-                        tables_markdown_lines_count = len(tables_markdown.split('\n')) if tables_markdown else 0
-                        tables_markdown_start = url_header_lines
-                        tables_markdown_end = url_header_lines + tables_markdown_lines_count
-                        
-                        # BUG FIX: Protect URL header from being removed by cleanup logic
-                        # The URL header should always be preserved at the start of the file
-                        url_header_start_idx = 0
-                        url_header_end_idx = url_header_lines
-                        
-                        # Common navigation/footer patterns to filter out
-                        nav_patterns = [
-                            r'data privacy policy', r'declaration of accessibility', r'impressum', r'datenschutz',
-                            r'cookie', r'privacy policy', r'accessibility', r'barrierefreiheit',
-                            r'^##\s+(PHOTON SCIENCE|Beamline Staff)$',  # Duplicate navigation headings
-                            r'breadcrumb',  # Breadcrumb navigation
-                            r'^##\s+Breadcrumb\s*Navigation',  # Breadcrumb navigation heading
-                            r'^##\s+Navigation$',  # Generic navigation heading
-                        ]
-                        
-                        for i, line in enumerate(lines):
-                            stripped = line.strip()
-                            
-                            # BUG FIX: Always preserve URL header lines (first 4 lines: "# Source URL", "", URL, "")
-                            # These lines should never be filtered or removed
-                            if url_header_start_idx <= i < url_header_end_idx:
-                                cleaned_lines.append(line)
-                                # Reset consecutive empty counter when we're in the header
-                                if not stripped:
-                                    consecutive_empty = 1
-                                else:
-                                    consecutive_empty = 0
-                                continue
-                            
-                            # Remove excessive empty lines (max 2 consecutive)
-                            if not stripped:
-                                consecutive_empty += 1
-                                if consecutive_empty <= 2:
-                                    cleaned_lines.append(line)
-                                continue
-                            consecutive_empty = 0
-                            
-                            # GENERAL: Filter malformed tables (10+ columns, concatenated data)
-                            # Pattern: Table rows with 10+ columns are likely malformed
-                            if re.match(r'^\|', stripped):
-                                # Count columns (number of | separators)
-                                column_count = stripped.count('|') - 1  # Subtract 1 for leading |
-                                if column_count > 10:
-                                    continue
-                                # Pattern: Only filter single-column rows with field labels, or rows where ALL cells have labels
-                                # Multi-column tables (2-10 columns) with field labels in cells are legitimate
-                                if column_count == 1:
-                                    # Single column: filter if has 3+ field labels (concatenated)
-                                    first_cell_match = re.match(r'^\|\s*([^|]+)', stripped)
-                                    if first_cell_match:
-                                        first_cell = first_cell_match.group(1)
-                                        field_label_count = len(re.findall(r'\b(E-Mail|Phone|Location|Email|Tel|Telephone):', first_cell, re.I))
-                                        if field_label_count >= 3:
-                                            continue
-                                elif column_count >= 2 and column_count <= 10:
-                                    # Multi-column: allow field labels in cells (legitimate structured data)
-                                    # Only filter if this is clearly a separator row or malformed
-                                    pass  # Don't filter multi-column tables with field labels
-                            
-                            # GENERAL: Filter navigation/footer links (helmholtz, DOOR, XFEL, CFEL, CSSB, etc.)
-                            nav_link_patterns = [
-                                r'helmholtz\.de', r'door\.desy\.de', r'xfel\.eu', r'cfel\.de', r'cssb-hamburg',
-                                r'pbook', r'data_privacy', r'More information'
-                            ]
-                            if any(re.search(pattern, stripped, re.I) for pattern in nav_link_patterns):
-                                continue
-                            
-                            # Remove navigation/footer content (general patterns)
-                            if any(re.search(pattern, stripped, re.I) for pattern in nav_patterns):
-                                # Skip this line and check if it's a section (skip the section)
-                                if stripped.startswith('##'):
-                                    # Skip this heading and all content until next heading
-                                    j = i + 1
-                                    while j < len(lines):
-                                        next_stripped = lines[j].strip()
-                                        if next_stripped.startswith('#'):
-                                            break
-                                        j += 1
-                                    # Skip to next heading (don't add current line)
-                                    continue
-                                continue
-                            
-                            # GENERAL: Remove empty headings (just ## with spaces, no text)
-                            # Pattern: "##    " or "##" - headings with no actual text
-                            # BUG FIX: Never remove "# Source URL" heading (it's part of the protected header)
-                            if stripped.startswith('#'):
-                                # Protect "# Source URL" heading from removal
-                                if stripped.lower() == '# source url':
-                                    cleaned_lines.append(line)
-                                    continue
-                                heading_text = stripped.lstrip('#').strip()
-                                if not heading_text:
-                                    # Empty heading - skip it
-                                    continue
-                                
-                                # GENERAL: Remove empty sections (heading with no content until next heading)
-                                # Check if this section is empty (only whitespace/empty lines until next heading)
-                                section_start_idx = i
-                                section_end_idx = len(lines)  # Default to end of file
-                                
-                                # Find next heading or end of file
-                                next_heading_level = None
-                                for j in range(i + 1, len(lines)):
-                                    next_stripped = lines[j].strip()
-                                    if next_stripped.startswith('#'):
-                                        section_end_idx = j
-                                        # Calculate next heading level (number of #)
-                                        next_heading_level = len(next_stripped) - len(next_stripped.lstrip('#'))
-                                        break
-                                
-                                # Check if section has any content (not just whitespace, separators, or empty lines)
-                                has_content = False
-                                for j in range(section_start_idx + 1, section_end_idx):
-                                    content_line = lines[j].strip()
-                                    if not content_line:
-                                        continue  # Skip empty lines
-                                    # Skip separators (already handled)
-                                    if _is_separator_line(content_line):
-                                        continue
-                                    # Skip if it's another heading (shouldn't happen, but safety check)
-                                    if content_line.startswith('#'):
-                                        continue
-                                    # Found actual content (text, table, list, link, etc.)
-                                    has_content = True
-                                    break
-                                
-                                # FIX: Don't remove heading if next heading is a subheading (higher level number)
-                                # A heading with only subheadings below it is NOT empty - it's a section container
-                                current_heading_level = len(stripped) - len(stripped.lstrip('#'))
-                                is_subheading = (next_heading_level is not None and next_heading_level > current_heading_level)
-                                
-                                # FIX: Don't remove heading if next heading is at same level (sibling) or parent level
-                                # Sibling/parent headings indicate structure, so content might appear later
-                                is_sibling = (next_heading_level is not None and next_heading_level == current_heading_level)
-                                is_parent = (next_heading_level is not None and next_heading_level < current_heading_level)
-                                has_any_next = (next_heading_level is not None)
-                                
-                                # Only remove if clearly empty with no next heading, or if next is subheading with no content
-                                should_remove = (not has_content and 
-                                               ((not has_any_next) or 
-                                                (has_any_next and is_subheading and not is_sibling and not is_parent)))
-                                
-                                if should_remove:
-                                    # Empty section - skip the heading and continue to next iteration
-                                    # Don't add this line to cleaned_lines
-                                    continue
-                            
-                            # Remove early horizontal rules and orphaned separators (artifacts at start)
-                            # GENERAL: Aggressively remove separators in the first N lines (they're likely artifacts)
-                            if i < EARLY_LINE_THRESHOLD:
-                                # Match all separator variants: ---, |---|---, | --- |, |---|, etc.
-                                if _is_separator_line(stripped):
-                                    continue
-                            
-                            # Remove orphaned table separators without proper table context
-                            # GENERAL: These appear when broken fragments are removed, leaving orphaned separators
-                            if _is_separator_line(stripped):
-                                # Check for table header before and row after (skip empty lines and headings)
-                                # Look further back/forward to catch separators that are far from tables
-                                # Require BOTH header row (with at least 2 columns) AND data row (with at least 2 columns)
-                                has_header = any(re.match(r'^\|\s*[^|]+\s*\|.*\|', lines[j].strip()) 
-                                                for j in range(max(0, i - 20), i) if lines[j].strip() and not lines[j].strip().startswith('#'))
-                                has_row = any(re.match(r'^\|\s*[^|]+\s*\|.*\|', lines[j].strip()) 
-                                             for j in range(i + 1, min(len(lines), i + 20)) if lines[j].strip() and not lines[j].strip().startswith('#'))
-                                if not (has_header and has_row):
-                                    # Orphaned separator - skip it
-                                    continue
-                            
-                            # GENERAL: Remove broken text fragments (single values like "192 ns", "6.0 GeV", etc.)
-                            # Pattern: Lines that are just numbers with units (no label, no structure)
-                            # Check if this line is just a value (numbers with units, no label)
-                            if re.match(r'^[\d\s.,]+(ns|ms|μs|μm|mm|m|GeV|keV|MeV|T|kW|h|°|%|kHz|MHz|psec|nC|mrad|pmrad|μrad)\s*$', stripped, re.I):
-                                continue
-                            
-                            # Remove leftover names (single word or "Last, First") followed by empty lines
-                            if not any(stripped.startswith(c) for c in '#-|*'):
-                                words = stripped.split()
-                                is_name = False
-                                if len(words) == 1 and words[0][0].isupper() and len(words[0]) > 2:
-                                    is_name = True
-                                elif ',' in stripped:
-                                    parts = [p.strip() for p in stripped.split(',')]
-                                    if len(parts) == 2 and all(p and p[0].isupper() for p in parts):
-                                        is_name = True
-                                if is_name:
-                                    empty_ahead = sum(1 for j in range(i + 1, min(len(lines), i + 10)) 
-                                                     if not lines[j].strip())
-                                    if empty_ahead >= 3:
-                                        continue
-                            
-                            # Remove duplicate headings (within 20 lines)
-                            if stripped.startswith('#'):
-                                heading_sig = stripped.lstrip('#').strip().lower()
-                                if heading_sig in seen_headings and i - seen_headings[heading_sig] < 20:
-                                    continue
-                                seen_headings[heading_sig] = i
-                            
-                            # FIX: Remove text lines that are substrings of table content
-                            # This catches role descriptions that appear both as standalone text AND in tables
-                            # EXCEPTION: Don't filter lines that came FROM tables_markdown (they're legitimate content)
-                            is_from_tables_markdown = tables_markdown_start <= i < tables_markdown_end
-                            
-                            if tables_markdown and not is_from_tables_markdown and not stripped.startswith(('#', '|', '-', '*')):
-                                # Normalize whitespace for comparison (collapse multiple spaces to single)
-                                stripped_normalized = re.sub(r'\s+', ' ', stripped.lower().strip())
-                                # Check if this line appears inside any table cell
-                                if len(stripped_normalized) > 5:  # Only check meaningful lines
-                                    # Normalize table content for comparison (collapse whitespace)
-                                    tables_normalized = re.sub(r'\s+', ' ', tables_markdown.lower())
-                                    # Check if this text appears in a table cell
-                                    if stripped_normalized in tables_normalized:
-                                        # Skip this line - it's a duplicate of table content
-                                        continue
-                            
-                            # GENERAL: Normalize text spacing to fix concatenation issues
-                            # Apply only to non-markdown lines (text content)
-                            normalized_line = _normalize_text_spacing(line)
-                            cleaned_lines.append(normalized_line)
-                        
-                        # Remove leading empty lines and orphaned separators
-                        # GENERAL: Remove ALL leading separators until non-separator content is found
-                        # BUG FIX: Never remove the URL header (first 4 lines should always be preserved)
-                        # Skip the first url_header_lines when removing leading content
-                        header_preserved = []
-                        if len(cleaned_lines) >= url_header_lines:
-                            # Preserve URL header
-                            header_preserved = cleaned_lines[:url_header_lines]
-                            cleaned_lines = cleaned_lines[url_header_lines:]
-                        
-                        while cleaned_lines:
-                            first_stripped = cleaned_lines[0].strip()
-                            if not first_stripped:
-                                cleaned_lines.pop(0)
-                            elif _is_separator_line(first_stripped):
-                                # Remove leading orphaned separators
-                                cleaned_lines.pop(0)
-                            else:
-                                break
-                        
-                        # Restore URL header at the beginning
-                        cleaned_lines = header_preserved + cleaned_lines
-                        
-                        # GENERAL: Ensure "External Links" section has proper header and remove duplicates
-                        # Scan for external link pattern (markdown links to external URLs)
-                        external_link_pattern = r'^- \[.*\]\(https?://[^)]+\)'
-                        has_external_links = False
-                        external_links_start_idx = None
-                        external_links_header_indices = []  # Track all header positions
-                        
-                        for i, line in enumerate(cleaned_lines):
-                            stripped_line = line.strip()
-                            # Check if this is an external link
-                            if re.match(external_link_pattern, stripped_line):
-                                if external_links_start_idx is None:
-                                    external_links_start_idx = i
-                                has_external_links = True
-                            # Check if "External Links" header exists
-                            elif stripped_line == '## External Links':
-                                external_links_header_indices.append(i)
-                        
-                        # Remove duplicate "External Links" headers (keep only the first one before links)
-                        # Remove headers that are after the first link or duplicates
-                        if external_links_header_indices and len(external_links_header_indices) > 1:
-                            # Sort in reverse order to remove from end first (preserves indices)
-                            # Keep the first header (lowest index), remove all others
-                            first_header_idx = min(external_links_header_indices)
-                            for header_idx in sorted(external_links_header_indices, reverse=True):
-                                if header_idx == first_header_idx:
-                                    continue  # Keep the first one
-                                # Remove duplicate header
-                                if header_idx < len(cleaned_lines):
-                                    cleaned_lines.pop(header_idx)
-                                    # Remove empty line after if present
-                                    if header_idx < len(cleaned_lines) and not cleaned_lines[header_idx].strip():
-                                        cleaned_lines.pop(header_idx)
-                                    # Remove empty line before if present
-                                    if header_idx > 0 and not cleaned_lines[header_idx - 1].strip():
-                                        cleaned_lines.pop(header_idx - 1)
-                        
-                        # If external links exist but no header before them, add it
-                        if has_external_links and external_links_start_idx is not None:
-                            # Re-check header indices after removals (they may have changed)
-                            remaining_header_indices = [i for i, line in enumerate(cleaned_lines) if line.strip() == '## External Links']
-                            # Check if header exists before the first link
-                            has_header_before = any(idx < external_links_start_idx for idx in remaining_header_indices)
-                            if not has_header_before:
-                                # Insert header before first external link
-                                # Add empty line before if needed
-                                if external_links_start_idx > 0 and cleaned_lines[external_links_start_idx - 1].strip():
-                                    cleaned_lines.insert(external_links_start_idx, '')
-                                cleaned_lines.insert(external_links_start_idx, '## External Links')
-                                # Add empty line after header if needed
-                                if external_links_start_idx + 1 < len(cleaned_lines) and cleaned_lines[external_links_start_idx + 1].strip():
-                                    cleaned_lines.insert(external_links_start_idx + 1, '')
-                        
-                        # FINAL PASS: Remove any remaining empty sections (safety check)
-                        # This catches empty sections that might have been missed
-                        final_cleaned = []
-                        i = 0
-                        while i < len(cleaned_lines):
-                            line = cleaned_lines[i]
-                            stripped = line.strip()
-                            
-                            # Check if this is a heading
-                            if stripped.startswith('#'):
-                                heading_text = stripped.lstrip('#').strip()
-                                if heading_text:  # Not empty heading
-                                    # Check if section is empty
-                                    section_start = i
-                                    section_end = len(cleaned_lines)
-                                    next_heading_level_final = None
-                                    # Find next heading and calculate its level
-                                    for j in range(i + 1, len(cleaned_lines)):
-                                        next_line_stripped = cleaned_lines[j].strip()
-                                        if next_line_stripped.startswith('#'):
-                                            section_end = j
-                                            # Calculate next heading level (number of #)
-                                            next_heading_level_final = len(next_line_stripped) - len(next_line_stripped.lstrip('#'))
-                                            break
-                                    # Check for content
-                                    has_content = False
-                                    for j in range(section_start + 1, section_end):
-                                        content_line = cleaned_lines[j].strip()
-                                        if not content_line:
-                                            continue
-                                        if content_line.startswith('#'):
-                                            continue
-                                        if _is_separator_line(content_line):
-                                            continue
-                                        # Found actual content (text, table, list, link, etc.)
-                                        has_content = True
-                                        break
-                                    
-                                    # FIX: Don't remove heading if next heading is a subheading (higher level number = lower heading level)
-                                    # A heading with only subheadings below it is NOT empty - it's a section container
-                                    current_heading_level_final = len(stripped) - len(stripped.lstrip('#'))
-                                    is_subheading_final = (next_heading_level_final is not None and next_heading_level_final > current_heading_level_final)
-                                    
-                                    # FIX: Don't remove heading if next heading is at same level (sibling headings)
-                                    # Sibling headings often share content that appears after all of them (e.g., list items from markdown_content)
-                                    # This is common on profile pages where multiple h3 headings are followed by list items
-                                    is_sibling_heading = (next_heading_level_final is not None and next_heading_level_final == current_heading_level_final)
-                                    
-                                    # FIX: Don't remove heading if next heading is at parent level (lower level number = higher heading level)
-                                    # Parent-level headings indicate a section boundary, so content might appear before the parent heading
-                                    is_parent_heading = (next_heading_level_final is not None and next_heading_level_final < current_heading_level_final)
-                                    
-                                    # FIX: If there's any next heading at all, be very lenient - only remove if clearly empty with no content anywhere
-                                    # This handles cases where content from markdown_content appears after all headings
-                                    has_any_next_heading = (next_heading_level_final is not None)
-                                    
-                                    # Only remove heading if it has no content AND no next heading (truly orphaned)
-                                    # OR if it has next heading but no content AND next heading is a subheading (container with subheadings only)
-                                    should_remove = (not has_content and 
-                                                   ((not has_any_next_heading) or 
-                                                    (has_any_next_heading and is_subheading_final and not is_sibling_heading and not is_parent_heading)))
-                                    
-                                    if should_remove:
-                                        # Skip empty section
-                                        i = section_end
-                                        continue
-                            
-                            final_cleaned.append(line)
-                            i += 1
-                        
-                        content_to_save = '\n'.join(final_cleaned)
-                        
-                        # Skip empty pages: Check if content is meaningful (not just URL header and minimal text)
-                        # Remove URL header and separators to check actual content
-                        content_without_header = re.sub(r'^#\s*Source\s*URL.*?\n---\s*\n', '', content_to_save, flags=re.IGNORECASE | re.MULTILINE)
-                        content_meaningful = content_without_header.strip()
-                        
-                        
-                        
-                        # Skip if content is too short or only contains error messages
-                        is_empty_page = False
-                        if len(content_meaningful) < 50:  # Very short content
-                            is_empty_page = True
-                            
-                        elif len(content_meaningful) < 200:
-                            # Check if it's just error messages or minimal content
-                            error_patterns = [
-                                r'page could not be found',
-                                r'404',
-                                r'not found',
-                                r'error',
-                                r'page not available'
-                            ]
-                            content_lower = content_meaningful.lower()
-                            if any(pattern in content_lower for pattern in error_patterns):
-                                # Count meaningful words (exclude links, headers, etc.)
-                                words = [w for w in content_meaningful.split() if len(w) > 2 and not w.startswith('http') and not w.startswith('#')]
-                                if len(words) < 10:  # Less than 10 meaningful words
-                                    is_empty_page = True
-                                    
-                        
-                        if is_empty_page:
-                            
-                            print(f"[SKIP] Empty/minimal content page: {final_url or original_url}")
-                            continue  # Skip saving this page
-                        
-                        
-                        
-                        
-                        filename.write_text(content_to_save, encoding="utf-8")
-                        
-                        # Append to all_urls_by_depth only when file was actually written (Fix #2: count matches files)
-                        if depth_str not in all_urls_by_depth:
-                            all_urls_by_depth[depth_str] = []
-                        all_urls_by_depth[depth_str].append(url_entry)
-                        
-                        # Log extraction results
-                        if hasattr(result, 'tables') and result.tables:
-                            page_type = "PDF" if result_is_pdf else "HTML"
-                            print(f"[{page_type}] Extracted {len(result.tables)} table(s) with links preserved from {result.url}")
-                        
-                        if result_is_pdf and PDF_SUPPORT_AVAILABLE:
-                            # Check metadata for PDF info
-                            if hasattr(result, 'metadata') and result.metadata:
-                                pdf_info = []
-                                if result.metadata.get('title'):
-                                    pdf_info.append(f"Title: {result.metadata.get('title')}")
-                                if result.metadata.get('author'):
-                                    pdf_info.append(f"Author: {result.metadata.get('author')}")
-                                if pdf_info:
-                                    print(f"[PDF] Metadata: {', '.join(pdf_info)}")
-                            
-                            print(f"[PDF] Extracted {len(markdown_content)} characters from PDF")
-                        
-                        all_successful_urls.append(result.url)
-                        file_type = "PDF" if result_is_pdf else "HTML"
-                        print(f"[SAVED] [{file_type}] {result.url}")
-                        print(f"        → {filename}")
-                        
-                        # PHASE 1 FIX: Periodic checkpoint saving for crash recovery
-                        pages_processed_count += 1
-                        results_processed_in_batch += 1
-                        if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
-                            # 1. Ensure all markdown files are saved (flush file system buffers)
-                            import sys
-                            import os
-                            checkpoint_start_time = time.time()  # Track checkpoint duration
-                            sys.stdout.flush()  # Flush stdout to ensure logs are written
-                            
-                            # Ensure all file writes are committed to disk
-                            # This guarantees that all markdown files written so far are persisted
-                            try:
-                                # Force file system sync for the output directory
-                                if OUTPUT_DIR.exists():
-                                    # Open and sync the directory to ensure all file writes are committed
-                                    dir_fd = os.open(str(OUTPUT_DIR), os.O_RDONLY)
-                                    os.fsync(dir_fd)
-                                    os.close(dir_fd)
-                            except Exception as sync_error:
-                                # Non-critical - log but don't fail
-                                print(f"[WARNING] File sync warning: {sync_error}")
-                            
-                            # 2. Save checkpoint (use merged dict so next resume has correct depths)
-                            checkpoint_data = {
-                                'seen_final_urls': seen_final_urls,
-                                'all_urls_by_depth': all_urls_by_depth,
-                                'all_successful_urls': all_successful_urls,
-                                'all_errors': all_errors,
-                                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
-                                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
-                                'pages_processed': pages_processed_count,
-                                'max_depth_crawled': max_depth_crawled,
-                                'seed_urls_processed': seed_urls_processed,
-                            }
-                            checkpoint_saved = save_checkpoint(checkpoint_data)
-                            checkpoint_duration = time.time() - checkpoint_start_time  # Calculate duration
-                            
-                            # 3. Log progress summary
-                            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
-                            if elapsed_time > 0:
-                                rate = pages_processed_count / elapsed_time
-                                print(f"[SUMMARY] Progress: {pages_processed_count} pages processed, "
-                                      f"{len(all_errors)} errors, {len(seen_final_urls)} unique URLs, "
-                                      f"{rate:.1f} pages/sec, checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
-                                      f"checkpoint+flush: {checkpoint_duration:.2f}s")
-                            else:
-                                print(f"[SUMMARY] Progress: {pages_processed_count} pages processed, "
-                                      f"{len(all_errors)} errors, {len(seen_final_urls)} unique URLs, "
-                                      f"checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
-                                      f"checkpoint+flush: {checkpoint_duration:.2f}s")
-                            
-                            if checkpoint_saved:
-                                print(f"[CHECKPOINT] Saved progress: {pages_processed_count} pages processed")
-                    except Exception as file_save_error:
-                        # Error during file save - log but continue processing
-                        all_errors.append({
-                            'url': result.url,
-                            'error': f'File save error: {str(file_save_error)}',
-                            'timestamp': datetime.now().isoformat()
-                        })
-                        print(f"[ERROR] File save failed for {result.url}: {file_save_error}")
-                    
-                    # PHASE 1 FIX: Memory optimization - extract metadata then clear heavy data
-                    # At 200k URLs, keeping markdown/HTML would consume 20GB+ in memory
-                    # Since we've already saved the content to disk, we can safely discard it
-                    # This progressive clearing prevents OOM errors during large crawls
-                    try:
-                        # Extract lightweight metadata before clearing (for logging/analysis)
-                        metadata = extract_result_metadata(result)
-                        if metadata:
-                            results_metadata.append(metadata)
-                        
-                        # Clear heavy data to free memory
-                        if hasattr(result, 'html'):
-                            result.html = None  # Clear HTML to free memory
-                        if hasattr(result, 'markdown'):
-                            result.markdown = None  # Clear markdown to free memory
-                        if hasattr(result, 'tables'):
-                            result.tables = None
-                        if hasattr(result, 'cleaned_html'):
-                            result.cleaned_html = None
-                        if hasattr(result, 'fit_markdown'):
-                            result.fit_markdown = None
-                    except Exception as memory_cleanup_error:
-                        # Non-critical - log but continue
-                        pass
-                    
-
+                    return {
+                        'url': result.url,
+                        'html': getattr(result, 'html', None),
+                        'markdown_fit': markdown_fit,
+                        'markdown_raw': markdown_raw,
+                        'markdown_str': markdown_str_val,
+                        'markdown_is_object': markdown_is_object,
+                        'metadata': getattr(result, 'metadata', None),
+                        'redirected_url': getattr(result, 'redirected_url', None),
+                        'success': getattr(result, 'success', True),
+                        'tables': getattr(result, 'tables', None),
+                        'media': getattr(result, 'media', None),
+                        'cleaned_html': getattr(result, 'cleaned_html', None),
+                        'error_message': getattr(result, 'error_message', None),
+                        'result_is_pdf': result_is_pdf,
+                        'depth_str': depth_str,
+                        'final_url': final_url,
+                        'original_url': original_url,
+                        'is_redirect': is_redirect,
+                        'url_entry': url_entry,
+                        'filename': str(filename),
+                        'links_in_html': links_in_html,
+                        'bs_available': BEAUTIFULSOUP_AVAILABLE,
+                        'pdf_support': PDF_SUPPORT_AVAILABLE,
+                    }
                 except Exception as e:
-                    # Exception while processing - log the error with full traceback
                     import traceback
-                    error_url = result.url if result and result.url else "Unknown URL"
-                    error_traceback = traceback.format_exc()
-                    all_errors.append({
+                    error_url = result.url if result and getattr(result, 'url', None) else "Unknown URL"
+                    state.all_errors.append({
                         'url': error_url,
                         'error': f'Exception: {str(e)}',
-                        'traceback': error_traceback,
+                        'traceback': traceback.format_exc(),
                         'timestamp': datetime.now().isoformat()
                     })
                     print(f"[ERROR] {error_url}")
                     print(f"        Exception: {str(e)}")
-                    print(f"        Traceback:\n{error_traceback}")
+                    return None
+
+            def _merge_worker_result(wr):
+                """Merge a worker result dict back into shared state (serial)."""
+                nonlocal results_processed_in_batch
+                if wr is None:
+                    return
+
+                if wr.get('is_error'):
+                    state.all_errors.append(wr['error'])
+                    print(f"[ERROR] {wr['error']['url']}")
+                    print(f"        Reason: {wr['error'].get('error', '')}")
+                    if 'traceback' in wr['error']:
+                        print(f"        Traceback:\n{wr['error']['traceback']}")
+                    return
+
+                if wr.get('is_empty'):
+                    print(f"[SKIP] Empty/minimal content page: {wr['url']}")
+                    return
+
+                if not wr.get('saved'):
+                    return
+
+                depth_str = wr['depth_str']
+                if depth_str not in state.all_urls_by_depth:
+                    state.all_urls_by_depth[depth_str] = []
+                state.all_urls_by_depth[depth_str].append(wr['url_entry'])
+
+                if wr.get('num_tables', 0) > 0:
+                    print(f"[{wr['file_type']}] Extracted {wr['num_tables']} table(s) with links preserved from {wr['url']}")
+
+                if wr.get('result_is_pdf') and wr.get('pdf_info'):
+                    print(f"[PDF] Metadata: {', '.join(wr['pdf_info'])}")
+                    print(f"[PDF] Extracted {wr.get('markdown_len', 0)} characters from PDF")
+
+                state.all_successful_urls.append(wr['url'])
+                file_type = wr.get('file_type', 'HTML')
+                print(f"[SAVED] [{file_type}] {wr['url']}")
+                print(f"        → {wr['filename']}")
+
+                state.pages_processed += 1
+                results_processed_in_batch += 1
+
+                if wr.get('metadata'):
+                    results_metadata.append(wr['metadata'])
+
+                # Periodic checkpoint saving for crash recovery
+                if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
+                    import sys
+                    import os
+                    checkpoint_start_time = time.time()
+                    sys.stdout.flush()
+                    try:
+                        if OUTPUT_DIR.exists():
+                            dir_fd = os.open(str(OUTPUT_DIR), os.O_RDONLY)
+                            os.fsync(dir_fd)
+                            os.close(dir_fd)
+                    except Exception as sync_error:
+                        print(f"[WARNING] File sync warning: {sync_error}")
+
+                    checkpoint_data = state.to_checkpoint()
+                    checkpoint_saved = save_checkpoint(checkpoint_data)
+                    checkpoint_duration = time.time() - checkpoint_start_time
+
+                    try:
+                        elapsed_time = time.time() - start_time
+                        rate = state.pages_processed / elapsed_time if elapsed_time > 0 else 0
+                        print(f"[SUMMARY] Progress: {state.pages_processed} pages processed, "
+                              f"{len(state.all_errors)} errors, {len(state.seen_final_urls)} unique URLs, "
+                              f"{rate:.1f} pages/sec, checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
+                              f"checkpoint+flush: {checkpoint_duration:.2f}s")
+                    except Exception:
+                        print(f"[SUMMARY] Progress: {state.pages_processed} pages processed, "
+                              f"{len(state.all_errors)} errors, {len(state.seen_final_urls)} unique URLs, "
+                              f"checkpoint: {'saved' if checkpoint_saved else 'failed'}, "
+                              f"checkpoint+flush: {checkpoint_duration:.2f}s")
+
+                    if checkpoint_saved:
+                        print(f"[CHECKPOINT] Saved progress: {state.pages_processed} pages processed")
+
+            def _process_one_result(result):
+                """STEP 8 per-result pipeline (serial): filter, dedup, depth-assign, write, cleanup."""
+                item = _preprocess_one_result(result)
+                if item is None:
+                    return
+                wr = _process_result_worker(item)
+                _merge_worker_result(wr)
+                # Clear heavy data to free memory
+                for _attr in ('html', 'markdown', 'tables', 'cleaned_html', 'fit_markdown'):
+                    if hasattr(result, _attr):
+                        setattr(result, _attr, None)
+
+            def _process_batch(batch):
+                """Process a batch of results, using parallel workers if configured."""
+                if not batch:
+                    return
+                if PARALLEL_WORKERS <= 0 or len(batch) <= 1:
+                    for r in batch:
+                        _process_one_result(r)
+                    return
+
+                # Phase 1: Serial pre-pass (filter, dedup, depth — touches shared state)
+                work_items = []
+                for r in batch:
+                    item = _preprocess_one_result(r)
+                    if item is not None:
+                        work_items.append(item)
+                if not work_items:
+                    return
+
+                # Phase 2: Parallel heavy work (markdown, tables, cleanup, file write)
+                n_workers = min(PARALLEL_WORKERS, len(work_items))
+                print(f"[PARALLEL] Dispatching {len(work_items)} results to {n_workers} workers")
+                try:
+                    from concurrent.futures import ProcessPoolExecutor
+                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                        worker_results = list(executor.map(_process_result_worker, work_items))
+                except Exception as pool_error:
+                    print(f"[WARNING] Parallel processing failed ({pool_error}), falling back to serial")
+                    worker_results = [_process_result_worker(item) for item in work_items]
+
+                # Phase 3: Serial merge (update state from worker results)
+                for wr in worker_results:
+                    _merge_worker_result(wr)
+
+                # Clear original results to free memory
+                for r in batch:
+                    for _attr in ('html', 'markdown', 'tables', 'cleaned_html', 'fit_markdown'):
+                        if hasattr(r, _attr):
+                            setattr(r, _attr, None)
 
             # ====================================================================
+
+            # Iterative link extraction + single-page crawling
+            # ================================================================
+            # Strategy: extract in-scope links from crawled pages, crawl new
+            # ones as single pages (no inner BFS), then re-scan the new pages
+            # for more links.  Repeat until no new URLs or MAX_DEPTH is reached.
+            #
+            # This replaces the old inner-BFS approach where each additional URL
+            # was crawled with remaining_depth = MAX_DEPTH - assigned_depth.
+            # That formula made the expansion budget MAX_DEPTH-dependent, causing
+            # different depth-2 counts when MAX_DEPTH changed from 2 to 3.
+            #
+            # With iterative single-page discovery the same URLs are found at
+            # each depth level regardless of MAX_DEPTH → stable per-depth counts.
+
+            if MAX_DEPTH > 0 and BEAUTIFULSOUP_AVAILABLE:
+                from urllib.parse import urljoin, urlparse
+
+                # Single-page config — no deep_crawl_strategy so arun_many works
+                _additional_cfg = CrawlerRunConfig(
+                    page_timeout=PAGE_TIMEOUT,
+                    wait_until='networkidle',
+                    scraping_strategy=None,
+                    table_extraction=table_extraction_strategy if TABLE_EXTRACTION_AVAILABLE else None,
+                    markdown_generator=markdown_generator if PRUNING_FILTER_AVAILABLE else None,
+                    excluded_tags=['script', 'style', 'noscript'],
+                    excluded_selector=excluded_selector_str,
+                    word_count_threshold=5,
+                    remove_forms=True,
+                    cache_mode='read_write',
+                    locale=FORCE_LOCALE,
+                    verbose=True,
+                    delay_before_return_html=PAGE_DELAY_MS,
+                )
+
+                _scan_start = 0        # index into state.all_results: how far we've scanned
+                _pass = 0              # pass counter
+                _total_additional = 0  # total additional URLs crawled across all passes
+
+                while True:
+                    _pass += 1
+                    _new_urls = {}  # {normalized_url: assigned_depth} discovered this pass
+
+                    # --- scan un-processed results for outgoing links ----------
+                    for result in state.all_results[_scan_start:]:
+                        if not result or not hasattr(result, 'html') or not result.html:
+                            continue
+                        try:
+                            source_url = result.url if hasattr(result, 'url') and result.url else None
+                            if not source_url:
+                                continue
+                            normalized_source = _normalize_url(source_url)
+
+                            # Determine source depth — prefer min-depth from the
+                            # depth map (link-graph truth) over metadata.depth
+                            # which may reflect a longer BFS path.
+                            _map_d = state.crawled_urls_with_depth.get(normalized_source)
+                            if _map_d is not None:
+                                source_depth = _map_d
+                            else:
+                                source_depth = 0
+                                if hasattr(result, 'metadata') and result.metadata:
+                                    source_depth = result.metadata.get('depth', 0)
+                                elif hasattr(result, 'depth'):
+                                    source_depth = result.depth
+
+                            # Seed URLs are always depth 0
+                            is_seed = False
+                            for root_url in ROOT_URLS:
+                                if normalized_source == (_normalize_url(root_url) or root_url):
+                                    source_depth = 0
+                                    is_seed = True
+                                    break
+                            # Non-seed at depth 0 → default to 1
+                            if source_depth == 0 and not is_seed:
+                                source_depth = 1
+
+                            soup = _get_cached_soup(result)
+                            if not soup:
+                                continue
+
+                            _redir_pending = []
+                            for link in soup.find_all('a', href=True):
+                                href = link.get('href', '').strip()
+                                if not href or href.startswith('#') or href.startswith('javascript:') or href.startswith('mailto:'):
+                                    continue
+
+                                absolute_url = urljoin(source_url, href)
+                                parsed = urlparse(absolute_url)
+                                link_domain = _normalize_domain(parsed.netloc)
+
+                                if link_domain in EXCLUDED_DOMAINS or not _is_allowed_crawl_url(absolute_url):
+                                    continue
+
+                                normalized_link = _normalize_url(absolute_url) or absolute_url.replace('://www.', '://')
+                                assigned_depth = source_depth + 1
+
+                                if assigned_depth > MAX_DEPTH:
+                                    continue
+
+                                if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
+                                    continue
+
+                                # Already crawled → just update min depth
+                                if normalized_link in seen_crawled_urls:
+                                    existing = state.crawled_urls_with_depth.get(normalized_link)
+                                    if existing is None or assigned_depth < existing:
+                                        state.crawled_urls_with_depth[normalized_link] = assigned_depth
+                                    continue
+
+                                # Already queued in a previous pass → update min depth
+                                if normalized_link in all_additional_urls:
+                                    all_additional_urls[normalized_link] = min(all_additional_urls[normalized_link], assigned_depth)
+                                    continue
+
+                                # Defer redirect check to batch resolution below
+                                if CHECK_REDIRECTS_TO_EXCLUDED:
+                                    _redir_pending.append((absolute_url, normalized_link, assigned_depth))
+                                else:
+                                    if normalized_link not in _new_urls:
+                                        _new_urls[normalized_link] = assigned_depth
+                                    else:
+                                        _new_urls[normalized_link] = min(_new_urls[normalized_link], assigned_depth)
+
+                            # Batch-resolve redirect checks for all candidates in this result
+                            if _redir_pending:
+                                _hosts = await asyncio.gather(
+                                    *[_resolve_redirect_final_host(u) for u, _, _ in _redir_pending],
+                                    return_exceptions=True
+                                )
+                                for (_purl, _pnorm, _pdepth), _host in zip(_redir_pending, _hosts):
+                                    if isinstance(_host, Exception) or _host is None or _host not in EXCLUDED_DOMAINS:
+                                        if _pnorm not in _new_urls:
+                                            _new_urls[_pnorm] = _pdepth
+                                        else:
+                                            _new_urls[_pnorm] = min(_new_urls[_pnorm], _pdepth)
+                        except Exception:
+                            pass
+
+                    _scan_start = len(state.all_results)
+
+                    # Incremental STEP 8: process already-scanned results to
+                    # free HTML/markdown memory before the next crawl pass.
+                    if _process_cursor < _scan_start:
+                        _rebuild_merged_depth_maps()
+                        _inc_batch = [r for r in state.all_results[_process_cursor:_scan_start] if r is not None]
+                        _inc_batch.sort(key=lambda r: len(getattr(r, 'url', '') or ''))
+                        _process_batch(_inc_batch)
+                        for _ri in range(_process_cursor, _scan_start):
+                            state.all_results[_ri] = None
+                        _process_cursor = _scan_start
+                        del _inc_batch
+                        import gc; gc.collect()
+
+                    if not _new_urls:
+                        break
+
+                    # Log this pass
+                    _depth_counts = {}
+                    for _, d in _new_urls.items():
+                        _depth_counts[d] = _depth_counts.get(d, 0) + 1
+                    print(f"[INFO] Pass {_pass}: Found {len(_new_urls)} additional URLs by depth: {_depth_counts}")
+
+                    # Record in global tracker
+                    all_additional_urls.update(_new_urls)
+
+                    # --- crawl new URLs as single pages (parallel via arun_many) ---
+                    _batch = list(_new_urls.keys())[:10000]
+                    print(f"[INFO] Pass {_pass}: Crawling {len(_batch)} URLs with arun_many (parallel)")
+
+                    try:
+                        # Custom dispatcher: remove 503 from auto-retry codes so crawl4ai's
+                        # built-in retry does NOT re-request 503 pages automatically.
+                        # Our retry_varnish_503_pages() handles 503s explicitly instead.
+                        _dispatcher = MemoryAdaptiveDispatcher(
+                            rate_limiter=RateLimiter(
+                                base_delay=(1.0, 3.0), max_delay=60.0,
+                                max_retries=3, rate_limit_codes=[429]
+                            )
+                        )
+                        _batch_results = await crawler.arun_many(_batch, config=_additional_cfg, dispatcher=_dispatcher)
+                        if INTER_BATCH_DELAY > 0:
+                            await asyncio.sleep(INTER_BATCH_DELAY)
+                    except Exception as e:
+                        state.all_errors.append({
+                            'url': f'batch_pass_{_pass}',
+                            'error': str(e),
+                            'error_type': type(e).__name__,
+                            'is_timeout': 'timeout' in str(e).lower(),
+                            'timestamp': datetime.now().isoformat(),
+                            'note': f'Batch crawl failed in pass {_pass}'
+                        })
+                        print(f"[ERROR] Pass {_pass} batch failed: {str(e)[:100]}")
+                        break
+
+                    _new_count = 0
+                    for _res_item in _batch_results:
+                        _items = _res_item if isinstance(_res_item, list) else ([_res_item] if _res_item else [])
+                        for r in _items:
+                            if not r:
+                                continue
+                            # Scope filter: skip pages outside allowed prefix
+                            if not getattr(r, 'url', None) or not _is_allowed_crawl_url(r.url):
+                                continue
+                            # FIX (Root Cause 2, part 5): Drop results matching exclusion_patterns
+                            if any(re.search(p, r.url) for p in exclusion_patterns):
+                                continue
+                            state.all_results.append(r)
+                            _new_count += 1
+
+                            # Update depth maps
+                            r_url = getattr(r, 'url', None)
+                            r_norm = _normalize_url(r_url) if r_url else None
+                            if r_norm:
+                                seen_crawled_urls.add(r_norm)
+                                _d = _new_urls.get(r_norm, all_additional_urls.get(r_norm))
+                                if _d is not None:
+                                    existing = state.crawled_urls_with_depth.get(r_norm)
+                                    state.crawled_urls_with_depth[r_norm] = _d if existing is None else min(existing, _d)
+                                    existing_a = state.additional_urls_with_depth.get(r_norm)
+                                    state.additional_urls_with_depth[r_norm] = _d if existing_a is None else min(existing_a, _d)
+                            r_redir = getattr(r, 'redirected_url', None)
+                            if r_redir:
+                                r_redir_norm = _normalize_url(r_redir)
+                                seen_crawled_urls.add(r_redir_norm)
+                                _d = _new_urls.get(r_norm, all_additional_urls.get(r_norm)) if r_norm else None
+                                if _d is not None:
+                                    existing = state.crawled_urls_with_depth.get(r_redir_norm)
+                                    state.crawled_urls_with_depth[r_redir_norm] = _d if existing is None else min(existing, _d)
+                                    existing_a = state.additional_urls_with_depth.get(r_redir_norm)
+                                    state.additional_urls_with_depth[r_redir_norm] = _d if existing_a is None else min(existing_a, _d)
+
+                    _total_additional += _new_count
+                    print(f"[INFO] Pass {_pass}: Crawled {_new_count} pages")
+
+                if _total_additional > 0:
+                    print(f"[INFO] Iterative link extraction complete: {len(all_additional_urls)} additional URLs in {_pass} passes")
+            
+            # ====================================================================
+            # STEP 8: Process Remaining Results
+            # ====================================================================
+            # Most results were processed incrementally during STEP 7
+            # (Option B memory fix).  Process any remaining here
+            # (e.g. when MAX_DEPTH == 0 skips STEP 7 entirely).
+            _remaining = [r for r in state.all_results[_process_cursor:] if r is not None]
+            if _remaining:
+                _rebuild_merged_depth_maps()
+                _remaining.sort(key=lambda r: len(getattr(r, 'url', '') or ''))
+                print("-" * 60)
+                print(f"[INFO] Processing {len(_remaining)} remaining pages")
+                print("-" * 60)
+                _process_batch(_remaining)
+                del _remaining
+            print("-" * 60)
+            print(f"[INFO] Crawling complete! {state.pages_processed} pages saved")
+            print("-" * 60)
+            # Release all result references
+            for _ri in range(len(state.all_results or [])):
+                state.all_results[_ri] = None
+            import gc; gc.collect()
+
             # FIX B: Retry Varnish 503 error pages with 10-second backoff
-            # URLs that returned "Backend fetch failed / Varnish cache server" during
-            # the main pass are re-crawled here after a brief delay so the Plone
-            # backend has time to recover from the concurrent-request overload.
-            # These URLs were NOT added to seen_final_urls in the main loop, so
-            # they will be written as fresh files if the retry succeeds.
             # ====================================================================
-            if _varnish_503_retry_queue:
-                print(f"\n[503-RETRY] {len(_varnish_503_retry_queue)} URLs returned Varnish 503 during crawl.")
-                print(f"[503-RETRY] Waiting 10 seconds for Plone backends to recover...")
-                await asyncio.sleep(10)
-
+            if state.varnish_503_retry_queue:
                 _retry_config = CrawlerRunConfig(
                     page_timeout=PAGE_TIMEOUT,
                     wait_until='networkidle',
@@ -9037,312 +3881,50 @@ async def crawl_site():
                     excluded_selector=excluded_selector_str,
                     word_count_threshold=5,
                     remove_forms=True,
-                    cache_mode='bypass',  # Must bypass cache — cached 503 response must not be served
+                    cache_mode='bypass',
                     locale=FORCE_LOCALE,
                     verbose=True
-                    # No deep_crawl_strategy: single-page retry only
                 )
-
-                _retry_saved = 0
-                _retry_still_503 = 0
-                for _retry_url in _varnish_503_retry_queue:
-                    print(f'[503-RETRY] Retrying: {_retry_url}')
-                    try:
-                        _r = await crawler.arun(_retry_url, config=_retry_config)
-                        if not _r or not getattr(_r, 'url', None):
-                            continue
-
-                        # Extract markdown text
-                        _r_md = getattr(_r, 'markdown', None)
-                        if _r_md is not None:
-                            if hasattr(_r_md, 'raw_markdown'):
-                                _r_text = (_r_md.raw_markdown or '').strip()
-                            elif isinstance(_r_md, str):
-                                _r_text = _r_md.strip()
-                            else:
-                                _r_text = ''
-                        else:
-                            _r_text = ''
-
-                        # Strip Source URL header, then check for still-503 / blank
-                        _r_body = re.sub(r'^#\s*Source\s*URL\s*\n+\S+\s*\n*', '', _r_text, flags=re.IGNORECASE).strip()
-                        if len(_r_body) < 50 or any(m in _r_body for m in _varnish_503_markers):
-                            print(f'[503-RETRY] Still 503/blank after retry, discarding: {_retry_url}')
-                            _retry_still_503 += 1
-                            continue
-
-                        # FIX (Issue 9): Apply GROUP 1 login filter to the retry result.
-                        # When Plone recovers from overload it may redirect auth-required pages
-                        # to login_form — the retry code must not save those as content.
-                        _r_final_for_login_check = getattr(_r, 'redirected_url', None) or getattr(_r, 'url', _retry_url)
-                        if should_skip_login_auth_url(_r_final_for_login_check):
-                            print(f'[503-RETRY] Skipping login redirect: {_retry_url} → {_r_final_for_login_check}')
-                            continue
-
-                        # Determine depth from existing maps (URL was already BFS-discovered)
-                        _r_final_url = getattr(_r, 'redirected_url', None) or _r.url
-                        _r_norm_final = _normalize_url(_r_final_url)
-                        _r_norm_orig = _normalize_url(_retry_url)
-                        _r_depth = 2  # Conservative default for BFS-discovered retry pages
-                        if crawled_urls_with_depth_merged:
-                            _r_depth = (crawled_urls_with_depth_merged.get(_r_norm_final)
-                                        or crawled_urls_with_depth_merged.get(_r_norm_orig)
-                                        or _r_depth)
-                        if additional_urls_with_depth_merged:
-                            _r_depth = (additional_urls_with_depth_merged.get(_r_norm_final)
-                                        or additional_urls_with_depth_merged.get(_r_norm_orig)
-                                        or _r_depth)
-                        _r_depth = min(int(_r_depth), MAX_DEPTH)
-
-                        # Build filename (same logic as main save pipeline)
-                        _r_url_for_file = _r_final_url if _r_final_url else _retry_url
-                        _r_url_safe = (_r_url_for_file
-                                       .replace("https://", "").replace("http://", "")
-                                       .replace("/", "_").replace(":", "_"))
-                        if len(_r_url_safe) > 200:
-                            _r_url_safe = _r_url_safe[:200]
-                        _r_depth_dir = OUTPUT_DIR / f"depth_{_r_depth}"
-                        _r_depth_dir.mkdir(exist_ok=True)
-                        _r_filename = _r_depth_dir / f"{_r_url_safe}.md"
-
-                        # Write file and update tracking state
-                        _r_filename.write_text(_r_text, encoding="utf-8")
-                        seen_final_urls.add(_r_norm_final if _r_norm_final else _r_norm_orig)
-                        all_successful_urls.append(_retry_url)
-                        pages_processed_count += 1
-                        _depth_key = str(_r_depth)
-                        if _depth_key not in all_urls_by_depth:
-                            all_urls_by_depth[_depth_key] = []
-                        all_urls_by_depth[_depth_key].append({
-                            'original_url': _retry_url,
-                            'final_url': _r_final_url,
-                            'is_redirect': (_retry_url != _r_final_url)
-                        })
-                        _retry_saved += 1
-                        print(f'[503-RETRY] Saved: {_retry_url} → {_r_filename}')
-
-                    except Exception as _retry_err:
-                        print(f'[503-RETRY] Error retrying {_retry_url}: {_retry_err}')
-
-                print(f'[503-RETRY] Complete: {_retry_saved} saved, {_retry_still_503} still 503/blank (discarded).')
+                _retry_saved, _retry_still_503, _retry_pages = await _content_extraction.retry_varnish_503_pages(
+                    crawler=crawler,
+                    retry_queue=state.varnish_503_retry_queue,
+                    retry_config=_retry_config,
+                    varnish_503_markers=_varnish_503_markers,
+                    crawled_urls_with_depth_merged=state.crawled_urls_with_depth_merged,
+                    additional_urls_with_depth_merged=state.additional_urls_with_depth_merged,
+                    max_depth=MAX_DEPTH,
+                    output_dir=OUTPUT_DIR,
+                    seen_final_urls=state.seen_final_urls,
+                    all_successful_urls=state.all_successful_urls,
+                    all_urls_by_depth=state.all_urls_by_depth,
+                    login_filter_fn=should_skip_login_auth_url,
+                    ui_only_query_params=config.ui_only_query_params,
+                    content_critical_params=config.content_critical_params,
+                )
+                state.pages_processed += _retry_pages
 
 
             # ====================================================================
             # PHASE 1 FIX: CRITICAL - Final checkpoint save and aggressive memory cleanup
             # ====================================================================
-            # At 200k URLs, memory usage without proper cleanup can reach 20-50GB
-            # This section performs final cleanup to free all accumulated data
-            
-            print(f"[MEMORY] Starting final cleanup after processing {pages_processed_count} pages...")
-            print(f"[MEMORY] Preserved lightweight metadata for {len(results_metadata)} results (heavy data freed)")
-            
-            # Calculate total bytes saved by clearing HTML/markdown
-            total_html_bytes = sum(m.get('html_length', 0) for m in results_metadata)
-            total_md_bytes = sum(m.get('markdown_length', 0) for m in results_metadata)
-            print(f"[MEMORY] Freed approximately {(total_html_bytes + total_md_bytes) / (1024*1024):.1f} MB of HTML+markdown data")
-            
-            # Save final checkpoint after all results are processed (use merged dict so next resume has correct depths)
-            final_checkpoint_data = {
-                'seen_final_urls': seen_final_urls,
-                'all_urls_by_depth': all_urls_by_depth,
-                'all_successful_urls': all_successful_urls,
-                'all_errors': all_errors,
-                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
-                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
-                'pages_processed': pages_processed_count,
-                'max_depth_crawled': max_depth_crawled,
-                'seed_urls_processed': seed_urls_processed,
-            }
-            if save_checkpoint(final_checkpoint_data):
-                print(f"[CHECKPOINT] Final checkpoint saved: {pages_processed_count} total pages processed")
-            
-            # PHASE 1 FIX: Aggressive memory cleanup
-            # Clear heavy data from all accumulated lists to free memory
-            # These have already been saved to disk
-            total_results_crawled = len(all_results)  # Store count before clearing
-            print(f"[MEMORY] Clearing {total_results_crawled} result objects from memory...")
-            
-            # Clear result objects completely
-            all_results = None  # Release the list
-            
-            # Clear other large data structures if possible
-            # (keep tracking data for final reports)
-            crawled_urls_with_depth = None
-            additional_urls_with_depth = None
-            crawled_urls_with_depth_merged = None
-            additional_urls_with_depth_merged = None
-            
-            # Force garbage collection to reclaim memory immediately
-            import gc
-            gc.collect()
-            
-            # PERFORMANCE FIX: Clear soup cache to free memory
-            _clear_soup_cache()
-            
-            print(f"[MEMORY] Memory cleanup complete - freed {total_results_crawled} result objects")
-            
+            _final_memory_cleanup(state, results_metadata)
+
             # ====================================================================
             # STEP 9: Save URLs by Depth
             # ====================================================================
-            # Save all URLs organized by depth level to a JSON file
-            # This shows how many URLs were found at each depth
-            
-            depth_summary = {}
-            total_unique_final_urls = set()
-            total_unique_original_urls = set()
-            redirect_count = 0
-            
-            for depth_str, url_entries in all_urls_by_depth.items():
-                # Extract final URLs for backward compatibility (simple list)
-                final_urls = [entry.get('final_url') if isinstance(entry, dict) else entry for entry in url_entries]
-                # Also track unique URLs
-                for entry in url_entries:
-                    if isinstance(entry, dict):
-                        if entry.get('final_url'):
-                            total_unique_final_urls.add(entry['final_url'])
-                        if entry.get('original_url'):
-                            total_unique_original_urls.add(entry['original_url'])
-                        if entry.get('is_redirect'):
-                            redirect_count += 1
-                    else:
-                        # Legacy format (string)
-                        total_unique_final_urls.add(entry)
-                        total_unique_original_urls.add(entry)
-                
-                # Create unique_final_urls: deduplicated list of unique final URLs
-                unique_final_urls_list = []
-                seen_in_depth = set()
-                for entry in url_entries:
-                    if isinstance(entry, dict):
-                        final_url = entry.get('final_url')
-                        if final_url and final_url not in seen_in_depth:
-                            unique_final_urls_list.append(final_url)
-                            seen_in_depth.add(final_url)
-                    else:
-                        # Legacy format (string)
-                        if entry and entry not in seen_in_depth:
-                            unique_final_urls_list.append(entry)
-                            seen_in_depth.add(entry)
-                
-                depth_summary[depth_str] = {
-                    'count': len(url_entries),
-                    'unique_final_urls': unique_final_urls_list,  # NEW: deduplicated unique final URLs
-                    'url_entries': url_entries  # Preserved: detailed entries with redirect info
-                }
-            
-            urls_by_depth_file = LOG_DIR / "urls_by_depth.json"
-            urls_by_depth_data = {
-                'timestamp': datetime.now().isoformat(),
-                'root_urls': ROOT_URLS,
-                'max_depth': MAX_DEPTH,
-                'total_urls': sum(len(urls) for urls in all_urls_by_depth.values()),
-                'total_unique_final_urls': len(total_unique_final_urls),
-                'total_unique_original_urls': len(total_unique_original_urls),
-                'redirects_detected': redirect_count,
-                'urls_by_depth': depth_summary,
-                'link_analysis': {
-                    'total_links_found_in_html': links_found_vs_crawled['total_links_found_in_html'],
-                    'total_urls_crawled': links_found_vs_crawled['total_urls_crawled'],
-                    'average_links_per_page': links_found_vs_crawled['total_links_found_in_html'] / max(links_found_vs_crawled['total_urls_crawled'], 1),
-                    'sample_pages_with_links': links_found_vs_crawled['links_found_by_page'][:20]  # First 20 pages
-                }
-            }
-            urls_by_depth_file.write_text(json.dumps(urls_by_depth_data, indent=2), encoding="utf-8")
-            print("-" * 60)
-            print(f"[DEPTH SUMMARY] URLs by depth:")
-            for depth_str in sorted(depth_summary.keys(), key=int):
-                count = depth_summary[depth_str]['count']
-                print(f"  Depth {depth_str}: {count} URLs")
-            print(f"[DEPTH FILE] Saved to {urls_by_depth_file}")
+            depth_summary, _, _ = _checkpoint.save_urls_by_depth(
+                state.all_urls_by_depth, links_found_vs_crawled, LOG_DIR,
+                ROOT_URLS, MAX_DEPTH)
             
             # ====================================================================
-            # STEP 10: Save Error Log
+            # STEP 10: Save Error Log (handled in finally block to ensure it
+            #          runs even on crash/interrupt — see below)
             # ====================================================================
-            # Save all failed URLs with error reasons to a JSON file
-            
-            if all_errors:
-                # Categorize errors for better analysis
-                timeout_errors = [e for e in all_errors if 'timeout' in str(e.get('error', '')).lower() or 'timed out' in str(e.get('error', '')).lower()]
-                other_errors = [e for e in all_errors if e not in timeout_errors]
-                
-                error_log = {
-                    'timestamp': datetime.now().isoformat(),
-                    'total_errors': len(all_errors),
-                    'total_successful': len(all_successful_urls),
-                    'timeout_errors': len(timeout_errors),
-                    'other_errors': len(other_errors),
-                    'timeout_urls': [{'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')} for e in timeout_errors],
-                    'errors': all_errors
-                }
-                ERROR_LOG_FILE.write_text(json.dumps(error_log, indent=2), encoding="utf-8")
-                print("-" * 60)
-                print(f"[ERROR LOG] Saved {len(all_errors)} errors to {ERROR_LOG_FILE}")
-            else:
-                # Create empty error log if no errors
-                error_log = {
-                    'timestamp': datetime.now().isoformat(),
-                    'total_errors': 0,
-                    'total_successful': len(all_successful_urls),
-                    'errors': []
-                }
-                ERROR_LOG_FILE.write_text(json.dumps(error_log, indent=2), encoding="utf-8")
             
             # ====================================================================
             # Final Summary
             # ====================================================================
-            print("-" * 60)
-            print(f"[SUMMARY]")
-            print(f"  URLs processed: {len(ROOT_URLS)}")
-            print(f"  Successful: {len(all_successful_urls)} pages")
-            print(f"  Errors: {len(all_errors)} pages")
-            print(f"  Total crawled: {total_results_crawled} pages")  # PHASE 1 FIX: Use stored count
-            
-            # GROUP 1: Report login/auth/admin filtering statistics
-            print("-" * 60)
-            print(f"[GROUP 1 STATISTICS]")
-            print(f"  URLs skipped (login/auth/admin): {group1_skipped_count}")
-            total_queue_urls = len(all_successful_urls) + group1_skipped_count + group2_skipped_count + len(all_errors) if all_errors else len(all_successful_urls) + group1_skipped_count + group2_skipped_count
-            if total_queue_urls > 0:
-                group1_reduction_pct = (group1_skipped_count / total_queue_urls) * 100
-                print(f"  Reduction: {group1_reduction_pct:.1f}%")
-            
-            # GROUP 2: Report error page filtering statistics
-            print("-" * 60)
-            print(f"[GROUP 2 STATISTICS]")
-            print(f"  URLs skipped (error/maintenance): {group2_skipped_count}")
-            if total_queue_urls > 0:
-                group2_reduction_pct = (group2_skipped_count / total_queue_urls) * 100
-                print(f"  Reduction: {group2_reduction_pct:.1f}%")
-            
-            # GROUP 4: Report query parameter deduplication statistics
-            print("-" * 60)
-            print(f"[GROUP 4 STATISTICS]")
-            print(f"  URLs skipped (query param duplicates): {group4_skipped_count}")
-            if total_queue_urls > 0:
-                group4_reduction_pct = (group4_skipped_count / total_queue_urls) * 100
-                print(f"  Reduction: {group4_reduction_pct:.1f}%")
-            if group4_skipped_count > 0:
-                print(f"  Note: These URLs had identical content with only query param variations")
-                print(f"        (e.g., ?printversion=1 vs ?embed=1 - prevented redundant crawls)")
-            
-            # Combined filtering statistics
-            print("-" * 60)
-            total_filtered = group1_skipped_count + group2_skipped_count + group4_skipped_count
-            print(f"[COMBINED FILTERING (GROUP 1 + GROUP 2 + GROUP 4)]")
-            print(f"  Total URLs filtered: {total_filtered}")
-            if total_queue_urls > 0:
-                combined_reduction_pct = (total_filtered / total_queue_urls) * 100
-                print(f"  Combined reduction: {combined_reduction_pct:.1f}%")
-                print(f"  Crawl efficiency: {(len(all_successful_urls) / total_queue_urls) * 100:.1f}% of URLs were useful")
-            
-            if dedup_enabled:
-                # FEATURE #4: Report duplicate content skipped
-                print(f"  Duplicates skipped: {duplicate_count} pages (identical content)")
-                print(f"  Unique content: {len(seen_content_hashes)} pages")
-            print(f"  Files saved to: {OUTPUT_DIR}/")
-            if all_errors:
-                print(f"  Error log: {ERROR_LOG_FILE}")
-            print("-" * 60)
+            _print_crawl_summary(state, dedup_enabled)
     
     except Exception as cleanup_error:
         # Handle errors during browser startup or cleanup
@@ -9353,13 +3935,13 @@ async def crawl_site():
             # Critical error: Browser cannot start due to disk space
             print(f"\n[ERROR] Browser startup failed: {error_str}")
             print(f"[ERROR] Cannot proceed with crawling - disk space issue")
-            print(f"[INFO] Files saved: {len(all_successful_urls)} pages")
+            print(f"[INFO] Files saved: {len(state.all_successful_urls)} pages")
             print(f"\n[SOLUTION] Free up disk space and try again:")
             print(f"  - Check /tmp directory: df -h /tmp")
             print(f"  - Clean up temporary files")
             print(f"  - Check available space: df -h")
             
-            all_errors.append({
+            state.all_errors.append({
                 'url': 'Browser Startup',
                 'error': f"Browser startup failed: {error_str}",
                 'timestamp': datetime.now().isoformat(),
@@ -9370,9 +3952,9 @@ async def crawl_site():
             cleanup_error_msg = f"Browser cleanup error (non-critical): {error_str}"
             print(f"\n[WARNING] {cleanup_error_msg}")
             print(f"[INFO] Crawling completed successfully before cleanup error occurred")
-            print(f"[INFO] Files saved: {len(all_successful_urls)} pages")
+            print(f"[INFO] Files saved: {len(state.all_successful_urls)} pages")
             
-            all_errors.append({
+            state.all_errors.append({
                 'url': 'Browser Cleanup',
                 'error': cleanup_error_msg,
                 'timestamp': datetime.now().isoformat(),
@@ -9380,50 +3962,7 @@ async def crawl_site():
             })
     
     finally:
-        # Ensure error log is saved even if there was an exception during cleanup
-        # This runs regardless of whether there was an error
-        try:
-            # Import json here to ensure it's available (in case of import shadowing)
-            import json as json_module
-            # Categorize errors for better analysis (timeout vs other errors)
-            timeout_errors = [e for e in all_errors if e.get('is_timeout', False)]
-            other_errors = [e for e in all_errors if not e.get('is_timeout', False)]
-            
-            # PHASE 1 FIX: Use total_results_crawled if available (set before clearing all_results)
-            crawled_count = total_results_crawled if total_results_crawled > 0 else len(all_results)
-            error_log = {
-                'timestamp': datetime.now().isoformat(),
-                'total_errors': len(all_errors),
-                'total_successful': len(all_successful_urls),
-                'total_crawled': crawled_count,
-                'timeout_errors': len(timeout_errors),
-                'other_errors': len(other_errors),
-                'timeout_urls': [{'url': e.get('url'), 'error': e.get('error'), 'timestamp': e.get('timestamp')} for e in timeout_errors],
-                'errors': all_errors
-            }
-            ERROR_LOG_FILE.write_text(json_module.dumps(error_log, indent=2), encoding="utf-8")
-            if all_errors:
-                print(f"\n[ERROR LOG] Saved {len(all_errors)} errors to {ERROR_LOG_FILE}")
-        except Exception as log_error:
-            print(f"\n[WARNING] Failed to save error log: {log_error}")
-        
-        # C1: Save checkpoint on exit (interrupt/time limit) so a new job can resume (use merged dict when available)
-        try:
-            checkpoint_data = {
-                'seen_final_urls': seen_final_urls,
-                'all_urls_by_depth': all_urls_by_depth,
-                'all_successful_urls': all_successful_urls,
-                'all_errors': all_errors,
-                'additional_urls_with_depth': additional_urls_with_depth_merged if additional_urls_with_depth_merged is not None else additional_urls_with_depth,
-                'crawled_urls_with_depth': crawled_urls_with_depth_merged if crawled_urls_with_depth_merged is not None else crawled_urls_with_depth,
-                'pages_processed': pages_processed_count,
-                'max_depth_crawled': max_depth_crawled,
-                'seed_urls_processed': seed_urls_processed,
-            }
-            if save_checkpoint(checkpoint_data):
-                print(f"[CHECKPOINT] Checkpoint saved on exit (interrupt/time limit)")
-        except Exception as cp_error:
-            print(f"\n[WARNING] Failed to save checkpoint on exit: {cp_error}")
+        _save_error_log_and_exit_checkpoint(state)
 
 
 # ============================================================================
