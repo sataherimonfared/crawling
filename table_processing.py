@@ -1077,7 +1077,6 @@ def parse_single_column_cell_html(cell_element):
             links.append(markdown_link)
             
             # Replace link with placeholder to preserve position
-            from bs4 import NavigableString
             link.replace_with(NavigableString(f"__LINK_{len(links)-1}__"))
         
         # FIX 3: Flatten HTML structure before extracting text to avoid structural newlines

@@ -25,6 +25,30 @@ except ImportError:
 # crawl run by the caller (crawl_site).
 _redirect_resolution_cache = {}
 
+# ---------------------------------------------------------------------------
+# Shared aiohttp session for redirect resolution (perf optimisation #7)
+# ---------------------------------------------------------------------------
+# A single ClientSession is reused across all _resolve_redirect_final_host
+# calls so we don't pay TCP-connect / TLS-handshake overhead per URL.
+_redirect_session: "aiohttp.ClientSession | None" = None
+
+async def _get_redirect_session():
+    """Return (and lazily create) the shared aiohttp session."""
+    global _redirect_session
+    if _redirect_session is None or _redirect_session.closed:
+        _redirect_session = aiohttp.ClientSession(
+            headers={'User-Agent': 'Mozilla/5.0 (compatible; Crawl4AI-redirect-check/1.0)'},
+            timeout=aiohttp.ClientTimeout(total=10),
+        )
+    return _redirect_session
+
+async def close_redirect_session():
+    """Close the shared session (call at crawl shutdown)."""
+    global _redirect_session
+    if _redirect_session is not None and not _redirect_session.closed:
+        await _redirect_session.close()
+        _redirect_session = None
+
 
 # ============================================================================
 # URL normalisation
@@ -183,14 +207,13 @@ async def _resolve_redirect_final_host(url, timeout=5):
 
     if AIOHTTP_AVAILABLE:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.head(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
-                    allow_redirects=True,
-                    headers={'User-Agent': 'Mozilla/5.0 (compatible; Crawl4AI-redirect-check/1.0)'}
-                ) as resp:
-                    final = str(resp.url)
+            session = await _get_redirect_session()
+            async with session.head(
+                url,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+                allow_redirects=True,
+            ) as resp:
+                final = str(resp.url)
             parsed = urlparse(final)
             host = (parsed.netloc or '').replace('www.', '')
             _redirect_resolution_cache[url] = host
@@ -297,11 +320,16 @@ def normalize_url_for_dedup(url, ui_only_query_params, content_critical_params):
         parsed = urlparse(url)
         params = parse_qs(parsed.query, keep_blank_values=True)
 
+        # Normalise param name casing: treat 'invId' and 'invid' as the same key.
+        # The Zimbra calendar emits mixed-case names (invId, instStartTime) in some
+        # links and lowercase (invid, inststarttime) in others; collapsing to
+        # lowercase ensures GROUP 4 dedup matches them correctly.
         filtered_params = {}
         for key, values in params.items():
-            if key not in ui_only_query_params:
-                if key in content_critical_params or key not in ui_only_query_params:
-                    filtered_params[key] = values
+            key_lower = key.lower()
+            if key_lower not in ui_only_query_params:
+                if key_lower in content_critical_params or key_lower not in ui_only_query_params:
+                    filtered_params[key_lower] = values
 
         if not filtered_params:
             normalized_query = ''

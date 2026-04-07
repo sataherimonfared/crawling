@@ -211,12 +211,10 @@ ALLOWED_URL_PREFIXES = (
 
 
 # Directory where crawled pages will be saved as markdown files
-OUTPUT_DIR = Path("desy_crawled/23")
+OUTPUT_DIR = Path("desy_crawled/24")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
-#LOG_DIR = Path("/data/dust/group/it/ReferenceData/log")
-#LOG_DIR = Path("/home/taheri/crawl4ai/desy_crawled/23/log")
 LOG_DIR = OUTPUT_DIR / "log"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -259,7 +257,12 @@ CHECK_REDIRECTS_TO_EXCLUDED = True
 USE_CHECKPOINT = True # False # Change to True to resume from checkpoint
 
 # Checkpoint frequency: save checkpoint every N pages
-CHECKPOINT_FREQUENCY = 1000  # Save progress every 1000 pages (reduces I/O)
+CHECKPOINT_FREQUENCY = 5000  # Save progress every 5000 pages (reduced I/O vs 1000)
+
+# Perf #13: cache mode depends on run type.
+# 'read_write' when resuming (reads cached pages to skip re-fetching).
+# 'write_only' for fresh runs (writes cache for future resume but skips read overhead).
+CRAWL_CACHE_MODE = 'read_write' if USE_CHECKPOINT else 'write_only'
 
 # ============================================================================
 # GROUP 1: LOGIN/AUTH/ADMIN URL FILTERING
@@ -377,6 +380,11 @@ UI_ONLY_QUERY_PARAMS = {
     'period',            # Calendar period — low-value pagination
     'area',              # Room/area filter — UI state
     'room',              # Room filter — UI state
+    # Zimbra calendar event instance params — same event text, different rendering slot
+    'inststarttime',    # Unix ms timestamp of this recurring instance
+    'instduration',     # Duration of this instance
+    'useinstance',      # 0/1 show single instance vs. full series
+    'pstat',            # Participation status (NE=new, AC=accepted)
 }
 
 # Query parameters that ARE content-critical (keep them in deduplication)
@@ -413,10 +421,10 @@ def load_checkpoint() -> dict:
 MAX_DEPTH = 4
 
 # Higher = faster but uses more resources; scaled down for deeper crawls to avoid Varnish 503 bursts.
-# Scaling: depth=3→10, depth=4→8, depth=5→6, depth=6+→4
+# Scaling: depth=3→20, depth=4→16, depth=5→12, depth=6+→8
 # I checked this: python -c "import os; print(os.cpu_count())" 96
-CONCURRENT_TASKS = max(4, 10 - (MAX_DEPTH - 3) * 2)  # fewer workers for deeper crawls
-INTER_BATCH_DELAY = 0.0 if MAX_DEPTH <= 3 else 1.5  # seconds; restores pacing removed by ProcessPoolExecutor
+CONCURRENT_TASKS = max(8, 20 - (MAX_DEPTH - 3) * 4)  # more parallelism on high-core hardware
+INTER_BATCH_DELAY = 0.0 if MAX_DEPTH <= 3 else 0.3  # seconds; light pacing between batches
 
 
 # Number of parallel workers for STEP 8 result processing (Issue 3 fix).
@@ -445,55 +453,19 @@ CRAWLER_USER_AGENT = (
 )
 
 # Per-page delay (ms) added inside CrawlerRunConfig to space requests within arun_many.
-# Only active at MAX_DEPTH >= 4 to avoid slowing down shallow runs.
-PAGE_DELAY_MS = 500 if MAX_DEPTH >= 4 else 0
-
-# Pre-seed parent URLs: pages fetched sequentially (before BFS starts) whose
-# child <a href> links are injected into the crawl queue.
-# Use this for parent pages that work fine individually but sometimes fail (e.g. 503)
-# under concurrent BFS load, causing their child URLs to never be discovered.
-# Update this list whenever you change ROOT_URLS / ALLOWED_URL_PREFIXES.
-# Discovered child URLs are crawled at depth PRESEED_CHILD_DEPTH.
-# Set to [] to disable.  Only active when MAX_DEPTH >= 2.
-
-# --- Helper: UCO calendar month-view URLs (current + previous month) ---
-# These calendar pages sometimes 503 under concurrent load, causing event
-# detail pages (invId=...) to be missed.  Produces 4 URLs per base path.
-import datetime as _dt_preseed
-_preseed_today = _dt_preseed.date.today()
-_preseed_curr = _preseed_today.replace(day=1).strftime('%Y%m%d')
-_preseed_prev = ((_preseed_today.replace(day=1) - _dt_preseed.timedelta(days=1))
-                 .replace(day=1).strftime('%Y%m%d'))
-
-def _uco_calendar_urls(*base_paths):
-    """Generate current + previous month calendar URLs for given base paths."""
-    urls = []
-    for base in base_paths:
-        urls.append(f"{base}?view=month&date={_preseed_prev}")
-        urls.append(f"{base}?view=month&date={_preseed_curr}")
-    return urls
-
-PRESEED_PARENT_URLS = _uco_calendar_urls(
-    # -- it.desy.de UCO calendar (DE + EN) --
-    "https://it.desy.de/dienste/uco/aktuelles/index_ger.html",
-    "https://it.desy.de/services/uco/news/index_eng.html",
-    # -- Add more base paths here when expanding scope, e.g.: --
-    # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
-    # "https://www.desy.de/news/events/index_eng.html",
-) if MAX_DEPTH >= 2 else []
-
-PRESEED_CHILD_DEPTH = 3  # depth assigned to child URLs found via pre-seeding
+# Reduced from 500→100 ms; rate limiter already handles pacing.
+PAGE_DELAY_MS = 100 if MAX_DEPTH >= 4 else 0
 
 # JavaScript rendering
 # Crawl4AI uses Playwright by default, which handles JavaScript automatically
 # This is already enabled - no additional config needed
 
 # Timeout settings (in milliseconds)
-# PERFORMANCE: Reduced default timeout to 60s for faster crawling
+# PERFORMANCE: 60s default; hanging pages release their slot faster.
 # URLs that timeout will be logged in crawl_errors.json with timeout category
 # Future runs can apply extended timeouts only to those specific URLs
-PAGE_TIMEOUT = 180000 #60000  # 60 seconds (60000ms) - default timeout for most pages #45000 #(45 seconds) 
-PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds (180000ms) - for URLs that previously timed out
+PAGE_TIMEOUT = 120000   # 120 seconds - default timeout for most pages
+PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds - for URLs that previously timed out
 
 # Force consistent language for UI strings (prevents Indico language drift)
 FORCE_LOCALE = "en-US"
@@ -2553,73 +2525,6 @@ def _process_result_worker(work_item):
         }
 
 
-async def _preseed_from_parent_urls(parent_urls):
-    """
-    Fetch a list of parent URLs sequentially and return all child links found in them.
-
-    Each URL is requested with a plain HTTP GET (no browser, no JavaScript) and parsed
-    for <a href> links.  Requests are spaced 1 s apart to avoid bursty load.
-    Links that are anchors, javascript: or mailto: are skipped.  All returned URLs
-    are absolute and deduplicated by their normalised form.
-
-    Any page that cannot be fetched is skipped with a warning; the rest are still
-    processed.  Returns an empty list immediately when parent_urls is empty.
-    """
-    if not parent_urls:
-        return []
-
-    import urllib.request
-    from urllib.parse import urljoin
-    from html.parser import HTMLParser
-
-    class _LinkExtractor(HTMLParser):
-        def __init__(self):
-            super().__init__()
-            self.links = []
-        def handle_starttag(self, tag, attrs):
-            if tag == 'a':
-                for attr, val in attrs:
-                    if attr == 'href' and val:
-                        self.links.append(val)
-
-    headers = {
-        'User-Agent': CRAWLER_USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    }
-
-    collected = []
-    seen_normalized = set()
-
-    print(f"[PRESEED] Fetching {len(parent_urls)} parent page(s) to discover child links...")
-    for page_url in parent_urls:
-        try:
-            req = urllib.request.Request(page_url, headers=headers)
-            resp = urllib.request.urlopen(req, timeout=15)
-            html_content = resp.read().decode('utf-8', errors='replace')
-            parser = _LinkExtractor()
-            parser.feed(html_content)
-            new_count = 0
-            for raw_href in parser.links:
-                if (not raw_href
-                        or raw_href.startswith('#')
-                        or raw_href.startswith('javascript:')
-                        or raw_href.startswith('mailto:')):
-                    continue
-                abs_url = urljoin(page_url, raw_href)
-                norm = _normalize_url(abs_url)
-                if norm and norm not in seen_normalized:
-                    seen_normalized.add(norm)
-                    collected.append(abs_url)
-                    new_count += 1
-            print(f"[PRESEED]   {page_url} -> {new_count} new links (total: {len(collected)})")
-        except Exception as e:
-            print(f"[PRESEED]   WARNING: Could not fetch {page_url}: {e}")
-        await asyncio.sleep(1)
-
-    print(f"[PRESEED] Collected {len(collected)} unique child URLs from {len(parent_urls)} parent page(s).")
-    return collected
-
-
 async def crawl_site():
     """
     Main crawling function that orchestrates the entire crawling process.
@@ -2676,6 +2581,8 @@ async def crawl_site():
     browser_config = setup.browser_config
     deep_crawl_strategy = setup.deep_crawl_strategy
     exclusion_patterns = setup.exclusion_patterns
+    # Perf #9: compile all exclusion patterns into a single alternation regex
+    _exclusion_re = re.compile('|'.join(exclusion_patterns)) if exclusion_patterns else None
     excluded_selector_str = setup.excluded_selector_str
     INACTIVE_SELECTORS = setup.inactive_selectors
     markdown_generator = setup.markdown_generator
@@ -2713,11 +2620,6 @@ async def crawl_site():
             print(f"[START] Processing {len(ROOT_URLS)} URL(s)")
             print(f"[CONFIG] Max depth: {MAX_DEPTH}, Concurrent tasks: {CONCURRENT_TASKS}")
             print("-" * 60)
-
-            # Fetch PRESEED_PARENT_URLS sequentially before BFS starts and collect all
-            # child links from them.  These will be injected into the first seed's crawl
-            # batch so they are always visited, even if their parent pages fail under load.
-            _preseeded_urls = await _preseed_from_parent_urls(PRESEED_PARENT_URLS)
 
             for url_idx, root_url in enumerate(ROOT_URLS, 1):
                 print(f"\n{'='*60}")
@@ -2853,7 +2755,7 @@ async def crawl_site():
                     # PHASE 3 FIX: Enable Crawl4AI caching for faster resumption
                     # cache_mode='read_write' enables local caching of crawl results
                     # Benefits: 40% faster resumption, automatic deduplication, reduced network overhead
-                    cache_mode='read_write',
+                    cache_mode=CRAWL_CACHE_MODE,
                     
                     # verbose: Print progress information while crawling
                     verbose=False,  # Disable verbose mode - reduces log by ~33%
@@ -2975,37 +2877,6 @@ async def crawl_site():
                 # CRITICAL: Only extract additional URLs if MAX_DEPTH > 0 (depth 0 = seed pages only)
                 additional_urls_to_crawl = []
 
-                # PRESEED: On the first seed iteration, inject child URLs gathered from
-                # PRESEED_PARENT_URLS.  Each URL is filtered through the same guards as
-                # any other discovered link (scope, login, exclusion patterns).
-                # Also checks checkpoint seen_final_urls to avoid re-crawling on resume.
-                if url_idx == 1 and _preseeded_urls:
-                    _ps_already_seen = set()
-                    for _ps_r in (results if isinstance(results, list) else [results]):
-                        if _ps_r and getattr(_ps_r, 'url', None):
-                            _ps_n = _normalize_url(_ps_r.url)
-                            if _ps_n:
-                                _ps_already_seen.add(_ps_n)
-                    # Also exclude URLs already saved in a previous run (checkpoint)
-                    _ps_checkpoint_seen = state.seen_final_urls if hasattr(state, 'seen_final_urls') else set()
-                    for _ps_url in _preseeded_urls:
-                        if (not should_skip_login_auth_url(_ps_url)
-                                and _is_allowed_crawl_url(_ps_url)
-                                and not any(re.search(pat, _ps_url) for pat in exclusion_patterns)):
-                            _ps_norm = _normalize_url(_ps_url)
-                            _ps_dedup_key = normalize_url_for_dedup(_ps_norm) if _ps_norm else _ps_norm
-                            if (_ps_norm
-                                    and _ps_norm not in _ps_already_seen
-                                    and _ps_dedup_key not in _ps_checkpoint_seen
-                                    and not should_skip_query_param_duplicate(_ps_url, state.seen_normalized_urls)):
-                                additional_urls_to_crawl.append(_ps_url)
-                    if additional_urls_to_crawl:
-                        print(f"[PRESEED] Injected {len(additional_urls_to_crawl)} pre-seeded URLs into crawl queue")
-
-                # Track how many preseed URLs were injected so we can exempt them
-                # from the [:100] batch cap applied to regular HTML-extracted links.
-                _n_preseed_injected = len(additional_urls_to_crawl)
-
                 if MAX_DEPTH > 0 and first_result and hasattr(first_result, 'html') and first_result.html and BEAUTIFULSOUP_AVAILABLE:
                     try:
                         from urllib.parse import urljoin, urlparse
@@ -3077,7 +2948,7 @@ async def crawl_site():
                                     if should_skip_query_param_duplicate(absolute_url, state.seen_normalized_urls):
                                         continue
                                     # FIX (Issues 6, 7, 8): Apply exclusion_patterns to additional_urls path.
-                                    if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
+                                    if _exclusion_re and _exclusion_re.search(absolute_url):
                                         continue
                                     _redirect_candidates.append((absolute_url, normalized_link))
                                     seen_urls.add(normalized_link)  # reserve early to avoid duplicates
@@ -3094,14 +2965,12 @@ async def crawl_site():
                         else:
                             additional_urls_to_crawl.extend(u for u, _ in _redirect_candidates)
                     except Exception as e:
-                        # HTML link extraction failed — log but continue (preseed URLs still queued)
+                        # HTML link extraction failed — log but continue
                         pass
 
-                # Crawl additional URLs (preseed + HTML-extracted) — runs even if first_result was None.
-                # The [:100] cap applies only to HTML-extracted links; all preseed URLs are kept.
+                # Crawl additional URLs extracted from HTML.
                 if additional_urls_to_crawl:
-                    _html_extracted = additional_urls_to_crawl[_n_preseed_injected:]
-                    urls_to_crawl_batch = additional_urls_to_crawl[:_n_preseed_injected] + _html_extracted[:100]
+                    urls_to_crawl_batch = additional_urls_to_crawl[:500]
                     
                     single_page_config = CrawlerRunConfig(
                         page_timeout=PAGE_TIMEOUT,
@@ -3113,7 +2982,7 @@ async def crawl_site():
                         excluded_selector=excluded_selector_str if not is_pdf else None,
                         word_count_threshold=5 if not is_pdf else None,
                         remove_forms=True if not is_pdf else None,
-                        cache_mode='read_write',
+                        cache_mode=CRAWL_CACHE_MODE,
                         locale=FORCE_LOCALE,
                         verbose=True,
                         delay_before_return_html=PAGE_DELAY_MS,
@@ -3133,14 +3002,14 @@ async def crawl_site():
                         try:
                             _dispatcher = MemoryAdaptiveDispatcher(
                                 rate_limiter=RateLimiter(
-                                    base_delay=(1.0, 3.0), max_delay=60.0,
+                                    base_delay=(0.2, 2.0), max_delay=60.0,
                                     max_retries=3, rate_limit_codes=[429]
                                 )
                             )
                             batch_results = await crawler.arun_many(filtered_urls_batch, config=single_page_config, dispatcher=_dispatcher)
                             
                             def _passes_exclusion(url):
-                                return not any(re.search(p, url) for p in exclusion_patterns)
+                                return not (_exclusion_re and _exclusion_re.search(url))
                             for additional_result in batch_results:
                                 if isinstance(additional_result, list):
                                     state.all_results.extend(
@@ -3169,7 +3038,7 @@ async def crawl_site():
                 # link extraction in STEP 7 and from being written to disk in STEP 8.
                 # FIX (Root Cause 2, part 5): Also drop results matching exclusion_patterns.
                 def _passes_exclusion(url):
-                    return not any(re.search(p, url) for p in exclusion_patterns)
+                    return not (_exclusion_re and _exclusion_re.search(url))
                 if isinstance(results, list):
                     state.all_results.extend(
                         r for r in results
@@ -3199,15 +3068,6 @@ async def crawl_site():
             seen_crawled_urls = set()
             # Track depth mapping for additional URLs (will be populated when crawling them)
             state.additional_urls_with_depth = {}  # {normalized_url: depth} - populated during crawling
-
-            # Re-register pre-seeded child URLs with their explicit depth so that
-            # assign_page_depth() in STEP 8 places them in the correct output folder
-            # instead of defaulting to depth_1 (the fallback for pages without BFS metadata).
-            if _preseeded_urls:
-                for _ps_url in _preseeded_urls:
-                    _ps_norm = _normalize_url(_ps_url)
-                    if _ps_norm:
-                        state.additional_urls_with_depth[_ps_norm] = PRESEED_CHILD_DEPTH
 
             # First, collect all URLs that were already crawled AND their depths
             # This prevents us from reassigning depth to URLs that were already crawled by BFSDeepCrawlStrategy
@@ -3525,16 +3385,8 @@ async def crawl_site():
                 # Periodic checkpoint saving for crash recovery
                 if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
                     import sys
-                    import os
                     checkpoint_start_time = time.time()
                     sys.stdout.flush()
-                    try:
-                        if OUTPUT_DIR.exists():
-                            dir_fd = os.open(str(OUTPUT_DIR), os.O_RDONLY)
-                            os.fsync(dir_fd)
-                            os.close(dir_fd)
-                    except Exception as sync_error:
-                        print(f"[WARNING] File sync warning: {sync_error}")
 
                     checkpoint_data = state.to_checkpoint()
                     checkpoint_saved = save_checkpoint(checkpoint_data)
@@ -3568,11 +3420,15 @@ async def crawl_site():
                     if hasattr(result, _attr):
                         setattr(result, _attr, None)
 
+            # Perf #14: create a single ProcessPoolExecutor and reuse it across batches.
+            from concurrent.futures import ProcessPoolExecutor as _PPE
+            _shared_executor = _PPE(max_workers=min(PARALLEL_WORKERS, 64)) if PARALLEL_WORKERS > 0 else None
+
             def _process_batch(batch):
                 """Process a batch of results, using parallel workers if configured."""
                 if not batch:
                     return
-                if PARALLEL_WORKERS <= 0 or len(batch) <= 1:
+                if PARALLEL_WORKERS <= 0 or len(batch) <= 1 or _shared_executor is None:
                     for r in batch:
                         _process_one_result(r)
                     return
@@ -3590,9 +3446,7 @@ async def crawl_site():
                 n_workers = min(PARALLEL_WORKERS, len(work_items))
                 print(f"[PARALLEL] Dispatching {len(work_items)} results to {n_workers} workers")
                 try:
-                    from concurrent.futures import ProcessPoolExecutor
-                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                        worker_results = list(executor.map(_process_result_worker, work_items))
+                    worker_results = list(_shared_executor.map(_process_result_worker, work_items))
                 except Exception as pool_error:
                     print(f"[WARNING] Parallel processing failed ({pool_error}), falling back to serial")
                     worker_results = [_process_result_worker(item) for item in work_items]
@@ -3637,7 +3491,7 @@ async def crawl_site():
                     excluded_selector=excluded_selector_str,
                     word_count_threshold=5,
                     remove_forms=True,
-                    cache_mode='read_write',
+                    cache_mode=CRAWL_CACHE_MODE,
                     locale=FORCE_LOCALE,
                     verbose=True,
                     delay_before_return_html=PAGE_DELAY_MS,
@@ -3708,7 +3562,7 @@ async def crawl_site():
                                 if assigned_depth > MAX_DEPTH:
                                     continue
 
-                                if any(re.search(pat, absolute_url) for pat in exclusion_patterns):
+                                if _exclusion_re and _exclusion_re.search(absolute_url):
                                     continue
 
                                 # Already crawled → just update min depth
@@ -3761,6 +3615,7 @@ async def crawl_site():
                         _process_cursor = _scan_start
                         del _inc_batch
                         import gc; gc.collect()
+                        _clear_soup_cache()  # Perf #10: free cached BeautifulSoup objects between passes
 
                     if not _new_urls:
                         break
@@ -3784,7 +3639,7 @@ async def crawl_site():
                         # Our retry_varnish_503_pages() handles 503s explicitly instead.
                         _dispatcher = MemoryAdaptiveDispatcher(
                             rate_limiter=RateLimiter(
-                                base_delay=(1.0, 3.0), max_delay=60.0,
+                                base_delay=(0.2, 2.0), max_delay=60.0,
                                 max_retries=3, rate_limit_codes=[429]
                             )
                         )
@@ -3813,7 +3668,7 @@ async def crawl_site():
                             if not getattr(r, 'url', None) or not _is_allowed_crawl_url(r.url):
                                 continue
                             # FIX (Root Cause 2, part 5): Drop results matching exclusion_patterns
-                            if any(re.search(p, r.url) for p in exclusion_patterns):
+                            if _exclusion_re and _exclusion_re.search(r.url):
                                 continue
                             state.all_results.append(r)
                             _new_count += 1
@@ -3861,6 +3716,10 @@ async def crawl_site():
                 print("-" * 60)
                 _process_batch(_remaining)
                 del _remaining
+            # Perf #14: shut down the shared executor after all processing is done
+            if _shared_executor is not None:
+                _shared_executor.shutdown(wait=False)
+                _shared_executor = None
             print("-" * 60)
             print(f"[INFO] Crawling complete! {state.pages_processed} pages saved")
             print("-" * 60)
@@ -3885,7 +3744,7 @@ async def crawl_site():
                     locale=FORCE_LOCALE,
                     verbose=True
                 )
-                _retry_saved, _retry_still_503, _retry_pages = await _content_extraction.retry_varnish_503_pages(
+                _retry_saved, _retry_still_503, _retry_pages, _retry_child_urls = await _content_extraction.retry_varnish_503_pages(
                     crawler=crawler,
                     retry_queue=state.varnish_503_retry_queue,
                     retry_config=_retry_config,
@@ -3900,8 +3759,97 @@ async def crawl_site():
                     login_filter_fn=should_skip_login_auth_url,
                     ui_only_query_params=config.ui_only_query_params,
                     content_critical_params=config.content_critical_params,
+                    scope_filter_fn=_is_allowed_crawl_url,
+                    exclusion_re=_exclusion_re,
                 )
                 state.pages_processed += _retry_pages
+
+                # ----------------------------------------------------------------
+                # Crawl child URLs discovered from successfully retried 503 pages.
+                # These children were never found during BFS because the parent
+                # page returned 503 under concurrent load.
+                # ----------------------------------------------------------------
+                if _retry_child_urls:
+                    # Filter out URLs already crawled or already seen
+                    _rc_batch = []
+                    for _rc_norm, _rc_depth in _retry_child_urls.items():
+                        if _rc_norm in seen_crawled_urls:
+                            continue
+                        if should_skip_login_auth_url(_rc_norm):
+                            continue
+                        if should_skip_query_param_duplicate(_rc_norm, state.seen_normalized_urls):
+                            continue
+                        _rc_dedup = normalize_url_for_dedup(_rc_norm)
+                        if _rc_dedup and _rc_dedup in state.seen_final_urls:
+                            continue
+                        _rc_batch.append(_rc_norm)
+                        # Register depth so assign_page_depth() picks it up
+                        state.additional_urls_with_depth[_rc_norm] = _rc_depth
+
+                    if _rc_batch:
+                        print(f'[503-RETRY] Crawling {len(_rc_batch)} child URL(s) discovered from retried pages...')
+                        _rebuild_merged_depth_maps()
+                        try:
+                            _rc_dispatcher = MemoryAdaptiveDispatcher(
+                                rate_limiter=RateLimiter(
+                                    base_delay=(0.2, 2.0), max_delay=60.0,
+                                    max_retries=3, rate_limit_codes=[429]
+                                )
+                            )
+                            _rc_results = await crawler.arun_many(
+                                _rc_batch, config=_additional_cfg, dispatcher=_rc_dispatcher
+                            )
+                            _rc_saved = 0
+                            for _rc_item in _rc_results:
+                                _rc_items = _rc_item if isinstance(_rc_item, list) else ([_rc_item] if _rc_item else [])
+                                for _rc_r in _rc_items:
+                                    if not _rc_r or not getattr(_rc_r, 'url', None):
+                                        continue
+                                    if not _is_allowed_crawl_url(_rc_r.url):
+                                        continue
+                                    if _exclusion_re and _exclusion_re.search(_rc_r.url):
+                                        continue
+                                    state.all_results.append(_rc_r)
+                                    _rc_saved += 1
+                                    # Update depth maps
+                                    _rc_r_norm = _normalize_url(_rc_r.url)
+                                    if _rc_r_norm:
+                                        seen_crawled_urls.add(_rc_r_norm)
+                                        _rc_d = _retry_child_urls.get(_rc_r_norm)
+                                        if _rc_d is not None:
+                                            _ex = state.crawled_urls_with_depth.get(_rc_r_norm)
+                                            state.crawled_urls_with_depth[_rc_r_norm] = _rc_d if _ex is None else min(_ex, _rc_d)
+                                            _ex_a = state.additional_urls_with_depth.get(_rc_r_norm)
+                                            state.additional_urls_with_depth[_rc_r_norm] = _rc_d if _ex_a is None else min(_ex_a, _rc_d)
+                                    _rc_redir = getattr(_rc_r, 'redirected_url', None)
+                                    if _rc_redir:
+                                        _rc_rn = _normalize_url(_rc_redir)
+                                        if _rc_rn:
+                                            seen_crawled_urls.add(_rc_rn)
+
+                            # Process the retry-child results through STEP 8
+                            if _rc_saved > 0:
+                                _rebuild_merged_depth_maps()
+                                _rc_remaining = [r for r in state.all_results[_process_cursor:] if r is not None]
+                                if _rc_remaining:
+                                    _rc_remaining.sort(key=lambda r: len(getattr(r, 'url', '') or ''))
+                                    _process_batch(_rc_remaining)
+                                    for _ri in range(_process_cursor, len(state.all_results)):
+                                        state.all_results[_ri] = None
+                                    _process_cursor = len(state.all_results)
+                                    del _rc_remaining
+                                    import gc; gc.collect()
+                            print(f'[503-RETRY] Crawled {_rc_saved} child page(s) from retried 503 parents.')
+                            state.pages_processed += _rc_saved
+                        except Exception as _rc_err:
+                            print(f'[503-RETRY] Error crawling child URLs: {_rc_err}')
+                            state.all_errors.append({
+                                'url': '503-retry-child-crawl',
+                                'error': str(_rc_err),
+                                'error_type': type(_rc_err).__name__,
+                                'timestamp': datetime.now().isoformat(),
+                                'note': 'Failed to crawl child URLs discovered from retried 503 pages'
+                            })
 
 
             # ====================================================================
@@ -3962,6 +3910,7 @@ async def crawl_site():
             })
     
     finally:
+        await _url_utils.close_redirect_session()
         _save_error_log_and_exit_checkpoint(state)
 
 

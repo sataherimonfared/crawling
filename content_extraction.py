@@ -1589,14 +1589,22 @@ async def retry_varnish_503_pages(
     login_filter_fn=None,
     ui_only_query_params=None,
     content_critical_params=None,
+    scope_filter_fn=None,
+    exclusion_re=None,
 ):
     """Re-crawl URLs that returned Varnish 503 backend errors during the main pass.
 
     Waits 10 seconds for Plone backends to recover, then re-crawls each URL
     one at a time using the provided retry_config (which must have cache_mode='bypass').
 
+    After a successful retry, child ``<a href>`` links are extracted from the
+    page HTML so their parent pages' children are not lost due to the original
+    503 failure during BFS.  Discovered child URLs (with ``parent_depth + 1``)
+    are returned so the caller can crawl them in a follow-up pass.
+
     Mutates: seen_final_urls, all_successful_urls, all_urls_by_depth.
-    Returns: (retry_saved, retry_still_503, pages_processed_delta)
+    Returns: (retry_saved, retry_still_503, pages_processed_delta, discovered_child_urls)
+             where discovered_child_urls is a dict {normalized_url: depth}.
     """
     import asyncio
 
@@ -1606,6 +1614,7 @@ async def retry_varnish_503_pages(
 
     _retry_saved = 0
     _retry_still_503 = 0
+    _discovered_child_urls = {}  # {normalized_url: depth} — child links from retried pages
     for _retry_url in retry_queue:
         print(f'[503-RETRY] Retrying: {_retry_url}')
         try:
@@ -1699,11 +1708,71 @@ async def retry_varnish_503_pages(
             _retry_saved += 1
             print(f'[503-RETRY] Saved: {_retry_url} → {_r_filename}')
 
+            # --- Extract child <a href> links from the retried HTML ----------
+            # The original 503 during BFS meant this page's children were never
+            # discovered.  Now that the page loaded successfully, harvest its
+            # outgoing links so the caller can crawl them in a follow-up pass.
+            _child_depth = _r_depth + 1
+            if _child_depth <= max_depth:
+                _r_html = getattr(_r, 'html', None) or ''
+                if _r_html:
+                    from html.parser import HTMLParser as _HP
+
+                    class _RetryLinkExtractor(_HP):
+                        def __init__(self):
+                            super().__init__()
+                            self.links = []
+                        def handle_starttag(self, tag, attrs):
+                            if tag == 'a':
+                                for attr, val in attrs:
+                                    if attr == 'href' and val:
+                                        self.links.append(val)
+
+                    _lp = _RetryLinkExtractor()
+                    try:
+                        _lp.feed(_r_html)
+                    except Exception:
+                        _lp.links = []
+                    _child_base = _r_final_url or _retry_url
+                    for _raw_href in _lp.links:
+                        if (not _raw_href
+                                or _raw_href.startswith('#')
+                                or _raw_href.startswith('javascript:')
+                                or _raw_href.startswith('mailto:')):
+                            continue
+                        _abs_child = urljoin(_child_base, _raw_href)
+                        # Apply scope and exclusion filters
+                        if scope_filter_fn and not scope_filter_fn(_abs_child):
+                            continue
+                        if login_filter_fn and login_filter_fn(_abs_child):
+                            continue
+                        if exclusion_re and exclusion_re.search(_abs_child):
+                            continue
+                        _child_norm = _url_utils._normalize_url(_abs_child)
+                        if not _child_norm:
+                            continue
+                        # Skip URLs already crawled or already seen
+                        _child_dedup = _url_utils.normalize_url_for_dedup(
+                            _child_norm,
+                            ui_only_query_params or set(),
+                            content_critical_params or set(),
+                        ) if _child_norm else _child_norm
+                        if _child_dedup and _child_dedup in seen_final_urls:
+                            continue
+                        # Keep shallowest depth if already discovered
+                        _existing_d = _discovered_child_urls.get(_child_norm)
+                        if _existing_d is None or _child_depth < _existing_d:
+                            _discovered_child_urls[_child_norm] = _child_depth
+                    if _discovered_child_urls:
+                        print(f'[503-RETRY] Extracted {len(_discovered_child_urls)} child link(s) from retried pages so far')
+
         except Exception as _retry_err:
             print(f'[503-RETRY] Error retrying {_retry_url}: {_retry_err}')
 
     print(f'[503-RETRY] Complete: {_retry_saved} saved, {_retry_still_503} still 503/blank (discarded).')
-    return _retry_saved, _retry_still_503, _retry_saved
+    if _discovered_child_urls:
+        print(f'[503-RETRY] Discovered {len(_discovered_child_urls)} child URL(s) from successfully retried pages.')
+    return _retry_saved, _retry_still_503, _retry_saved, _discovered_child_urls
 
 
 # ---------------------------------------------------------------------------
@@ -1725,31 +1794,39 @@ def assign_page_depth(
     ----------------
     1. **Seed check** – if either normalised URL is in *seed_urls_normalized*,
        return 0 immediately.
-    2. **Map lookup** – collect candidate depths from
-       *crawled_urls_with_depth_merged* and *additional_urls_with_depth_merged*
-       for both the original and the final URL.  Pick the minimum non-zero
-       candidate.
-    3. **Metadata fallback** – ``result.metadata['depth']`` or
+    2. **Additional-URL map** (priority) – if the URL is in
+       *additional_urls_with_depth_merged* (e.g. child URLs discovered from
+       retried 503 pages), use that depth directly.  This prevents the BFS
+       fallback depth (often 1) from overriding the correct parent+1 depth.
+    3. **BFS map lookup** – check *crawled_urls_with_depth_merged* for both
+       the original and the final URL, pick the minimum non-zero candidate.
+    4. **Metadata fallback** – ``result.metadata['depth']`` or
        ``result.depth``.
-    4. **Default fallback** – non-seed pages with no depth info default to 1.
-    5. **Capping** – the final value is clamped to *max_depth*.
+    5. **Default fallback** – non-seed pages with no depth info default to 1.
+    6. **Capping** – the final value is clamped to *max_depth*.
     """
     # 1) Seed URLs always get depth 0
     if normalized_original in seed_urls_normalized or normalized_final in seed_urls_normalized:
         return 0
 
-    # 2) Collect depth from map sources and take the minimum
+    # 2) Additional-URL map takes priority (e.g. retry-discovered child URLs)
+    if additional_urls_with_depth_merged is not None:
+        _additional_candidates = []
+        if normalized_final in additional_urls_with_depth_merged:
+            _additional_candidates.append(additional_urls_with_depth_merged[normalized_final])
+        if normalized_original in additional_urls_with_depth_merged:
+            _additional_candidates.append(additional_urls_with_depth_merged[normalized_original])
+        _additional_nz = [d for d in _additional_candidates if d > 0]
+        if _additional_nz:
+            return min(min(_additional_nz), max_depth)
+
+    # 3) BFS map lookup
     depth_candidates = []
     if crawled_urls_with_depth_merged is not None:
         if normalized_final in crawled_urls_with_depth_merged:
             depth_candidates.append(crawled_urls_with_depth_merged[normalized_final])
         if normalized_original in crawled_urls_with_depth_merged:
             depth_candidates.append(crawled_urls_with_depth_merged[normalized_original])
-    if additional_urls_with_depth_merged is not None:
-        if normalized_final in additional_urls_with_depth_merged:
-            depth_candidates.append(additional_urls_with_depth_merged[normalized_final])
-        if normalized_original in additional_urls_with_depth_merged:
-            depth_candidates.append(additional_urls_with_depth_merged[normalized_original])
 
     non_zero = [d for d in depth_candidates if d > 0]
     if non_zero:
