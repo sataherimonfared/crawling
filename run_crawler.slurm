@@ -51,7 +51,7 @@ cd /home/taheri/crawl4ai
 
 # Run the crawler
 echo "Starting crawler..."
-python crawl_desy_all_urls.py
+python -u crawl_desy_all_urls.py
 
 # Print completion info
 echo "=========================================="

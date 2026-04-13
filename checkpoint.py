@@ -6,6 +6,7 @@ Handles serialisation of crawler state to disk for crash recovery.
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -201,13 +202,18 @@ def extract_result_metadata(result):
         return None
     
     try:
+        html = result.html if hasattr(result, 'html') and result.html else ''
+        m = re.search(r'<meta\s+name=["\']Last-Modified["\']\s+content=["\']([^"\']+)["\']',
+                      html, re.IGNORECASE)
+        meta_last_modified = m.group(1).strip() if m else None
         return {
             'url': getattr(result, 'url', None),
             'redirected_url': getattr(result, 'redirected_url', None),
             'status_code': getattr(result, 'status_code', None),
             'success': getattr(result, 'success', None),
-            'html_length': len(result.html) if hasattr(result, 'html') and result.html else 0,
+            'html_length': len(html),
             'markdown_length': len(result.markdown) if hasattr(result, 'markdown') and result.markdown else 0,
+            'meta_last_modified': meta_last_modified,
         }
     except Exception:
         return {'url': getattr(result, 'url', 'unknown'), 'error': 'metadata_extraction_failed'}
