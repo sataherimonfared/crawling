@@ -211,7 +211,7 @@ ALLOWED_URL_PREFIXES = (
 
 
 # Directory where crawled pages will be saved as markdown files
-OUTPUT_DIR = Path("desy_crawled/24")
+OUTPUT_DIR = Path("desy_crawled/25")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
@@ -254,6 +254,19 @@ CHECK_REDIRECTS_TO_EXCLUDED = True
 # Checkpoint/Resume settings
 # Set to True to resume from previous checkpoint (skip already processed URLs)
 # Set to False to start fresh (ignore previous checkpoint)
+#
+# HOW CHECKPOINT + DEPTH INCREASE WORKS:
+#   1. First run:  USE_CHECKPOINT=True, MAX_DEPTH=3  → full BFS crawl up to depth 3.
+#   2. Resume run: USE_CHECKPOINT=True, MAX_DEPTH=4  → checkpoint detects that depth 3
+#      was already crawled. It sets _resuming_deeper=True automatically, which:
+#      - Skips BFS re-crawl of all depth 0-3 pages (saves hours of re-fetching)
+#      - Fetches only "frontier" pages (depth=3) from cache for link extraction
+#      - Crawls only genuinely NEW URLs at depth 4
+#   3. Same depth:  USE_CHECKPOINT=True, MAX_DEPTH=3  → seed URL skipped entirely.
+#   4. Fresh start: USE_CHECKPOINT=False              → ignores checkpoint, full BFS.
+#
+# TL;DR: Just increase MAX_DEPTH and re-run with USE_CHECKPOINT=True.
+#        The crawler automatically skips already-crawled pages.
 USE_CHECKPOINT = True # False # Change to True to resume from checkpoint
 
 # Checkpoint frequency: save checkpoint every N pages
@@ -418,13 +431,15 @@ def load_checkpoint() -> dict:
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 4
+MAX_DEPTH = 6
 
 # Higher = faster but uses more resources; scaled down for deeper crawls to avoid Varnish 503 bursts.
 # Scaling: depth=3→20, depth=4→16, depth=5→12, depth=6+→8
+# second scailing: giving depth 3→48, depth 4→44, depth 5→40 instead of 20/16/12.
 # I checked this: python -c "import os; print(os.cpu_count())" 96
-CONCURRENT_TASKS = max(8, 20 - (MAX_DEPTH - 3) * 4)  # more parallelism on high-core hardware
-INTER_BATCH_DELAY = 0.0 if MAX_DEPTH <= 3 else 0.3  # seconds; light pacing between batches
+#CONCURRENT_TASKS = max(8, 20 - (MAX_DEPTH - 3) * 4)  
+CONCURRENT_TASKS = max(24, 48 - (MAX_DEPTH - 3) * 4)  # more parallelism on high-core hardware
+INTER_BATCH_DELAY = 0.0 if MAX_DEPTH <= 5 else 0.1  # seconds; light pacing between batches
 
 
 # Number of parallel workers for STEP 8 result processing (Issue 3 fix).
@@ -453,8 +468,10 @@ CRAWLER_USER_AGENT = (
 )
 
 # Per-page delay (ms) added inside CrawlerRunConfig to space requests within arun_many.
-# Reduced from 500→100 ms; rate limiter already handles pacing.
-PAGE_DELAY_MS = 100 if MAX_DEPTH >= 4 else 0
+# Reduced from 500→100->10 ms; rate limiter already handles pacing. #should I decrease?
+#PAGE_DELAY_MS = 100 if MAX_DEPTH >= 4 else 0
+PAGE_DELAY_MS = 10 if MAX_DEPTH >= 4 else 0
+
 
 # JavaScript rendering
 # Crawl4AI uses Playwright by default, which handles JavaScript automatically
@@ -464,7 +481,7 @@ PAGE_DELAY_MS = 100 if MAX_DEPTH >= 4 else 0
 # PERFORMANCE: 60s default; hanging pages release their slot faster.
 # URLs that timeout will be logged in crawl_errors.json with timeout category
 # Future runs can apply extended timeouts only to those specific URLs
-PAGE_TIMEOUT = 120000   # 120 seconds - default timeout for most pages
+PAGE_TIMEOUT = 120000    # 120 seconds - measured: it.desy.de responds in <0.5s raw; 12s = 24x buffer for Playwright overhead. Zero timeouts observed across all historical runs (18-24) even with the old 120s value.
 PAGE_TIMEOUT_EXTENDED = 180000  # 180 seconds - for URLs that previously timed out
 
 # Force consistent language for UI strings (prevents Indico language drift)
@@ -539,7 +556,7 @@ class CrawlConfig:
     # _BINARY_EXTENSIONS_CHECK (post-crawl).  One list, used everywhere.
     binary_extensions: tuple = (
         '.gif', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.bmp', '.ico',
-        '.tiff', '.zip', '.tar', '.gz', '.rar',
+        '.tiff', '.tif', '.zip', '.tar', '.gz', '.rar',
         '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
         '.mp4', '.mp3', '.avi', '.mov', '.wmv', '.flv', '.ogg', '.wav',
         # Academic / LaTeX source files (run-20 noise)
@@ -881,6 +898,11 @@ def _build_crawl_setup():
 
         # Honest identifying User-Agent so DESY WebOffice logs show the crawler identity
         user_agent=CRAWLER_USER_AGENT,
+
+        # text_mode: Disable loading images, fonts, CSS, and media at the Chromium level.
+        # We only extract text/markdown/links, so there is zero content loss.
+        # Reduces page load time and memory usage.
+        text_mode=True,
         
         # JavaScript rendering: Automatically enabled via Playwright
         # Crawl4AI uses Playwright by default, which fully supports JavaScript.
@@ -957,6 +979,8 @@ def _build_crawl_setup():
             r'^callto:.*',       # Phone number links (callto:)
             r'^davs?:.*',        # WebDAV links (davs:://, dav:://)
             r'^mattermost:.*',   # Mattermost chat links
+            r'.*\.mobileconfig(\?.*)?$', # mobile configuration files
+            r'.*\.pem(\?.*)?$', # pem files (certificates)
             r'^file:.*',         # File protocol
             r'^ftp:.*',          # FTP protocol
             r'^tel:.*',          # Telephone protocol
@@ -972,6 +996,7 @@ def _build_crawl_setup():
             # Exclude specific DESY subdomains from crawling at all depth levels
             r'^https?://(www\.)?fater\.desy\.de/.*',
             r'^https?://(www\.)?bib-pubdb1\.desy\.de/.*',
+            r'^https?://(?!it\.desy\.de[/]).*\.desy\.de',  # Block all non-it.desy.de DESY subdomains (BFS eTLD+1 fix)
             # Exclude repeated news pages with no content and many links causing crawler to get stuck
             r'^https?://[^/]+/(?:e\d+/){3,}',  # Block 3+ event ID nesting
             
@@ -1087,11 +1112,21 @@ def _build_crawl_setup():
         print(f"[PATH A] GROUP 3b (rss/feed/logoff): 4 patterns will block RSS, feed, and logoff URLs")
         print(f"[PATH A] BFSDeepCrawlStrategy will skip matching URLs BEFORE crawling them")
     else:
-        # URL filtering not available — define empty pattern list so references
-        # in the additional-URL extraction loops (lines ~1766, ~2019) don't crash.
-        exclusion_patterns = []
+        # URL filter classes not importable — BFS runs without filter_chain.
+        # Subdomains and saved results are already guarded by link_domain==base_domain
+        # (manual BS loop) and _is_allowed_crawl_url / should_skip_login_auth_url
+        # (filter_result_pre_save).  The only real gap is the manual BS loop re-queuing
+        # /manage, /admin, /login paths before filter_result_pre_save sees them.
+        # Populate a minimal exclusion_patterns so _exclusion_re blocks those re-queues.
+        exclusion_patterns = [
+            r'.*/manage(/|$|\?)',          # Zope/Plone /manage admin paths
+            r'.*[?&]manage',               # ?manage / &manage query params
+            r'.*/admin(/|$|\?)',           # /admin paths
+            r'.*/acl_users',               # Zope ACL
+            r'.*/login(/|$|\?|\.php|\.jsp)',  # login pages
+        ]
         filter_chain = None
-        print("[PATH A] ⚠ URL filter classes not available — exclusion_patterns empty")
+        print("[PATH A] ⚠ URL filter classes not available — BFS pre-crawl filtering DISABLED")
     
     # DOMAIN RESTRICTION: BFSDeepCrawlStrategy's include_external=False only allows exact domain match.
     # Additional manual extraction paths below are restricted by ALLOWED_URL_PREFIXES.
@@ -1416,14 +1451,23 @@ def _build_crawl_setup():
     )
 
 
-def _print_crawl_summary(state, dedup_enabled):
+def _print_crawl_summary(state, dedup_enabled, start_time=None):
     """Print final crawl statistics (extracted from crawl_site for readability)."""
+    import time as _time
     print("-" * 60)
     print(f"[SUMMARY]")
     print(f"  URLs processed: {len(ROOT_URLS)}")
     print(f"  Successful: {len(state.all_successful_urls)} pages")
     print(f"  Errors: {len(state.all_errors)} pages")
     print(f"  Total crawled: {state.total_results_crawled} pages")
+    if start_time is not None:
+        total_s = _time.time() - start_time
+        h, rem = divmod(int(total_s), 3600)
+        m, s = divmod(rem, 60)
+        print(f"  Total run time: {h:02d}h {m:02d}m {s:02d}s  ({total_s:.1f}s)")
+        n = state.total_results_crawled or len(state.all_successful_urls)
+        if n > 0:
+            print(f"  Avg time/page:  {total_s / n:.2f}s")
 
     # GROUP 1: Report login/auth/admin filtering statistics
     print("-" * 60)
@@ -2539,7 +2583,9 @@ async def crawl_site():
     """
     import time
     start_time = time.time()  # Track start time for elapsed time calculation
-    
+    url_metadata_store = {}   # url → {meta_last_modified, last_crawled_at, depth, filename}
+    _dt_now = datetime.now().isoformat()
+
     # ========================================================================
     # DOMAIN-SPECIFIC FILTERING CONFIGURATION
     # ========================================================================
@@ -2641,6 +2687,7 @@ async def crawl_site():
                 # Determine if we should skip this seed URL
                 should_skip = False
                 skip_reason = ""
+                _resuming_deeper = False  # True when resuming with higher MAX_DEPTH
                 
                 if normalized_seed in checkpoint_seed_urls:
                     # Seed URL was processed before
@@ -2649,9 +2696,10 @@ async def crawl_site():
                         should_skip = True
                         skip_reason = f"already crawled at depth {checkpoint_max_depth}, current MAX_DEPTH={MAX_DEPTH}"
                     else:
-                        # Higher depth requested - need to re-crawl to discover new URLs
+                        # Higher depth requested - skip BFS re-crawl, use single-page + frontier fetch
                         should_skip = False
-                        print(f"[CHECKPOINT] Seed URL was crawled at depth {checkpoint_max_depth}, but now MAX_DEPTH={MAX_DEPTH} - will re-crawl for deeper links")
+                        _resuming_deeper = True
+                        print(f"[CHECKPOINT] Seed URL was crawled at depth {checkpoint_max_depth}, but now MAX_DEPTH={MAX_DEPTH} - will fetch frontier pages only (no BFS re-crawl)")
                 
                 if should_skip:
                     print(f"[CHECKPOINT SKIP] Seed URL {skip_reason}: {root_url}")
@@ -2707,7 +2755,10 @@ async def crawl_site():
                 
                 _main_crawl_config = CrawlerRunConfig(
                     # deep_crawl_strategy: Tells crawler to follow links using our strategy
-                    deep_crawl_strategy=deep_crawl_strategy,
+                    # CHECKPOINT FIX: On resume with higher depth, disable BFS to avoid
+                    # re-fetching all previously-crawled pages. The iterative loop (Step 7)
+                    # will discover new URLs from frontier pages instead.
+                    deep_crawl_strategy=None if _resuming_deeper else deep_crawl_strategy,
                     
                     # page_timeout: Maximum time to wait for page to load (in milliseconds)
                     # Increased timeout for JavaScript-heavy pages
@@ -2717,7 +2768,6 @@ async def crawl_site():
                     # 'networkidle' waits for network to be idle (all JavaScript requests complete)
                     # This is critical for pages that load content via JavaScript
                     wait_until='networkidle' if not is_pdf else None,
-                    
                     # scraping_strategy: PDF extraction strategy (only set for PDF URLs)
                     scraping_strategy=scraping_strategy,
                     
@@ -2840,11 +2890,15 @@ async def crawl_site():
                 # First, crawl the page to get initial results
                 # ERROR LOGGING: Wrap in try-except to catch timeout and other errors
                 try:
+                    _bfs_t0 = time.time()
                     results = await crawler.arun(crawl_url, config=_main_crawl_config)
+                    _bfs_elapsed = time.time() - _bfs_t0
                     
                     # Track progress (replaces verbose output)
                     total_urls_crawled = len(results) if isinstance(results, list) else (1 if results else 0)
-                    print(f"[PROGRESS] Crawled {total_urls_crawled} URL(s) from {root_url}")
+                    _per_page = _bfs_elapsed / total_urls_crawled if total_urls_crawled > 0 else _bfs_elapsed
+                    print(f"[PROGRESS] Crawled {total_urls_crawled} URL(s) from {root_url} "
+                          f"in {_bfs_elapsed:.1f}s ({_per_page:.2f}s/page)")
                     
                 except Exception as e:
                     # Log timeout and other errors for future retries
@@ -3001,8 +3055,10 @@ async def crawl_site():
                         print(f"[INFO] Crawling {len(filtered_urls_batch)} single-page URLs with arun_many (parallel)")
                         try:
                             _dispatcher = MemoryAdaptiveDispatcher(
+                                max_session_permit=50,
                                 rate_limiter=RateLimiter(
-                                    base_delay=(0.2, 2.0), max_delay=60.0,
+                                    #base_delay=(0.2, 2.0), max_delay=16.0, base*2^(retry_number)
+                                    base_delay=(0.05, 0.5), max_delay=60.0,
                                     max_retries=3, rate_limit_codes=[429]
                                 )
                             )
@@ -3066,12 +3122,21 @@ async def crawl_site():
             # Track URL -> source_depth mapping to assign correct depths
             all_additional_urls = {}  # {normalized_url: source_depth}
             seen_crawled_urls = set()
+            # CHECKPOINT FIX: Seed seen_crawled_urls from checkpoint so the iterative
+            # loop skips URLs already processed in previous runs.
+            if state.seen_final_urls:
+                seen_crawled_urls.update(state.seen_final_urls)
+                print(f"[CHECKPOINT] Seeded seen_crawled_urls with {len(state.seen_final_urls)} URLs from checkpoint")
             # Track depth mapping for additional URLs (will be populated when crawling them)
             state.additional_urls_with_depth = {}  # {normalized_url: depth} - populated during crawling
 
             # First, collect all URLs that were already crawled AND their depths
             # This prevents us from reassigning depth to URLs that were already crawled by BFSDeepCrawlStrategy
-            state.crawled_urls_with_depth = {}  # {normalized_url: depth} - URLs already crawled with their depths
+            # CHECKPOINT FIX: Preserve checkpoint's crawled_urls_with_depth instead of resetting.
+            # On resume, state.all_results is sparse (only current run), so resetting would
+            # lose depth information from previous runs.
+            _checkpoint_depths = dict(state.crawled_urls_with_depth)  # preserve checkpoint data
+            state.crawled_urls_with_depth = {}  # reset for fresh population from current results
             for result in state.all_results:
                 if result:
                     # Get depth from result metadata
@@ -3115,6 +3180,15 @@ async def crawl_site():
                         existing_depth = state.crawled_urls_with_depth.get(normalized)
                         state.crawled_urls_with_depth[normalized] = result_depth if existing_depth is None else min(existing_depth, result_depth)
             
+            # CHECKPOINT FIX: Merge back checkpoint depth data (for URLs not in current results)
+            for _cp_url, _cp_depth in _checkpoint_depths.items():
+                if _cp_url not in state.crawled_urls_with_depth:
+                    state.crawled_urls_with_depth[_cp_url] = _cp_depth
+                    seen_crawled_urls.add(_cp_url)
+                else:
+                    state.crawled_urls_with_depth[_cp_url] = min(state.crawled_urls_with_depth[_cp_url], _cp_depth)
+            del _checkpoint_depths  # free memory
+
             # ================================================================
 
             # ================================================================
@@ -3381,6 +3455,15 @@ async def crawl_site():
 
                 if wr.get('metadata'):
                     results_metadata.append(wr['metadata'])
+                    _md = wr['metadata']
+                    _url = _md.get('url') or wr.get('url')
+                    if _url and _md.get('meta_last_modified'):
+                        url_metadata_store[_url] = {
+                            'meta_last_modified': _md['meta_last_modified'],
+                            'last_crawled_at': _dt_now,
+                            'depth': wr.get('depth_str'),
+                            'filename': wr.get('filename'),
+                        }
 
                 # Periodic checkpoint saving for crash recovery
                 if results_processed_in_batch % CHECKPOINT_FREQUENCY == 0:
@@ -3496,6 +3579,61 @@ async def crawl_site():
                     verbose=True,
                     delay_before_return_html=PAGE_DELAY_MS,
                 )
+
+                # ============================================================
+                # CHECKPOINT FIX (Change 3): Fetch frontier pages on resume
+                # ============================================================
+                # When resuming with higher MAX_DEPTH, the iterative loop needs
+                # HTML from frontier pages (depth == previous max) to discover
+                # new links at depth > previous max.  Without this, the loop
+                # only has the seed page and cannot reach deeper pages.
+                # crawl4ai cache_mode='read_write' should serve these from
+                # cache, so network cost is minimal.
+                _cp_max_depth = checkpoint.get('max_depth_crawled', 0)
+                if _cp_max_depth > 0 and _cp_max_depth < MAX_DEPTH:
+                    _existing_urls = {
+                        _normalize_url(getattr(r, 'url', ''))
+                        for r in state.all_results if r and getattr(r, 'url', None)
+                    }
+                    _frontier_urls = [
+                        url for url, depth in state.crawled_urls_with_depth.items()
+                        if depth == _cp_max_depth and url not in _existing_urls
+                    ]
+                    if _frontier_urls:
+                        print(f"[CHECKPOINT] Fetching {len(_frontier_urls)} frontier pages "
+                              f"(depth={_cp_max_depth}) for link extraction")
+                        try:
+                            _fr_dispatcher = MemoryAdaptiveDispatcher(
+                                max_session_permit=50,
+                                rate_limiter=RateLimiter(
+                                    base_delay=(0.05, 0.5), max_delay=60.0,
+                                    max_retries=3, rate_limit_codes=[429]
+                                )
+                            )
+                            _frontier_results = await crawler.arun_many(
+                                _frontier_urls, config=_additional_cfg,
+                                dispatcher=_fr_dispatcher
+                            )
+                            _frontier_count = 0
+                            for _fr in _frontier_results:
+                                _items = _fr if isinstance(_fr, list) else ([_fr] if _fr else [])
+                                for r in _items:
+                                    if not r or not getattr(r, 'url', None):
+                                        continue
+                                    if not _is_allowed_crawl_url(r.url):
+                                        continue
+                                    if _exclusion_re and _exclusion_re.search(r.url):
+                                        continue
+                                    state.all_results.append(r)
+                                    _frontier_count += 1
+                                    r_norm = _normalize_url(r.url)
+                                    if r_norm:
+                                        seen_crawled_urls.add(r_norm)
+                            print(f"[CHECKPOINT] Fetched {_frontier_count} frontier pages "
+                                  f"for link extraction")
+                        except Exception as e:
+                            print(f"[WARNING] Frontier page fetch failed: {str(e)[:100]}")
+                    del _existing_urls  # free memory
 
                 _scan_start = 0        # index into state.all_results: how far we've scanned
                 _pass = 0              # pass counter
@@ -3638,8 +3776,10 @@ async def crawl_site():
                         # built-in retry does NOT re-request 503 pages automatically.
                         # Our retry_varnish_503_pages() handles 503s explicitly instead.
                         _dispatcher = MemoryAdaptiveDispatcher(
+                            max_session_permit=50,
                             rate_limiter=RateLimiter(
-                                base_delay=(0.2, 2.0), max_delay=60.0,
+                                    #base_delay=(0.2, 2.0), max_delay=16.0, base*2^(retry_number)
+                                    base_delay=(0.05, 0.5), max_delay=60.0,
                                 max_retries=3, rate_limit_codes=[429]
                             )
                         )
@@ -3791,8 +3931,10 @@ async def crawl_site():
                         _rebuild_merged_depth_maps()
                         try:
                             _rc_dispatcher = MemoryAdaptiveDispatcher(
+                                max_session_permit=50,
                                 rate_limiter=RateLimiter(
-                                    base_delay=(0.2, 2.0), max_delay=60.0,
+                                    #base_delay=(0.2, 2.0), max_delay=16.0, base*2^(retry_number)
+                                    base_delay=(0.05, 0.5), max_delay=60.0,
                                     max_retries=3, rate_limit_codes=[429]
                                 )
                             )
@@ -3863,7 +4005,22 @@ async def crawl_site():
             depth_summary, _, _ = _checkpoint.save_urls_by_depth(
                 state.all_urls_by_depth, links_found_vs_crawled, LOG_DIR,
                 ROOT_URLS, MAX_DEPTH)
-            
+
+            # Save per-URL metadata (Last-Modified dates) for incremental updates
+            if url_metadata_store:
+                _meta_path = LOG_DIR / "url_metadata.json"
+                _existing_meta = {}
+                if _meta_path.exists():
+                    try:
+                        with open(_meta_path) as _mf:
+                            _existing_meta = json.load(_mf)
+                    except Exception:
+                        pass
+                _existing_meta.update(url_metadata_store)
+                with open(_meta_path, 'w') as _mf:
+                    json.dump(_existing_meta, _mf, indent=2)
+                print(f"[METADATA] Saved {len(url_metadata_store)} URL metadata entries → {_meta_path}")
+
             # ====================================================================
             # STEP 10: Save Error Log (handled in finally block to ensure it
             #          runs even on crash/interrupt — see below)
@@ -3872,7 +4029,7 @@ async def crawl_site():
             # ====================================================================
             # Final Summary
             # ====================================================================
-            _print_crawl_summary(state, dedup_enabled)
+            _print_crawl_summary(state, dedup_enabled, start_time=start_time)
     
     except Exception as cleanup_error:
         # Handle errors during browser startup or cleanup
