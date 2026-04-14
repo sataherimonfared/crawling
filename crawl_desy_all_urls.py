@@ -211,7 +211,7 @@ ALLOWED_URL_PREFIXES = (
 
 
 # Directory where crawled pages will be saved as markdown files
-OUTPUT_DIR = Path("desy_crawled/25")
+OUTPUT_DIR = Path("desy_crawled/26")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
@@ -431,7 +431,7 @@ def load_checkpoint() -> dict:
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 6
+MAX_DEPTH = 8
 
 # Higher = faster but uses more resources; scaled down for deeper crawls to avoid Varnish 503 bursts.
 # Scaling: depth=3→20, depth=4→16, depth=5→12, depth=6+→8
@@ -1077,17 +1077,34 @@ def _build_crawl_setup():
             # normalize_url_for_dedup() check which only deduplicates after fetching.
             r'.*/@@siteview(\?.*)?$',      # Plone @@siteview traversal view
             r'.*[?&]printversion=[^&]*',   # ?printversion=1 or &printversion=1
+
+            # ====================================================================
+            # FIX: GROUP 4 — CALENDAR / CMS-RAW / BROKEN-LINK FILTERING (PRE-CRAWL)
+            # ====================================================================
+            # Zimbra calendar event popups: each month-view page spawns ~16 invId
+            # links.  At depth 8 these will multiply explosively.
+            r'.*[?&]invId=',               # Zimbra individual event popup
+            r'.*[?&]instDuration=',         # Zimbra event duration param (always with invId)
+            # CMS internal raw-content paths (agenda/protokoll .txt files)
+            r'.*/sites2009/',               # Plone CMS raw content tree
+            # CMS preview mode (renders same content with preview chrome)
+            r'.*[?&]preview=preview',       # ?preview=preview or &preview=preview
+            # Broken internal-link error pages (op=not_found&url=…)
+            r'.*[?&]op=not_found',          # CMS broken-link landing pages
         ]
         
         # Create filter list first
         filter_list = []
+        # Prepend (?i) to each pattern so extensions like .PNG/.PDF/.JPG are
+        # caught in addition to their lowercase variants.
+        ci_exclusion_patterns = [f'(?i){p}' for p in exclusion_patterns]
         if URL_FILTER_TYPE == 'RegexURLFilter':
             # RegexURLFilter API: (pattern, include=False) to exclude
-            filter_list = [URL_FILTER_CLASS(pattern, include=False) for pattern in exclusion_patterns]
+            filter_list = [URL_FILTER_CLASS(pattern, include=False) for pattern in ci_exclusion_patterns]
         elif URL_FILTER_TYPE == 'URLPatternFilter':
             # URLPatternFilter API: (patterns=[...], reverse=True) to exclude
             # reverse=True means exclude URLs matching the patterns
-            filter_list = [URL_FILTER_CLASS(patterns=exclusion_patterns, reverse=True)]
+            filter_list = [URL_FILTER_CLASS(patterns=ci_exclusion_patterns, reverse=True)]
         
         # Wrap filter list in FilterChain if available, otherwise use list directly
         # Some crawl4ai versions expect FilterChain, others accept list
@@ -1124,6 +1141,12 @@ def _build_crawl_setup():
             r'.*/admin(/|$|\?)',           # /admin paths
             r'.*/acl_users',               # Zope ACL
             r'.*/login(/|$|\?|\.php|\.jsp)',  # login pages
+            # GROUP 4 — Calendar / CMS-raw / broken-link (mirror of PATH A)
+            r'.*[?&]invId=',               # Zimbra calendar event popup
+            r'.*[?&]instDuration=',         # Zimbra event duration param
+            r'.*/sites2009/',               # Plone CMS raw content tree
+            r'.*[?&]preview=preview',       # CMS preview mode
+            r'.*[?&]op=not_found',          # CMS broken-link landing pages
         ]
         filter_chain = None
         print("[PATH A] ⚠ URL filter classes not available — BFS pre-crawl filtering DISABLED")
@@ -2628,7 +2651,8 @@ async def crawl_site():
     deep_crawl_strategy = setup.deep_crawl_strategy
     exclusion_patterns = setup.exclusion_patterns
     # Perf #9: compile all exclusion patterns into a single alternation regex
-    _exclusion_re = re.compile('|'.join(exclusion_patterns)) if exclusion_patterns else None
+    # re.IGNORECASE ensures uppercase extensions (.PNG, .PDF, .JPG …) are also blocked.
+    _exclusion_re = re.compile('|'.join(exclusion_patterns), re.IGNORECASE) if exclusion_patterns else None
     excluded_selector_str = setup.excluded_selector_str
     INACTIVE_SELECTORS = setup.inactive_selectors
     markdown_generator = setup.markdown_generator
