@@ -1615,7 +1615,17 @@ async def retry_varnish_503_pages(
     _retry_saved = 0
     _retry_still_503 = 0
     _discovered_child_urls = {}  # {normalized_url: depth} — child links from retried pages
+    # FIX (Problem 2): Skip calendar view URLs — they have no Varnish cache and
+    # put direct load on the server.  Same patterns as PATH A exclusion_patterns.
+    _CALENDAR_VIEW_RE = re.compile(
+        r'[?&]view=(day|week|month|workWeek)([&]|$)|[?&]notoolbar=\d',
+        re.IGNORECASE,
+    )
+
     for _retry_url in retry_queue:
+        if _CALENDAR_VIEW_RE.search(_retry_url):
+            print(f'[503-RETRY] Skipping calendar view URL: {_retry_url}')
+            continue
         print(f'[503-RETRY] Retrying: {_retry_url}')
         try:
             _r = await crawler.arun(_retry_url, config=retry_config)

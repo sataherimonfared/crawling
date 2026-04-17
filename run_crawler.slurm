@@ -28,7 +28,7 @@
 #   3. Check status: squeue -u $USER
 #   4. Monitor output: tail -f crawler_<jobid>.out
 #   5. Cancel if needed: scancel <jobid>
-#
+# next update (step 1-2 is optional, you can submit directly from your local machine if you have access to the cluster-it may cause job get canceled after researved time):
 # ============================================================================
 
 # Print job info

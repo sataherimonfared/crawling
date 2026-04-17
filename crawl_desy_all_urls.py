@@ -164,46 +164,53 @@ except ImportError:
 # CONFIGURATION - Adjust these values to change crawling behavior
 # ============================================================================
 
-# List of URLs to crawl
-ROOT_URLS = [
-    "https://it.desy.de/index_eng.html",
-    "https://it.desy.de/index_ger.html",
-    # # "https://www.desy.de",
+# ── Single domain to crawl ────────────────────────────────────────────────────
+# Change only this line to switch crawl targets, e.g. "cms.desy.de"
+TARGET_DOMAIN = "it.desy.de"
+# ─────────────────────────────────────────────────────────────────────────────
+
+# List of URLs to crawl — derived from TARGET_DOMAIN (change TARGET_DOMAIN above, not here)
+ROOT_URLS = [f"https://{TARGET_DOMAIN}/"]
+# Example additional seeds (uncomment and edit as needed):
+    # f"https://{TARGET_DOMAIN}/index_eng.html",
+    # FIX (Problem 5): Running two separate BFS seeds causes every shared page to be
+    # crawled twice (two independent visited sets, no cross-seed deduplication).
+    # Single seed is sufficient: the BFS follows all links transitively, so German
+    # pages reachable from the English root are still discovered.
+    # Uncomment to restore dual-seed crawl (at the cost of duplicate processing).
+    # f"https://{TARGET_DOMAIN}/index_ger.html",
+    # "https://www.desy.de",
     # "https://desy.de/index_ger.html",
     # "https://desy.de/index_eng.html",
     # "https://www.desy.de/aktuelles/veranstaltungen/index_ger.html",
     # "https://www.desy.de/ueber_desy/leitende_wissenschaftler/christian_schwanenberger/index_ger.html",
     # "https://www.desy.de/career/contact/index_eng.html",
     # "https://photon-science.desy.de/facilities/petra_iii/machine/parameters/index_eng.html",
-    # # Events page (should extract events)
+    # Events page (should extract events)
 
-    # # Member tables
+    # Member tables
     # "https://atlas.desy.de/members/",
     # "https://cms.desy.de/cms_members/",
     # "https://pitz.desy.de/group_members/",
-    # "https://it.desy.de/about_us/gruppenleitung/management/index_eng.html",
     # "https://astroparticle-physics.desy.de/about_us/group_members/theory/index_eng.html",
     # "https://astroparticle-physics.desy.de/about_us/group_members/neutrino_astronomy/index_eng.html",
     # "https://photon-science.desy.de/research/research_teams/magnetism_and_coherent_phenomena/group_members/index_eng.html",
     # "https://photon-science.desy.de/facilities/petra_iii/beamlines/p23_in_situ_x_ray_diffraction_and_imaging/contact__staff/index_eng.html",
-    # # publications page
+    # publications page
     # "https://astroparticle-physics.desy.de/research/neutrino_astronomy/publications/index_eng.html",
-    # # researchers page        
-    
+    # researchers page
+
     # "https://ai.desy.de/people/heuser.html",
     # "https://belle2.desy.de/",
     # "https://indico.desy.de/event/52144/",
     # "https://indico.desy.de/event/51380/page/5682-satellite-meetings",
     # "https://indico.desy.de/event/51547/",
-]
 
 # Restrict crawling to URLs that start with these prefixes.
-# With the current seeds, this keeps the crawl inside the DESY IT site only.
+# Derived from TARGET_DOMAIN — keeps the crawl inside the target site only.
 # To re-enable every DESY subdomain later, set this tuple to ("https://desy.de/",)
 # and change _is_allowed_crawl_url() to return _is_desy_domain(urlparse(url).netloc).
-ALLOWED_URL_PREFIXES = (
-    "https://it.desy.de/",
-)
+ALLOWED_URL_PREFIXES = (f"https://{TARGET_DOMAIN}/",)
 
 
 
@@ -211,7 +218,7 @@ ALLOWED_URL_PREFIXES = (
 
 
 # Directory where crawled pages will be saved as markdown files
-OUTPUT_DIR = Path("desy_crawled/26")
+OUTPUT_DIR = Path(f"desy_crawled/{TARGET_DOMAIN}")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 
 # Log directory for all log files
@@ -238,16 +245,22 @@ ERROR_LOG_FILE = LOG_DIR / "crawl_errors.json"
 # Checkpoint file - saves progress to resume crawling later
 CHECKPOINT_FILE = LOG_DIR / "crawl_checkpoint.json"
 
-# Domains to exclude from crawling and scraping at all depth levels (never queue, never fetch)
-# Links to these hosts are skipped; URLs that redirect to these hosts are also skipped (redirect resolved before queuing)
+# Domains to exclude from crawling and scraping at all depth levels (never queue, never fetch).
+# This is the single authoritative list for domain exclusion.
+# It is consumed by:
+#   1. PATH A exclusion_patterns (BFS link-queue filter) — patterns generated from this list
+#   2. BeautifulSoup manual link extraction guards (lines ~3047, ~3747) — checked directly
+# To add a new excluded domain, add it here only.
 EXCLUDED_DOMAINS = {
-    'fater.desy.de',
-    'bib-pubdb1.desy.de',
+    'fater.desy.de',       # Library system — head complained about unwanted scraping
+    'bib-pubdb1.desy.de',  # Publications database — login-only, no crawlable content
+    'old.desy.de',         # Archived server — frequently times out
+    'legacy.desy.de',      # Legacy system — frequently times out
     # webcast.desy.de is intentionally NOT excluded — video pages contain meaningful
     # descriptions/abstracts next to each entry that are valuable for RAG.
 }
 # Resolve redirects before queuing so we never fetch excluded hosts (e.g. desy.de/some/path -> fater.desy.de)
-CHECK_REDIRECTS_TO_EXCLUDED = True
+CHECK_REDIRECTS_TO_EXCLUDED = False
 
 # Debug log file removed - no longer needed
 
@@ -346,12 +359,12 @@ ERROR_URL_PATTERNS = [
 # Compile patterns once for performance
 _COMPILED_ERROR_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in ERROR_URL_PATTERNS]
 
-# Domains or domain patterns that frequently timeout or error (DESY-specific)
+# Domains that frequently timeout or return errors — used by GROUP 2 outer-loop filter.
+# Note: fater.desy.de and bib-pubdb1.desy.de are NOT listed here because they are in
+# EXCLUDED_DOMAINS and will never be fetched, so they cannot be "error-prone" in practice.
 ERROR_PRONE_DOMAINS = {
-    'bib-pubdb1.desy.de',  # Already excluded, but mark as error-prone
-    'fater.desy.de',  # Already excluded, but mark as error-prone
-    'old.desy.de',  # Archived/very old server
-    'legacy.desy.de',  # Legacy systems
+    'old.desy.de',     # Archived server — frequently times out
+    'legacy.desy.de',  # Legacy system — frequently times out
 }
 
 # ============================================================================
@@ -431,7 +444,7 @@ def load_checkpoint() -> dict:
 # 0 = only the root page
 # 1 = root page + pages linked from root (you found 33 URLs here)
 # 2 = root + depth 1 pages + pages linked from depth 1 pages (you found 852 URLs here)
-MAX_DEPTH = 8
+MAX_DEPTH = 10
 
 # Higher = faster but uses more resources; scaled down for deeper crawls to avoid Varnish 503 bursts.
 # Scaling: depth=3→20, depth=4→16, depth=5→12, depth=6+→8
@@ -463,15 +476,15 @@ HEADLESS = True  # Run browser in headless mode (no visible window)
 
 # Identifying User-Agent for DESY WebOffice logs
 CRAWLER_USER_AGENT = (
-    "Mozilla/5.0 (compatible; DESY-IT-LLM-Crawler/1.0; "
-    "+https://it.desy.de/; contact taheri@mail.desy.de)"
+    f"Mozilla/5.0 (compatible; DESY-LLM-Crawler/1.0; "
+    f"+https://{TARGET_DOMAIN}/; contact taheri@mail.desy.de)"
 )
 
 # Per-page delay (ms) added inside CrawlerRunConfig to space requests within arun_many.
 # Reduced from 500→100->10 ms; rate limiter already handles pacing. #should I decrease?
 #PAGE_DELAY_MS = 100 if MAX_DEPTH >= 4 else 0
-PAGE_DELAY_MS = 10 if MAX_DEPTH >= 4 else 0
-
+#PAGE_DELAY_MS = 10 if MAX_DEPTH >= 4 else 0
+PAGE_DELAY_MS = 0
 
 # JavaScript rendering
 # Crawl4AI uses Playwright by default, which handles JavaScript automatically
@@ -993,10 +1006,10 @@ def _build_crawl_setup():
             r'^doi:.*',          # DOI links
             r'^ttps://.*',       # Typo: ttps instead of https
             r'^urn:.*',          # URN (not HTTP URL)
-            # Exclude specific DESY subdomains from crawling at all depth levels
-            r'^https?://(www\.)?fater\.desy\.de/.*',
-            r'^https?://(www\.)?bib-pubdb1\.desy\.de/.*',
-            r'^https?://(?!it\.desy\.de[/]).*\.desy\.de',  # Block all non-it.desy.de DESY subdomains (BFS eTLD+1 fix)
+            # Exclude domains listed in EXCLUDED_DOMAINS (single source of truth).
+            # Patterns are generated from the list — add new domains to EXCLUDED_DOMAINS only.
+            *[r'^https?://(www\.)?' + re.escape(d) + r'(/.*)?$' for d in EXCLUDED_DOMAINS],
+            r'^https?://(?!' + re.escape(TARGET_DOMAIN) + r'[/]).*\.desy\.de',  # Catch-all: block all non-target DESY subdomains
             # Exclude repeated news pages with no content and many links causing crawler to get stuck
             r'^https?://[^/]+/(?:e\d+/){3,}',  # Block 3+ event ID nesting
             
@@ -1091,6 +1104,15 @@ def _build_crawl_setup():
             r'.*[?&]preview=preview',       # ?preview=preview or &preview=preview
             # Broken internal-link error pages (op=not_found&url=…)
             r'.*[?&]op=not_found',          # CMS broken-link landing pages
+            # FIX (Problem 1): Calendar view URLs — Zimbra calendar view pages have no
+            # Varnish cache; scraping them puts direct load on the server and produces
+            # no useful content.  Block all view= variants at BFS link-queue stage.
+            r'.*[?&]view=(day|week|month|workWeek)(&.*)?$',  # Zimbra calendar view params
+            r'.*[?&]notoolbar=\d',          # Zimbra toolbar-suppression param (calendar only)
+            # Block any URL not starting with http:// or https:// (relative URLs, etc)
+            r'^(?!https?://).*',  # Block any URL not starting with http:// or https://
+            # Block malformed hrefhttps:// URLs
+            r'^hrefhttps?://.*',
         ]
         
         # Create filter list first
@@ -1128,6 +1150,7 @@ def _build_crawl_setup():
         print(f"[PATH A] GROUP 3 (printversion/siteview): 2 patterns will block @@siteview and ?printversion= URLs")
         print(f"[PATH A] GROUP 3b (rss/feed/logoff): 4 patterns will block RSS, feed, and logoff URLs")
         print(f"[PATH A] BFSDeepCrawlStrategy will skip matching URLs BEFORE crawling them")
+        print(f"[CONFIG] Excluded domains ({len(EXCLUDED_DOMAINS)}): {sorted(EXCLUDED_DOMAINS)}")
     else:
         # URL filter classes not importable — BFS runs without filter_chain.
         # Subdomains and saved results are already guarded by link_domain==base_domain
@@ -1147,6 +1170,10 @@ def _build_crawl_setup():
             r'.*/sites2009/',               # Plone CMS raw content tree
             r'.*[?&]preview=preview',       # CMS preview mode
             r'.*[?&]op=not_found',          # CMS broken-link landing pages
+            # Block any URL not starting with http:// or https:// (relative URLs, etc)
+            r'^(?!https?://).*',  # Block any URL not starting with http:// or https://
+            # Block malformed hrefhttps:// URLs
+            r'^hrefhttps?://.*',
         ]
         filter_chain = None
         print("[PATH A] ⚠ URL filter classes not available — BFS pre-crawl filtering DISABLED")
@@ -1316,12 +1343,20 @@ def _build_crawl_setup():
         # ========================================================================
         # SECTION 9: Non-HTTP / malformed links (avoid crawl4ai "Invalid URL" warnings)
         # ========================================================================
-        # Only keep most common malformed patterns - removed rare ones
+        # These selectors remove <a> elements from the DOM before crawl4ai's link
+        # extractor runs, so bfs_strategy.py never sees the hrefs and never emits
+        # "Invalid URL: ..., error: Missing scheme or netloc" to stderr.
         'a[href^="tel:"]',            # Telephone links
         'a[href^="dav:"]',            # WebDAV links
         'a[href^="mailto:"]',         # Mailto links
         'a[href^="callto:"]',         # Skype/VoIP links
         'a[href^="urn:"]',            # URN links
+        # FIX (Problem 8): selectors missing from previous version — confirmed from
+        # crawler_21763012.err where these produced "Invalid URL" stderr noise.
+        'a[href^="/auth/"]',          # Keycloak OIDC relative redirect paths
+        'a[href^="/pls"]',            # Oracle APEX relative paths
+        'a[href^="/login"]',          # Generic relative login paths
+        'a[href^="mattermost:"]',     # Mattermost custom protocol links
     ]
     
     # ========================================================================
@@ -1387,10 +1422,13 @@ def _build_crawl_setup():
             print("[GROUP 6] ✅ PruningContentFilter initialized with excluded_selectors")
             print(f"[GROUP 6]    Filtering {len(excluded_selectors)} CSS selectors for inactive/disabled/hidden content")
         except TypeError:
-            # If excluded_selectors parameter not supported in this version of crawl4ai,
-            # fall back to standard initialization without it. We'll implement Option B (BeautifulSoup) instead.
-            print("[GROUP 6] ⚠️  WARNING: excluded_selectors not supported by PruningContentFilter")
-            print("[GROUP 6]    Falling back to standard filter initialization (will implement BeautifulSoup fallback)")
+            # PruningContentFilter in this version of crawl4ai has no excluded_selectors
+            # parameter — this is harmless. The excluded_selector passed to CrawlerRunConfig
+            # is applied by content_scraping_strategy.py BEFORE PruningContentFilter runs,
+            # so nav/footer/hidden elements are already removed from the HTML by the time
+            # PruningContentFilter processes it. No BeautifulSoup fallback is needed.
+            print("[GROUP 6] ℹ️  excluded_selectors not a PruningContentFilter parameter in this crawl4ai version.")
+            print("[GROUP 6]    Content exclusion is handled by CrawlerRunConfig.excluded_selector (applied earlier in pipeline).")
             prune_filter = PruningContentFilter(
                 threshold=0.2,              # Lower threshold = less aggressive filtering
                 threshold_type="dynamic",  # Dynamic threshold adapts to content
@@ -2683,7 +2721,57 @@ async def crawl_site():
         ) as crawler:
             # The 'async with' statement ensures the crawler is properly cleaned up
             # when done (closes browser instances, releases resources)
-            
+
+            # ====================================================================
+            # FIX (Problem 7 + redirect scope): Block ALL Playwright-level navigation
+            # requests to any domain other than it.desy.de. This covers HTTP redirects
+            # (302 from it.desy.de → www.desy.de etc.) that PATH A cannot intercept
+            # because PATH A only filters URLs at BFS queuing time — redirects happen
+            # mid-navigation, after Playwright has already started loading the page.
+            # Sub-resources (scripts, stylesheets, XHR) are allowed through so that
+            # page JavaScript still runs and link extraction is not broken.
+            # Hook fires once per page before first goto; no HEAD request needed.
+            # ====================================================================
+            # NETWORK LOG: Real-time log of every browser-level request that goes
+            # outside it.desy.de. Written to a JSONL file so you can inspect what
+            # the browser is actually fetching (redirects, XHR, iframes, etc.)
+            # that are invisible in the main .out log.
+            # Format: one JSON object per line — tail -f the file during a run.
+            # ====================================================================
+            import json as _json
+            _network_log_path = OUTPUT_DIR / "network_external_requests.jsonl"
+            _network_log_fh = open(_network_log_path, 'a', buffering=1)  # line-buffered
+            print(f'[CONFIG] External network request log: {_network_log_path}')
+
+            _target_domain = TARGET_DOMAIN  # captured for async closures below
+
+            async def _block_excluded_domain_requests(page, context, **kwargs):
+                async def _intercept_route(route, request):
+                    from urllib.parse import urlparse as _urlparse
+                    host = _urlparse(request.url).netloc.lower().split(':')[0]
+                    if host != _target_domain:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+
+                await page.route('**', _intercept_route)
+
+                async def _log_external_request(request):
+                    url = request.url
+                    if _target_domain not in url:
+                        entry = {
+                            'ts': __import__('time').strftime('%H:%M:%S'),
+                            'type': request.resource_type,
+                            'nav': request.is_navigation_request(),
+                            'url': url,
+                        }
+                        _network_log_fh.write(_json.dumps(entry) + '\n')
+
+                page.on('requestfinished', _log_external_request)
+
+            crawler.crawler_strategy.set_hook('on_page_context_created', _block_excluded_domain_requests)
+            print(f'[CONFIG] Playwright route interception active: all navigation requests to non-{TARGET_DOMAIN} will be aborted.')
+
             # ====================================================================
             # STEP 6: Process Each URL in the List
             # ====================================================================
@@ -3095,8 +3183,9 @@ async def crawl_site():
                                     state.all_results.extend(
                                         r for r in additional_result
                                         if r and getattr(r, 'url', None) and _is_allowed_crawl_url(r.url) and _passes_exclusion(r.url)
+                                        and _is_allowed_crawl_url(getattr(r, 'redirected_url', None) or r.url)
                                     )
-                                elif additional_result and getattr(additional_result, 'url', None) and _is_allowed_crawl_url(additional_result.url) and _passes_exclusion(additional_result.url):
+                                elif additional_result and getattr(additional_result, 'url', None) and _is_allowed_crawl_url(additional_result.url) and _passes_exclusion(additional_result.url) and _is_allowed_crawl_url(getattr(additional_result, 'redirected_url', None) or additional_result.url):
                                     state.all_results.append(additional_result)
                         except Exception as e:
                             error_msg = str(e)
@@ -3123,9 +3212,10 @@ async def crawl_site():
                     state.all_results.extend(
                         r for r in results
                         if r and getattr(r, 'url', None) and _is_allowed_crawl_url(r.url) and _passes_exclusion(r.url)
+                        and _is_allowed_crawl_url(getattr(r, 'redirected_url', None) or r.url)
                     )
                 else:
-                    if results and getattr(results, 'url', None) and _is_allowed_crawl_url(results.url) and _passes_exclusion(results.url):
+                    if results and getattr(results, 'url', None) and _is_allowed_crawl_url(results.url) and _passes_exclusion(results.url) and _is_allowed_crawl_url(getattr(results, 'redirected_url', None) or results.url):
                         state.all_results.append(results)
                 
                 # PHASE 1 FIX: Track that this seed URL was processed
@@ -3828,8 +3918,10 @@ async def crawl_site():
                         for r in _items:
                             if not r:
                                 continue
-                            # Scope filter: skip pages outside allowed prefix
+                            # Scope filter: skip pages outside allowed prefix (check both requested and final URL after redirect)
                             if not getattr(r, 'url', None) or not _is_allowed_crawl_url(r.url):
+                                continue
+                            if not _is_allowed_crawl_url(getattr(r, 'redirected_url', None) or r.url):
                                 continue
                             # FIX (Root Cause 2, part 5): Drop results matching exclusion_patterns
                             if _exclusion_re and _exclusion_re.search(r.url):
@@ -4092,6 +4184,11 @@ async def crawl_site():
     
     finally:
         await _url_utils.close_redirect_session()
+        try:
+            if '_network_log_fh' in dir():
+                _network_log_fh.close()
+        except Exception:
+            pass
         _save_error_log_and_exit_checkpoint(state)
 
 
@@ -4101,6 +4198,33 @@ async def crawl_site():
 # This runs when you execute: python crawl_desy_simple.py
 
 if __name__ == "__main__":
+    import argparse as _argparse
+    _parser = _argparse.ArgumentParser(description="DESY subdomain crawler")
+    _parser.add_argument(
+        "--domain",
+        default=TARGET_DOMAIN,
+        help="Subdomain to crawl, e.g. cms.desy.de  (default: %(default)s)",
+    )
+    _args = _parser.parse_args()
+
+    if _args.domain != TARGET_DOMAIN:
+        # Override the module-level constants derived from TARGET_DOMAIN
+        TARGET_DOMAIN = _args.domain
+        ROOT_URLS = [f"https://{TARGET_DOMAIN}/"]
+        ALLOWED_URL_PREFIXES = (f"https://{TARGET_DOMAIN}/",)
+        OUTPUT_DIR = Path(f"desy_crawled/{TARGET_DOMAIN}")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_DIR = OUTPUT_DIR / "log"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ERROR_LOG_FILE = LOG_DIR / "crawl_errors.json"
+        CHECKPOINT_FILE = LOG_DIR / "crawl_checkpoint.json"
+        CRAWLER_USER_AGENT = (
+            f"Mozilla/5.0 (compatible; DESY-LLM-Crawler/1.0; "
+            f"+https://{TARGET_DOMAIN}/; contact taheri@mail.desy.de)"
+        )
+        print(f"[CONFIG] Domain override: crawling {TARGET_DOMAIN}")
+        print(f"[CONFIG] Output directory: {OUTPUT_DIR}")
+
     # asyncio.run() is needed because crawl_site() is an async function
     # Async functions allow the crawler to fetch multiple pages simultaneously
     asyncio.run(crawl_site())
